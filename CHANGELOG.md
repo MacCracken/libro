@@ -30,8 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tracing` instrumentation: append, verify, rotate, retention, store open, parse errors
 - `merkle` module: `MerkleTree` with `build()`, `root()`, `proof()`, and `verify_proof()` for O(log N) inclusion proofs
 - `signing` module (feature: `signing`): Ed25519 per-entry signatures with `SigningKey`, `VerifyingKey`, `EntrySignature`
+- `EventSeverity` now implements `Ord`/`PartialOrd`/`Hash` — variants ordered Debug < Info < Warning < Error < Critical < Security
+- `EventSeverity::at_or_above()` — returns all severity levels at or above a given level
+- `QueryFilter::min_severity()` — filter to entries with severity >= a given level (SQL `IN(...)` for SqliteStore)
+- `AuditChain::append_batch()` — append multiple entries in one call
+- `AuditChain::page(offset, limit)` — paginated access to chain entries
+- `AuditStore::load_page(offset, limit)` — paginated loading with SQL LIMIT/OFFSET override for SqliteStore
 - `AuditStore::load_and_verify()` — convenience that loads and verifies in one call
 - `AuditStore::query()` — trait-level query with default load+filter impl; `SqliteStore` overrides with SQL WHERE
+- `streaming` module (feature: `streaming`): `AuditStream` for real-time pub/sub via majra with MQTT-style topic wildcards
 - 84 tests, 94% line coverage
 
 ### Changed

@@ -36,6 +36,15 @@ pub trait AuditStore: Send + Sync {
         let all = self.load_all()?;
         Ok(all.into_iter().filter(|e| filter.matches(e)).collect())
     }
+
+    /// Load a page of entries: skip `offset`, return up to `limit`.
+    ///
+    /// The default implementation loads all entries and slices in memory.
+    /// Backends like `SqliteStore` override with SQL LIMIT/OFFSET.
+    fn load_page(&self, offset: usize, limit: usize) -> crate::Result<Vec<AuditEntry>> {
+        let all = self.load_all()?;
+        Ok(all.into_iter().skip(offset).take(limit).collect())
+    }
 }
 
 /// In-memory store (for testing).
@@ -102,6 +111,22 @@ mod tests {
         let results = store.query(&crate::QueryFilter::new().source("aegis")).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source(), "aegis");
+    }
+
+    #[test]
+    fn load_page_default() {
+        let mut store = MemoryStore::new();
+        for i in 0..10 {
+            let prev = if i == 0 { String::new() } else { store.load_all().unwrap().last().unwrap().hash().to_owned() };
+            let e = AuditEntry::new(EventSeverity::Info, "s", format!("e{i}"), serde_json::json!({}), prev);
+            store.append(&e).unwrap();
+        }
+        let page = store.load_page(3, 3).unwrap();
+        assert_eq!(page.len(), 3);
+        assert_eq!(page[0].action(), "e3");
+
+        let page = store.load_page(8, 5).unwrap();
+        assert_eq!(page.len(), 2);
     }
 
     #[test]

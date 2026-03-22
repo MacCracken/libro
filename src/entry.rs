@@ -6,7 +6,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Event severity level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Variants are ordered by increasing severity:
+/// `Debug < Info < Warning < Error < Critical < Security`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EventSeverity {
     Debug,
     Info,
@@ -17,6 +19,19 @@ pub enum EventSeverity {
 }
 
 impl EventSeverity {
+    /// Stable string representation used in hashing and storage.
+    /// All variants at or above this severity level.
+    pub fn at_or_above(self) -> &'static [EventSeverity] {
+        match self {
+            Self::Debug => &[Self::Debug, Self::Info, Self::Warning, Self::Error, Self::Critical, Self::Security],
+            Self::Info => &[Self::Info, Self::Warning, Self::Error, Self::Critical, Self::Security],
+            Self::Warning => &[Self::Warning, Self::Error, Self::Critical, Self::Security],
+            Self::Error => &[Self::Error, Self::Critical, Self::Security],
+            Self::Critical => &[Self::Critical, Self::Security],
+            Self::Security => &[Self::Security],
+        }
+    }
+
     /// Stable string representation used in hashing and storage.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -344,6 +359,22 @@ mod tests {
         assert!(!entry.hash().is_empty());
         // id and timestamp are set automatically
         assert!(!entry.id().is_nil());
+    }
+
+    #[test]
+    fn severity_ordering() {
+        assert!(EventSeverity::Debug < EventSeverity::Info);
+        assert!(EventSeverity::Info < EventSeverity::Warning);
+        assert!(EventSeverity::Warning < EventSeverity::Error);
+        assert!(EventSeverity::Error < EventSeverity::Critical);
+        assert!(EventSeverity::Critical < EventSeverity::Security);
+    }
+
+    #[test]
+    fn severity_at_or_above() {
+        assert_eq!(EventSeverity::Warning.at_or_above().len(), 4);
+        assert_eq!(EventSeverity::Security.at_or_above().len(), 1);
+        assert_eq!(EventSeverity::Debug.at_or_above().len(), 6);
     }
 
     #[test]

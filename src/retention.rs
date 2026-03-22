@@ -1,7 +1,7 @@
 //! Retention policies for audit chains.
 //!
 //! Retention works by rotating the chain: entries that fall outside the
-//! retention window are archived (returned as a [`ChainArchive`]), and
+//! retention window are archived (returned as a [`crate::ChainArchive`]), and
 //! the chain continues with only the retained entries. This preserves
 //! chain integrity — entries are never silently deleted.
 

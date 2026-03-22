@@ -24,10 +24,15 @@
 - [x] Chain review with structured summary and Display impls
 - [x] Tracing instrumentation (append, verify, rotate, retention, store ops)
 
+### Phase 4 — Ergonomics & Streaming
+- [x] `EventSeverity` ordering (`Ord`/`PartialOrd`) with `min_severity` query filter
+- [x] Batch append (`append_batch`) for multiple entries in one call
+- [x] Chain pagination (`page`, `load_page` on `AuditStore` trait, SQL LIMIT/OFFSET for SqliteStore)
+- [x] Streaming subscription via majra pub/sub (behind `streaming` feature flag)
+
 ## Planned
 
-### Streaming & Integration
-- [ ] Streaming subscription — subscribe to new entries (via majra pub/sub)
+### Integration
 - [ ] MCP tools: `libro_query`, `libro_verify`, `libro_export`
 
 ### Hardware Security
@@ -35,8 +40,3 @@
 
 ### Distributed
 - [ ] Multi-node chain sync (federated audit across fleet)
-
-### Ergonomics
-- [ ] `EventSeverity` ordering (`Ord` impl) for "severity >= Warning" queries
-- [ ] Batch append (multiple entries in one call, single hash link computation)
-- [ ] Chain iterator with pagination for large chains

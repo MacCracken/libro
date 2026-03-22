@@ -211,6 +211,18 @@ impl AuditStore for SqliteStore {
             param_values.push(Box::new(before.to_rfc3339()));
             clauses.push(format!("timestamp < ?{}", param_values.len()));
         }
+        if let Some(min) = filter.min_severity {
+            let names: Vec<&str> = min.at_or_above().iter().map(|s| s.as_str()).collect();
+            let placeholders: Vec<String> = names
+                .iter()
+                .enumerate()
+                .map(|(j, _)| {
+                    param_values.push(Box::new(names[j].to_owned()));
+                    format!("?{}", param_values.len())
+                })
+                .collect();
+            clauses.push(format!("severity IN ({})", placeholders.join(",")));
+        }
 
         let where_clause = if clauses.is_empty() {
             String::new()
@@ -235,6 +247,14 @@ impl AuditStore for SqliteStore {
             .prepare(&format!("{SELECT_COLS} ORDER BY seq"))
             .map_err(|e| LibroError::Store(e.to_string()))?;
         Self::collect_rows(&mut stmt, [])
+    }
+
+    fn load_page(&self, offset: usize, limit: usize) -> crate::Result<Vec<AuditEntry>> {
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare(&format!("{SELECT_COLS} ORDER BY seq LIMIT ?1 OFFSET ?2"))
+            .map_err(|e| LibroError::Store(e.to_string()))?;
+        Self::collect_rows(&mut stmt, params![limit as i64, offset as i64])
     }
 
     fn len(&self) -> usize {
@@ -340,6 +360,38 @@ mod tests {
 
         let entries = store.load_and_verify().unwrap();
         assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn sqlite_store_load_page() {
+        let mut store = SqliteStore::in_memory().unwrap();
+        let mut prev = String::new();
+        for i in 0..10 {
+            let e = AuditEntry::new(EventSeverity::Info, "s", format!("e{i}"), serde_json::json!({}), &prev);
+            prev = e.hash().to_owned();
+            store.append(&e).unwrap();
+        }
+        let page = store.load_page(3, 3).unwrap();
+        assert_eq!(page.len(), 3);
+        assert_eq!(page[0].action(), "e3");
+
+        let page = store.load_page(8, 5).unwrap();
+        assert_eq!(page.len(), 2);
+    }
+
+    #[test]
+    fn sqlite_store_min_severity_query() {
+        let mut store = SqliteStore::in_memory().unwrap();
+        let e1 = AuditEntry::new(EventSeverity::Debug, "s", "a", serde_json::json!({}), "");
+        let e2 = AuditEntry::new(EventSeverity::Warning, "s", "b", serde_json::json!({}), e1.hash());
+        let e3 = AuditEntry::new(EventSeverity::Critical, "s", "c", serde_json::json!({}), e2.hash());
+        store.append(&e1).unwrap();
+        store.append(&e2).unwrap();
+        store.append(&e3).unwrap();
+
+        let results = store.query(&QueryFilter::new().min_severity(EventSeverity::Warning)).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|e| e.severity() >= EventSeverity::Warning));
     }
 
     #[test]

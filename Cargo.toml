@@ -8,13 +8,16 @@ description = "Cryptographic audit chain — tamper-proof event logging with has
 homepage = "https://github.com/MacCracken/libro"
 repository = "https://github.com/MacCracken/libro"
 readme = "README.md"
+documentation = "https://docs.rs/libro"
 keywords = ["audit", "logging", "cryptographic", "chain", "tamper-proof"]
 categories = ["cryptography", "data-structures"]
+exclude = [".claude/", ".github/", "benchmark-results/", "docs/", "scripts/"]
 
 [features]
 default = []
 sqlite = ["dep:rusqlite"]
 signing = ["dep:ed25519-dalek", "dep:rand_core"]
+streaming = ["dep:majra", "dep:tokio"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -28,6 +31,8 @@ fs2 = "0.4"
 ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
 rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
+majra = { version = "0.21.3", features = ["pubsub"], optional = true }
+tokio = { version = "1", features = ["sync"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -35,6 +40,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+majra = { version = "0.21.3", features = ["pubsub"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "chain"

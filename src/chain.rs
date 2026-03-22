@@ -104,6 +104,19 @@ impl AuditChain {
         result
     }
 
+    /// Append multiple events in one call. Each entry is chained to the previous.
+    /// Returns a slice of the newly appended entries.
+    pub fn append_batch(
+        &mut self,
+        events: impl IntoIterator<Item = (EventSeverity, String, String, serde_json::Value)>,
+    ) -> &[AuditEntry] {
+        let start = self.entries.len();
+        for (severity, source, action, details) in events {
+            self.append(severity, source, action, details);
+        }
+        &self.entries[start..]
+    }
+
     /// Query entries by source.
     pub fn by_source(&self, source: &str) -> Vec<&AuditEntry> {
         self.entries.iter().filter(|e| e.source() == source).collect()
@@ -123,6 +136,13 @@ impl AuditChain {
             .iter()
             .filter(|e| e.agent_id() == Some(agent_id))
             .collect()
+    }
+
+    /// Return a page of entries: `offset` entries skipped, up to `limit` returned.
+    pub fn page(&self, offset: usize, limit: usize) -> &[AuditEntry] {
+        let start = offset.min(self.entries.len());
+        let end = (start + limit).min(self.entries.len());
+        &self.entries[start..end]
     }
 
     /// Query entries using a composable [`QueryFilter`].
@@ -343,6 +363,34 @@ mod tests {
 
         let results = chain.query(&QueryFilter::new().action("alert"));
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn append_batch_chains_correctly() {
+        let mut chain = AuditChain::new();
+        let events = vec![
+            (EventSeverity::Info, "daimon".to_owned(), "start".to_owned(), serde_json::json!({})),
+            (EventSeverity::Security, "aegis".to_owned(), "alert".to_owned(), serde_json::json!({})),
+            (EventSeverity::Info, "daimon".to_owned(), "stop".to_owned(), serde_json::json!({})),
+        ];
+        let appended = chain.append_batch(events);
+        assert_eq!(appended.len(), 3);
+        assert_eq!(chain.len(), 3);
+        assert!(chain.verify().is_ok());
+    }
+
+    #[test]
+    fn page_returns_slice() {
+        let mut chain = AuditChain::new();
+        for i in 0..10 {
+            chain.append(EventSeverity::Info, "s", format!("e{i}"), serde_json::json!({}));
+        }
+        assert_eq!(chain.page(0, 3).len(), 3);
+        assert_eq!(chain.page(0, 3)[0].action(), "e0");
+        assert_eq!(chain.page(3, 3).len(), 3);
+        assert_eq!(chain.page(3, 3)[0].action(), "e3");
+        assert_eq!(chain.page(8, 5).len(), 2); // only 2 left
+        assert_eq!(chain.page(20, 5).len(), 0); // past end
     }
 
     #[test]

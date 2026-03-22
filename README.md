@@ -34,6 +34,10 @@ Consumers:
 - **Retention policies** — keep N entries, keep by duration, keep after timestamp
 - **Merkle tree** — build from chain, O(1) root comparison, O(log N) inclusion proofs
 - **Digital signatures** — Ed25519 per-entry signing and verification (feature: `signing`)
+- **Severity ordering** — `Ord` on `EventSeverity`, `min_severity` query filter
+- **Batch append** — `append_batch` for multiple entries in one call
+- **Pagination** — `page()` on chain, `load_page()` on stores (SQL LIMIT/OFFSET for SQLite)
+- **Streaming** — real-time pub/sub via majra with MQTT-style topic wildcards (feature: `streaming`)
 - **Structured details** — arbitrary JSON payload per entry
 
 ## Quick Start
@@ -60,9 +64,10 @@ chain.append(
 // Verify chain integrity
 chain.verify().expect("chain is valid");
 
-// Tampering breaks the chain
-// chain.entries()[0].details = serde_json::json!("tampered");
-// chain.verify() → Err(IntegrityViolation)
+// Query security events
+let alerts = chain.query(&libro::QueryFilter::new()
+    .min_severity(EventSeverity::Security));
+assert_eq!(alerts.len(), 1);
 ```
 
 ## Modules
@@ -80,6 +85,7 @@ chain.verify().expect("chain is valid");
 | `review` | `ChainReview` — structured chain summary with integrity, distributions, time range |
 | `merkle` | `MerkleTree` — O(log N) inclusion proofs for partial verification |
 | `signing` | Ed25519 per-entry signatures (feature: `signing`) |
+| `streaming` | Real-time pub/sub via majra (feature: `streaming`) |
 | `verify` | Standalone chain verification (for external audit tools) |
 
 ## Roadmap

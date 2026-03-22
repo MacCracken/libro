@@ -28,6 +28,7 @@ pub struct QueryFilter {
     pub(crate) after: Option<DateTime<Utc>>,
     pub(crate) before: Option<DateTime<Utc>>,
     pub(crate) action: Option<String>,
+    pub(crate) min_severity: Option<EventSeverity>,
 }
 
 impl QueryFilter {
@@ -65,6 +66,12 @@ impl QueryFilter {
         self
     }
 
+    /// Filter to entries with severity >= the given level.
+    pub fn min_severity(mut self, min: EventSeverity) -> Self {
+        self.min_severity = Some(min);
+        self
+    }
+
     /// Filter by action.
     pub fn action(mut self, action: impl Into<String>) -> Self {
         self.action = Some(action.into());
@@ -90,6 +97,11 @@ impl QueryFilter {
         }
         if let Some(ref a) = self.action
             && entry.action() != a
+        {
+            return false;
+        }
+        if let Some(min) = self.min_severity
+            && entry.severity() < min
         {
             return false;
         }
@@ -189,6 +201,19 @@ mod tests {
         let last_ts = entries[2].timestamp();
         let results = QueryFilter::new().before(last_ts).apply(&entries);
         assert!(results.iter().all(|e| e.timestamp() < last_ts));
+    }
+
+    #[test]
+    fn filter_min_severity() {
+        let entries = make_chain();
+        // Security is the highest, so min_severity=Security should only match aegis
+        let results = QueryFilter::new().min_severity(EventSeverity::Security).apply(&entries);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source(), "aegis");
+
+        // min_severity=Info should match all (all are Info or Security)
+        let results = QueryFilter::new().min_severity(EventSeverity::Info).apply(&entries);
+        assert_eq!(results.len(), 3);
     }
 
     #[test]

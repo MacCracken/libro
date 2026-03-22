@@ -124,6 +124,26 @@ fn bench_file_store_append_100(c: &mut Criterion) {
     });
 }
 
+fn bench_append_batch_1000(c: &mut Criterion) {
+    c.bench_function("chain_append_batch_1000", |b| {
+        b.iter(|| {
+            let mut chain = AuditChain::new();
+            let events: Vec<_> = (0..1000)
+                .map(|i| (EventSeverity::Info, "bench".to_owned(), format!("event-{i}"), serde_json::json!({})))
+                .collect();
+            chain.append_batch(events);
+            chain
+        })
+    });
+}
+
+fn bench_page_1000(c: &mut Criterion) {
+    let chain = make_chain(1000);
+    c.bench_function("chain_page_mid_100", |b| {
+        b.iter(|| chain.page(450, 100))
+    });
+}
+
 fn bench_file_store_load_100(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bench.jsonl");
@@ -149,6 +169,8 @@ criterion_group!(
     bench_query_1000,
     bench_export_jsonl_1000,
     bench_export_csv_1000,
+    bench_append_batch_1000,
+    bench_page_1000,
     bench_file_store_append_100,
     bench_file_store_load_100,
 );
