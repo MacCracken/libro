@@ -247,10 +247,10 @@ mod tests {
         let entries = make_entries(8);
         let tree = MerkleTree::build(&entries).unwrap();
 
-        for i in 0..entries.len() {
+        for (i, entry) in entries.iter().enumerate() {
             let proof = tree.proof(i).unwrap();
             assert_eq!(proof.index, i);
-            assert_eq!(proof.leaf_hash, entries[i].hash());
+            assert_eq!(proof.leaf_hash, entry.hash());
             assert_eq!(proof.root, tree.root());
             assert!(verify_proof(&proof), "proof failed for index {i}");
         }
