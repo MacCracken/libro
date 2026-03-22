@@ -27,7 +27,11 @@ Consumers:
 - **Chain verification** — verify integrity of entire chain or any subsequence
 - **Severity levels** — Debug, Info, Warning, Error, Critical, Security
 - **Agent tracking** — optional agent_id per entry for per-agent audit trails
-- **Storage backends** — `AuditStore` trait with memory backend (file/SQLite planned)
+- **Storage backends** — `AuditStore` trait with memory, file (JSON Lines), and SQLite backends
+- **Chain rotation** — archive old entries, start new chain linked to previous head
+- **Composable queries** — filter by source, severity, agent, action, time range (all ANDed)
+- **Export** — JSON Lines and CSV to any `io::Write` target
+- **Retention policies** — keep N entries, keep by duration, keep after timestamp
 - **Structured details** — arbitrary JSON payload per entry
 
 ## Quick Start
@@ -65,29 +69,18 @@ chain.verify().expect("chain is valid");
 |--------|-------------|
 | `entry` | `AuditEntry` with UUID, timestamp, severity, source, action, JSON details, hash linking |
 | `chain` | `AuditChain` — append, query, verify, head hash |
-| `store` | `AuditStore` trait + `MemoryStore` (file/SQLite backends planned) |
+| `store` | `AuditStore` trait + `MemoryStore` |
+| `file_store` | `FileStore` — append-only JSON Lines persistence |
+| `sqlite_store` | `SqliteStore` — queryable SQLite persistence (feature: `sqlite`) |
+| `query` | `QueryFilter` — composable, multi-field entry filtering |
+| `export` | Export to JSON Lines and CSV (`to_jsonl`, `to_csv`) |
+| `retention` | `RetentionPolicy` — keep N entries, keep by age, keep after timestamp |
 | `verify` | Standalone chain verification (for external audit tools) |
 
 ## Roadmap
 
-### Done
-- [x] Hash-linked audit entries (SHA-256)
-- [x] Append-only chain with verification
-- [x] Severity levels (Debug through Security)
-- [x] Agent ID tracking
-- [x] AuditStore trait with memory backend
-- [x] 17 tests
-
-### Phase 1 — Persistence
-- [ ] File-based store (append-only log file, one JSON entry per line)
-- [ ] SQLite store (for queryable audit history)
-- [ ] Chain rotation (archive old entries, start new chain linked to previous)
-
 ### Phase 2 — Query & Export
-- [ ] Query by time range, severity, source, agent_id
-- [ ] Export to JSON Lines, CSV
 - [ ] Streaming — subscribe to new entries (via majra pub/sub)
-- [ ] Retention policies (keep N days, keep N entries)
 
 ### Phase 3 — Advanced
 - [ ] Merkle tree for efficient partial verification

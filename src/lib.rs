@@ -13,14 +13,23 @@
 
 pub mod chain;
 pub mod entry;
+pub mod export;
+pub mod file_store;
+pub mod query;
+pub mod retention;
+#[cfg(feature = "sqlite")]
+pub mod sqlite_store;
 pub mod store;
 pub mod verify;
 
 mod error;
 pub use error::LibroError;
 
-pub use chain::AuditChain;
+pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
+pub use file_store::FileStore;
+#[cfg(feature = "sqlite")]
+pub use sqlite_store::SqliteStore;
 pub use verify::verify_chain;
 
 pub type Result<T> = std::result::Result<T, LibroError>;

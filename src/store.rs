@@ -50,6 +50,6 @@ mod tests {
         store.append(&entry).unwrap();
         assert_eq!(store.len(), 1);
         let loaded = store.load_all().unwrap();
-        assert_eq!(loaded[0].hash, entry.hash);
+        assert_eq!(loaded[0].hash(), entry.hash());
     }
 }

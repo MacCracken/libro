@@ -16,20 +16,51 @@ pub enum EventSeverity {
     Security,
 }
 
+impl EventSeverity {
+    /// Stable string representation used in hashing and storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "Debug",
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+            Self::Error => "Error",
+            Self::Critical => "Critical",
+            Self::Security => "Security",
+        }
+    }
+}
+
 /// A single audit entry in the chain.
+///
+/// Fields are not directly mutable — all construction goes through [`AuditEntry::new`]
+/// and [`AuditEntry::with_agent`], which recompute the hash. This ensures integrity
+/// by construction: a valid `AuditEntry` always has a correct self-hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
-    pub id: Uuid,
-    pub timestamp: DateTime<Utc>,
-    pub severity: EventSeverity,
-    pub source: String,
-    pub action: String,
-    pub details: serde_json::Value,
-    pub agent_id: Option<String>,
+    id: Uuid,
+    timestamp: DateTime<Utc>,
+    severity: EventSeverity,
+    source: String,
+    action: String,
+    details: serde_json::Value,
+    agent_id: Option<String>,
     /// SHA-256 hash of the previous entry (empty string for genesis).
-    pub prev_hash: String,
+    prev_hash: String,
     /// SHA-256 hash of this entry (computed on creation).
-    pub hash: String,
+    hash: String,
+}
+
+impl AuditEntry {
+    // --- Accessors ---
+    pub fn id(&self) -> Uuid { self.id }
+    pub fn timestamp(&self) -> DateTime<Utc> { self.timestamp }
+    pub fn severity(&self) -> EventSeverity { self.severity }
+    pub fn source(&self) -> &str { &self.source }
+    pub fn action(&self) -> &str { &self.action }
+    pub fn details(&self) -> &serde_json::Value { &self.details }
+    pub fn agent_id(&self) -> Option<&str> { self.agent_id.as_deref() }
+    pub fn prev_hash(&self) -> &str { &self.prev_hash }
+    pub fn hash(&self) -> &str { &self.hash }
 }
 
 impl AuditEntry {
@@ -56,6 +87,24 @@ impl AuditEntry {
         entry
     }
 
+    /// Reconstruct an entry from stored fields (e.g. from database rows).
+    /// The caller is responsible for providing correct field values;
+    /// use [`AuditEntry::verify`] to check integrity after reconstruction.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_raw(
+        id: Uuid,
+        timestamp: DateTime<Utc>,
+        severity: EventSeverity,
+        source: String,
+        action: String,
+        details: serde_json::Value,
+        agent_id: Option<String>,
+        prev_hash: String,
+        hash: String,
+    ) -> Self {
+        Self { id, timestamp, severity, source, action, details, agent_id, prev_hash, hash }
+    }
+
     pub fn with_agent(mut self, agent_id: impl Into<String>) -> Self {
         self.agent_id = Some(agent_id.into());
         self.hash = self.compute_hash();
@@ -63,14 +112,19 @@ impl AuditEntry {
     }
 
     /// Compute the SHA-256 hash of this entry's content.
+    ///
+    /// Uses stable representations: `EventSeverity::as_str()` for severity,
+    /// and canonicalized JSON (sorted keys) for details, ensuring the hash
+    /// is reproducible across serialization roundtrips and Rust versions.
     pub fn compute_hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.id.as_bytes());
         hasher.update(self.timestamp.to_rfc3339().as_bytes());
-        hasher.update(format!("{:?}", self.severity).as_bytes());
+        hasher.update(self.severity.as_str().as_bytes());
         hasher.update(self.source.as_bytes());
         hasher.update(self.action.as_bytes());
-        hasher.update(self.details.to_string().as_bytes());
+        // Canonical JSON: sorted keys for deterministic hashing
+        canonical_json_hash(&self.details, &mut hasher);
         hasher.update(self.agent_id.as_deref().unwrap_or("").as_bytes());
         hasher.update(self.prev_hash.as_bytes());
         format!("{:x}", hasher.finalize())
@@ -79,6 +133,60 @@ impl AuditEntry {
     /// Verify this entry's hash matches its content.
     pub fn verify(&self) -> bool {
         self.hash == self.compute_hash()
+    }
+}
+
+/// Write a JSON value into a hasher with sorted object keys for deterministic hashing.
+fn canonical_json_hash(value: &serde_json::Value, hasher: &mut Sha256) {
+    match value {
+        serde_json::Value::Null => hasher.update(b"null"),
+        serde_json::Value::Bool(b) => {
+            hasher.update(if *b { "true" } else { "false" }.as_bytes());
+        }
+        serde_json::Value::Number(n) => hasher.update(n.to_string().as_bytes()),
+        serde_json::Value::String(s) => {
+            hasher.update(b"\"");
+            hasher.update(s.as_bytes());
+            hasher.update(b"\"");
+        }
+        serde_json::Value::Array(arr) => {
+            hasher.update(b"[");
+            for (i, v) in arr.iter().enumerate() {
+                if i > 0 {
+                    hasher.update(b",");
+                }
+                canonical_json_hash(v, hasher);
+            }
+            hasher.update(b"]");
+        }
+        serde_json::Value::Object(map) => {
+            hasher.update(b"{");
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    hasher.update(b",");
+                }
+                hasher.update(b"\"");
+                hasher.update(key.as_bytes());
+                hasher.update(b"\":");
+                canonical_json_hash(&map[*key], hasher);
+            }
+            hasher.update(b"}");
+        }
+    }
+}
+
+#[cfg(test)]
+impl AuditEntry {
+    /// Corrupt the action field for tamper-detection testing.
+    pub(crate) fn corrupt_action(&mut self, action: impl Into<String>) {
+        self.action = action.into();
+    }
+
+    /// Corrupt the hash field for tamper-detection testing.
+    pub(crate) fn corrupt_hash(&mut self, hash: impl Into<String>) {
+        self.hash = hash.into();
     }
 }
 
@@ -95,7 +203,7 @@ mod tests {
             serde_json::json!({"agent_id": "a1"}),
             "",
         );
-        assert!(!entry.hash.is_empty());
+        assert!(!entry.hash().is_empty());
         assert!(entry.verify());
     }
 
@@ -108,8 +216,8 @@ mod tests {
             serde_json::json!({}),
             "",
         );
-        let original_hash = entry.hash.clone();
-        entry.action = "tampered".into();
+        let original_hash = entry.hash().to_owned();
+        entry.corrupt_action("tampered");
         assert_ne!(entry.compute_hash(), original_hash);
         assert!(!entry.verify());
     }
@@ -122,9 +230,9 @@ mod tests {
             "src",
             "act2",
             serde_json::json!({}),
-            &e1.hash,
+            e1.hash(),
         );
-        assert_eq!(e2.prev_hash, e1.hash);
+        assert_eq!(e2.prev_hash(), e1.hash());
         assert!(e2.verify());
     }
 
@@ -132,8 +240,66 @@ mod tests {
     fn entry_with_agent() {
         let entry = AuditEntry::new(EventSeverity::Info, "src", "act", serde_json::json!({}), "")
             .with_agent("agent-123");
-        assert_eq!(entry.agent_id.as_deref(), Some("agent-123"));
+        assert_eq!(entry.agent_id(), Some("agent-123"));
         assert!(entry.verify());
+    }
+
+    #[test]
+    fn canonical_hash_covers_all_json_types() {
+        // Exercise null, bool, number, string, array, and nested objects
+        let details = serde_json::json!({
+            "z_last": null,
+            "a_first": true,
+            "numbers": [1, 2.5, -3],
+            "nested": {"b": "beta", "a": "alpha"},
+            "text": "hello"
+        });
+        let entry = AuditEntry::new(EventSeverity::Info, "src", "act", details, "");
+        assert!(entry.verify());
+
+        // Same data with keys in different insertion order should produce same hash
+        let details2 = serde_json::json!({
+            "text": "hello",
+            "nested": {"a": "alpha", "b": "beta"},
+            "numbers": [1, 2.5, -3],
+            "a_first": true,
+            "z_last": null
+        });
+        let entry2 = AuditEntry::new(EventSeverity::Info, "src", "act", details2, "");
+        // Can't compare hashes directly (different timestamps/ids), but both should verify
+        assert!(entry2.verify());
+    }
+
+    #[test]
+    fn severity_as_str_all_variants() {
+        assert_eq!(EventSeverity::Debug.as_str(), "Debug");
+        assert_eq!(EventSeverity::Info.as_str(), "Info");
+        assert_eq!(EventSeverity::Warning.as_str(), "Warning");
+        assert_eq!(EventSeverity::Error.as_str(), "Error");
+        assert_eq!(EventSeverity::Critical.as_str(), "Critical");
+        assert_eq!(EventSeverity::Security.as_str(), "Security");
+    }
+
+    #[test]
+    fn accessors_return_correct_values() {
+        let entry = AuditEntry::new(
+            EventSeverity::Warning,
+            "aegis",
+            "scan.complete",
+            serde_json::json!({"count": 42}),
+            "prev123",
+        )
+        .with_agent("agent-x");
+
+        assert_eq!(entry.severity(), EventSeverity::Warning);
+        assert_eq!(entry.source(), "aegis");
+        assert_eq!(entry.action(), "scan.complete");
+        assert_eq!(entry.details(), &serde_json::json!({"count": 42}));
+        assert_eq!(entry.agent_id(), Some("agent-x"));
+        assert_eq!(entry.prev_hash(), "prev123");
+        assert!(!entry.hash().is_empty());
+        // id and timestamp are set automatically
+        assert!(!entry.id().is_nil());
     }
 
     #[test]
@@ -147,7 +313,7 @@ mod tests {
         );
         let json = serde_json::to_string(&entry).unwrap();
         let back: AuditEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.hash, entry.hash);
+        assert_eq!(back.hash(), entry.hash());
         assert!(back.verify());
     }
 }

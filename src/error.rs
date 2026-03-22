@@ -8,8 +8,6 @@ pub enum LibroError {
         expected: String,
         actual: String,
     },
-    #[error("empty chain — cannot verify")]
-    EmptyChain,
     #[error("store error: {0}")]
     Store(String),
     #[error(transparent)]

@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["audit", "logging", "cryptographic", "chain", "tamper-proof"]
 categories = ["cryptography", "data-structures"]
 
+[features]
+default = []
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -19,10 +23,13 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+fs2 = "0.4"
+rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
 
 [[bench]]
 name = "chain"

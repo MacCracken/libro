@@ -2,11 +2,24 @@
 
 use crate::LibroError;
 use crate::entry::{AuditEntry, EventSeverity};
+use crate::query::QueryFilter;
+use crate::verify::verify_chain;
 
 /// An append-only audit chain with hash-linked entries.
 #[derive(Debug, Default)]
 pub struct AuditChain {
-    entries: Vec<AuditEntry>,
+    pub(crate) entries: Vec<AuditEntry>,
+    /// After rotation, holds the head hash of the previous chain for continuity.
+    pub(crate) prev_chain_hash: Option<String>,
+}
+
+/// Archived entries from a chain rotation.
+#[derive(Debug)]
+pub struct ChainArchive {
+    /// The drained entries.
+    pub entries: Vec<AuditEntry>,
+    /// The head hash of the archived chain (used to link the next chain).
+    pub head_hash: String,
 }
 
 impl AuditChain {
@@ -25,7 +38,8 @@ impl AuditChain {
         let prev_hash = self
             .entries
             .last()
-            .map(|e| e.hash.clone())
+            .map(|e| e.hash().to_owned())
+            .or_else(|| self.prev_chain_hash.clone())
             .unwrap_or_default();
         let entry = AuditEntry::new(severity, source, action, details, prev_hash);
         self.entries.push(entry);
@@ -48,58 +62,74 @@ impl AuditChain {
 
     /// Get the last entry's hash (chain head).
     pub fn head_hash(&self) -> Option<&str> {
-        self.entries.last().map(|e| e.hash.as_str())
+        self.entries.last().map(|e| e.hash())
     }
 
     /// Verify the entire chain's integrity.
+    ///
+    /// Checks the genesis entry links to the expected previous chain hash
+    /// (empty string for a fresh chain, or the archived head after rotation),
+    /// then delegates entry-level hash and linkage verification to [`verify_chain`].
     pub fn verify(&self) -> crate::Result<()> {
         if self.entries.is_empty() {
             return Ok(());
         }
 
-        // Verify genesis entry
-        if !self.entries[0].prev_hash.is_empty() {
+        // Verify genesis entry links correctly (accounts for rotation)
+        let expected_genesis_prev = self.prev_chain_hash.as_deref().unwrap_or("");
+        if self.entries[0].prev_hash() != expected_genesis_prev {
             return Err(LibroError::IntegrityViolation {
                 index: 0,
-                expected: "(empty)".into(),
-                actual: self.entries[0].prev_hash.clone(),
+                expected: expected_genesis_prev.to_owned(),
+                actual: self.entries[0].prev_hash().to_owned(),
             });
         }
 
-        for (i, entry) in self.entries.iter().enumerate() {
-            // Verify each entry's self-hash
-            if !entry.verify() {
-                return Err(LibroError::IntegrityViolation {
-                    index: i,
-                    expected: entry.compute_hash(),
-                    actual: entry.hash.clone(),
-                });
-            }
-
-            // Verify chain linkage (skip genesis)
-            if i > 0 && entry.prev_hash != self.entries[i - 1].hash {
-                return Err(LibroError::IntegrityViolation {
-                    index: i,
-                    expected: self.entries[i - 1].hash.clone(),
-                    actual: entry.prev_hash.clone(),
-                });
-            }
-        }
-
-        Ok(())
+        verify_chain(&self.entries)
     }
 
     /// Query entries by source.
     pub fn by_source(&self, source: &str) -> Vec<&AuditEntry> {
-        self.entries.iter().filter(|e| e.source == source).collect()
+        self.entries.iter().filter(|e| e.source() == source).collect()
     }
 
     /// Query entries by severity.
     pub fn by_severity(&self, severity: EventSeverity) -> Vec<&AuditEntry> {
         self.entries
             .iter()
-            .filter(|e| e.severity == severity)
+            .filter(|e| e.severity() == severity)
             .collect()
+    }
+
+    /// Query entries by agent ID.
+    pub fn by_agent(&self, agent_id: &str) -> Vec<&AuditEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.agent_id() == Some(agent_id))
+            .collect()
+    }
+
+    /// Query entries using a composable [`QueryFilter`].
+    pub fn query(&self, filter: &QueryFilter) -> Vec<&AuditEntry> {
+        filter.apply(&self.entries)
+    }
+
+    /// Rotate the chain: drain all current entries and return them as an archive.
+    /// The next entry appended will link to the previous chain's head hash,
+    /// preserving continuity across rotations.
+    pub fn rotate(&mut self) -> ChainArchive {
+        let head_hash = self.head_hash().unwrap_or("").to_owned();
+        let entries = std::mem::take(&mut self.entries);
+        self.prev_chain_hash = Some(head_hash.clone());
+        ChainArchive { entries, head_hash }
+    }
+
+    /// Restore a chain from an archive (e.g. for verification of historical data).
+    pub fn from_entries(entries: Vec<AuditEntry>) -> Self {
+        Self {
+            entries,
+            prev_chain_hash: None,
+        }
     }
 }
 
@@ -133,7 +163,7 @@ mod tests {
         chain.append(EventSeverity::Info, "src", "act2", serde_json::json!({}));
 
         // Tamper with first entry
-        chain.entries[0].action = "hacked".into();
+        chain.entries[0].corrupt_action("hacked");
         assert!(chain.verify().is_err());
     }
 
@@ -171,5 +201,134 @@ mod tests {
         assert!(chain.head_hash().is_none());
         chain.append(EventSeverity::Info, "src", "act", serde_json::json!({}));
         assert!(chain.head_hash().is_some());
+    }
+
+    #[test]
+    fn rotate_archives_and_continues() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "src", "first", serde_json::json!({}));
+        chain.append(EventSeverity::Info, "src", "second", serde_json::json!({}));
+        let head_before = chain.head_hash().unwrap().to_owned();
+
+        let archive = chain.rotate();
+        assert_eq!(archive.entries.len(), 2);
+        assert_eq!(archive.head_hash, head_before);
+        assert!(chain.is_empty());
+
+        // New entry links to the archived chain's head
+        let entry = chain.append(EventSeverity::Info, "src", "third", serde_json::json!({}));
+        assert_eq!(entry.prev_hash(), head_before);
+        assert!(chain.verify().is_ok());
+    }
+
+    #[test]
+    fn rotate_empty_chain() {
+        let mut chain = AuditChain::new();
+        let archive = chain.rotate();
+        assert!(archive.entries.is_empty());
+        assert_eq!(archive.head_hash, "");
+    }
+
+    #[test]
+    fn from_entries_verifies() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "s", "a", serde_json::json!({}));
+        chain.append(EventSeverity::Info, "s", "b", serde_json::json!({}));
+        let entries = chain.entries().to_vec();
+
+        let restored = AuditChain::from_entries(entries);
+        assert_eq!(restored.len(), 2);
+        assert!(restored.verify().is_ok());
+    }
+
+    #[test]
+    fn multiple_rotations() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "src", "gen1", serde_json::json!({}));
+        let archive1 = chain.rotate();
+
+        chain.append(EventSeverity::Info, "src", "gen2", serde_json::json!({}));
+        assert!(chain.verify().is_ok());
+        assert_eq!(chain.entries()[0].prev_hash(), archive1.head_hash);
+
+        let archive2 = chain.rotate();
+        chain.append(EventSeverity::Info, "src", "gen3", serde_json::json!({}));
+        assert!(chain.verify().is_ok());
+        assert_eq!(chain.entries()[0].prev_hash(), archive2.head_hash);
+    }
+
+    #[test]
+    fn by_agent() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        // Manually create entries with agents and push them
+        let e = AuditEntry::new(EventSeverity::Info, "daimon", "task", serde_json::json!({}), chain.head_hash().unwrap())
+            .with_agent("agent-01");
+        chain.entries.push(e);
+
+        assert_eq!(chain.by_agent("agent-01").len(), 1);
+        assert_eq!(chain.by_agent("nonexistent").len(), 0);
+    }
+
+    #[test]
+    fn query_with_filter() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        chain.append(EventSeverity::Security, "aegis", "alert", serde_json::json!({}));
+        chain.append(EventSeverity::Info, "daimon", "stop", serde_json::json!({}));
+
+        let results = chain.query(&QueryFilter::new().source("daimon").severity(EventSeverity::Info));
+        assert_eq!(results.len(), 2);
+
+        let results = chain.query(&QueryFilter::new().action("alert"));
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn verify_detects_bad_genesis_prev_hash() {
+        // Manually construct a chain where genesis has wrong prev_hash
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "bogus");
+        let chain = AuditChain::from_entries(vec![entry]);
+        // from_entries sets prev_chain_hash to None, so expected genesis prev is ""
+        let err = chain.verify().unwrap_err();
+        assert!(err.to_string().contains("entry 0"));
+    }
+
+    #[test]
+    fn verify_detects_broken_linkage() {
+        let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), "wrong-hash");
+        let chain = AuditChain::from_entries(vec![e1, e2]);
+        let err = chain.verify().unwrap_err();
+        assert!(err.to_string().contains("entry 1"));
+    }
+
+    #[test]
+    fn verify_detects_tampered_self_hash() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "s", "a", serde_json::json!({}));
+        chain.append(EventSeverity::Info, "s", "b", serde_json::json!({}));
+        // Tamper with the hash directly (not the content)
+        chain.entries[1].corrupt_hash("tampered");
+        let err = chain.verify().unwrap_err();
+        assert!(err.to_string().contains("entry 1"));
+    }
+
+    #[test]
+    fn append_with_agent_on_chain() {
+        let mut chain = AuditChain::new();
+        chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        // The with_agent path on AuditEntry is already tested in entry module,
+        // but let's verify chain-level usage
+        let entry = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "task",
+            serde_json::json!({}),
+            chain.head_hash().unwrap(),
+        )
+        .with_agent("agent-007");
+        assert_eq!(entry.agent_id(), Some("agent-007"));
+        assert!(entry.verify());
     }
 }
