@@ -32,6 +32,8 @@ Consumers:
 - **Composable queries** — filter by source, severity, agent, action, time range (all ANDed)
 - **Export** — JSON Lines and CSV to any `io::Write` target
 - **Retention policies** — keep N entries, keep by duration, keep after timestamp
+- **Merkle tree** — build from chain, O(1) root comparison, O(log N) inclusion proofs
+- **Digital signatures** — Ed25519 per-entry signing and verification (feature: `signing`)
 - **Structured details** — arbitrary JSON payload per entry
 
 ## Quick Start
@@ -76,19 +78,13 @@ chain.verify().expect("chain is valid");
 | `export` | Export to JSON Lines and CSV (`to_jsonl`, `to_csv`) |
 | `retention` | `RetentionPolicy` — keep N entries, keep by age, keep after timestamp |
 | `review` | `ChainReview` — structured chain summary with integrity, distributions, time range |
+| `merkle` | `MerkleTree` — O(log N) inclusion proofs for partial verification |
+| `signing` | Ed25519 per-entry signatures (feature: `signing`) |
 | `verify` | Standalone chain verification (for external audit tools) |
 
 ## Roadmap
 
-### Phase 2 — Query & Export
-- [ ] Streaming — subscribe to new entries (via majra pub/sub)
-
-### Phase 3 — Advanced
-- [ ] Merkle tree for efficient partial verification
-- [ ] Digital signatures per entry (ed25519)
-- [ ] Remote attestation (TPM-backed chain sealing)
-- [ ] Multi-node chain sync (federated audit across fleet)
-- [ ] MCP tools: `libro_query`, `libro_verify`, `libro_export`
+See [docs/development/roadmap.md](docs/development/roadmap.md) for full roadmap and completed milestones.
 
 ## Reference Code
 

@@ -90,7 +90,7 @@ impl AuditEntry {
     /// Reconstruct an entry from stored fields (e.g. from database rows).
     /// The caller is responsible for providing correct field values;
     /// use [`AuditEntry::verify`] to check integrity after reconstruction.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn from_raw(
         id: Uuid,
         timestamp: DateTime<Utc>,

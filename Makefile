@@ -1,4 +1,4 @@
-.PHONY: check fmt clippy test audit deny build doc clean
+.PHONY: check fmt clippy test audit deny build doc bench clean
 check: fmt clippy test audit
 fmt:
 	cargo fmt --all -- --check
@@ -10,6 +10,8 @@ audit:
 	cargo audit
 deny:
 	cargo deny check
+bench:
+	./scripts/run-benchmarks.sh
 build:
 	cargo build --release
 doc:

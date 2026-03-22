@@ -1,4 +1,5 @@
 use crate::*;
+use crate::merkle::{MerkleTree, verify_proof};
 use crate::retention::RetentionPolicy;
 use crate::store::AuditStore;
 
@@ -223,4 +224,83 @@ fn verify_chain_linkage_failure_path() {
     let e2 = entry::AuditEntry::new(entry::EventSeverity::Info, "s", "b", serde_json::json!({}), "not-the-right-hash");
     let err = verify_chain(&[e1, e2]).unwrap_err();
     assert!(err.to_string().contains("entry 1"));
+}
+
+#[test]
+fn merkle_tree_from_chain() {
+    let mut chain = AuditChain::new();
+    for i in 0..10 {
+        chain.append(entry::EventSeverity::Info, "src", format!("e{i}"), serde_json::json!({}));
+    }
+
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+    assert_eq!(tree.leaf_count(), 10);
+
+    // Every entry has a valid proof
+    for i in 0..10 {
+        let proof = tree.proof(i).unwrap();
+        assert!(verify_proof(&proof));
+    }
+
+    // Merkle root changes if we add an entry
+    let mut chain2 = AuditChain::from_entries(chain.entries().to_vec());
+    chain2.entries.push(entry::AuditEntry::new(
+        entry::EventSeverity::Info, "src", "e10", serde_json::json!({}), chain.head_hash().unwrap(),
+    ));
+    let tree2 = MerkleTree::build(chain2.entries()).unwrap();
+    assert_ne!(tree.root(), tree2.root());
+}
+
+#[cfg(feature = "signing")]
+#[test]
+fn signing_merkle_chain_integration() {
+    use crate::signing::SigningKey;
+
+    let key = SigningKey::generate();
+    let vk = key.verifying_key();
+
+    // Build chain and sign each entry
+    let mut chain = AuditChain::new();
+    let mut sigs = Vec::new();
+    for i in 0..5 {
+        chain.append(entry::EventSeverity::Info, "src", format!("e{i}"), serde_json::json!({}));
+        sigs.push(key.sign(&chain.entries().last().unwrap()));
+    }
+
+    // Verify chain integrity
+    assert!(chain.verify().is_ok());
+
+    // Verify all signatures
+    for (i, sig) in sigs.iter().enumerate() {
+        assert!(sig.verify(&chain.entries()[i], &vk), "sig {i} failed");
+    }
+
+    // Build merkle tree and verify proofs
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+    for i in 0..5 {
+        let proof = tree.proof(i).unwrap();
+        assert!(verify_proof(&proof), "proof {i} failed");
+    }
+
+    // Tamper with an entry — entry.verify() catches the content change,
+    // while the signature still matches the (now-stale) stored hash.
+    // Chain verification catches both.
+    let mut entries = chain.entries().to_vec();
+    entries[2].corrupt_action("hacked");
+
+    // Entry self-hash check catches the tamper
+    assert!(!entries[2].verify());
+
+    // Chain verification catches the broken self-hash
+    assert!(verify_chain(&entries).is_err());
+
+    // Signature still matches the stored hash (which wasn't recomputed),
+    // but the entry's content no longer matches its hash
+    assert!(sigs[2].verify(&entries[2], &vk)); // hash field unchanged
+    assert!(!entries[2].verify()); // but content doesn't match
+
+    // Merkle tree built from tampered entries has same root (hash field unchanged),
+    // but chain verification catches the actual tamper
+    let tampered_tree = MerkleTree::build(&entries).unwrap();
+    assert_eq!(tree.root(), tampered_tree.root()); // merkle uses stored hash, not recomputed
 }

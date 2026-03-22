@@ -15,9 +15,12 @@ pub mod chain;
 pub mod entry;
 pub mod export;
 pub mod file_store;
+pub mod merkle;
 pub mod query;
 pub mod retention;
 pub mod review;
+#[cfg(feature = "signing")]
+pub mod signing;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_store;
 pub mod store;
@@ -30,6 +33,7 @@ pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
 pub use export::{to_csv, to_jsonl};
 pub use file_store::FileStore;
+pub use merkle::{MerkleTree, MerkleProof};
 pub use query::QueryFilter;
 pub use retention::RetentionPolicy;
 pub use review::ChainReview;

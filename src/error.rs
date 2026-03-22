@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum LibroError {
     #[error("chain integrity violated at entry {index}: expected hash {expected}, got {actual}")]
     IntegrityViolation {

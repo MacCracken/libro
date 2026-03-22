@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AuditChain::review()` — produce a structured chain summary with `Display` for human-readable output
 - `Display` impl for `AuditEntry` and `EventSeverity`
 - `tracing` instrumentation: append, verify, rotate, retention, store open, parse errors
+- `merkle` module: `MerkleTree` with `build()`, `root()`, `proof()`, and `verify_proof()` for O(log N) inclusion proofs
+- `signing` module (feature: `signing`): Ed25519 per-entry signatures with `SigningKey`, `VerifyingKey`, `EntrySignature`
 - `AuditStore::load_and_verify()` — convenience that loads and verifies in one call
 - `AuditStore::query()` — trait-level query with default load+filter impl; `SqliteStore` overrides with SQL WHERE
 - 84 tests, 94% line coverage

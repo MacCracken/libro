@@ -14,6 +14,7 @@ categories = ["cryptography", "data-structures"]
 [features]
 default = []
 sqlite = ["dep:rusqlite"]
+signing = ["dep:ed25519-dalek", "dep:rand_core"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -24,12 +25,16 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 fs2 = "0.4"
+ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 [[bench]]
 name = "chain"
