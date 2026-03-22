@@ -1,0 +1,29 @@
+[package]
+name = "libro"
+version = "0.21.3"
+edition = "2024"
+rust-version = "1.89"
+license = "AGPL-3.0-only"
+description = "Cryptographic audit chain — tamper-proof event logging with hash-linked entries and verification"
+homepage = "https://github.com/MacCracken/libro"
+repository = "https://github.com/MacCracken/libro"
+readme = "README.md"
+keywords = ["audit", "logging", "cryptographic", "chain", "tamper-proof"]
+categories = ["cryptography", "data-structures"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "chain"
+harness = false
