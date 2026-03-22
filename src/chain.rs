@@ -57,6 +57,36 @@ impl AuditChain {
         self.entries.last().unwrap()
     }
 
+    /// Append an event with an agent ID to the chain.
+    pub fn append_with_agent(
+        &mut self,
+        severity: EventSeverity,
+        source: impl Into<String>,
+        action: impl Into<String>,
+        details: serde_json::Value,
+        agent_id: impl Into<String>,
+    ) -> &AuditEntry {
+        let prev_hash = self
+            .entries
+            .last()
+            .map(|e| e.hash().to_owned())
+            .or_else(|| self.prev_chain_hash.clone())
+            .unwrap_or_default();
+        let entry =
+            AuditEntry::new(severity, source, action, details, prev_hash).with_agent(agent_id);
+        debug!(
+            hash = entry.hash(),
+            source = entry.source(),
+            action = entry.action(),
+            severity = entry.severity().as_str(),
+            agent = entry.agent_id().unwrap_or(""),
+            index = self.entries.len(),
+            "chain entry appended"
+        );
+        self.entries.push(entry);
+        self.entries.last().unwrap()
+    }
+
     /// Number of entries in the chain.
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -350,16 +380,13 @@ mod tests {
             "start",
             serde_json::json!({}),
         );
-        // Manually create entries with agents and push them
-        let e = AuditEntry::new(
+        chain.append_with_agent(
             EventSeverity::Info,
             "daimon",
             "task",
             serde_json::json!({}),
-            chain.head_hash().unwrap(),
-        )
-        .with_agent("agent-01");
-        chain.entries.push(e);
+            "agent-01",
+        );
 
         assert_eq!(chain.by_agent("agent-01").len(), 1);
         assert_eq!(chain.by_agent("nonexistent").len(), 0);
@@ -492,17 +519,17 @@ mod tests {
             "start",
             serde_json::json!({}),
         );
-        // The with_agent path on AuditEntry is already tested in entry module,
-        // but let's verify chain-level usage
-        let entry = AuditEntry::new(
+        let head = chain.head_hash().unwrap().to_owned();
+        let entry = chain.append_with_agent(
             EventSeverity::Info,
             "daimon",
             "task",
             serde_json::json!({}),
-            chain.head_hash().unwrap(),
-        )
-        .with_agent("agent-007");
+            "agent-007",
+        );
         assert_eq!(entry.agent_id(), Some("agent-007"));
+        assert_eq!(entry.prev_hash(), head);
         assert!(entry.verify());
+        assert!(chain.verify().is_ok());
     }
 }
