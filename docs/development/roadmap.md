@@ -32,11 +32,12 @@
 
 ## Planned
 
-### Integration
-- [ ] MCP tools: `libro_query`, `libro_verify`, `libro_export`
+### Integration (via bote — planned for bote v0.23.3)
+- [ ] MCP tools: `libro_query`, `libro_verify`, `libro_export` — implemented in [bote](https://github.com/MacCracken/bote) as registered tool handlers using libro as a dependency
+- [ ] Audit integration: bote dispatches audit events to libro chain
 
 ### Hardware Security
-- [ ] Remote attestation (TPM-backed chain sealing)
+- [ ] Remote attestation (TPM-backed chain sealing) — requires `tss-esapi` + TPM hardware
 
 ### Distributed
-- [ ] Multi-node chain sync (federated audit across fleet)
+- [ ] Multi-node chain sync (federated audit across fleet) — requires networking/consensus infrastructure

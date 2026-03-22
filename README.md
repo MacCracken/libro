@@ -90,7 +90,7 @@ assert_eq!(alerts.len(), 1);
 
 ## Roadmap
 
-See [docs/development/roadmap.md](docs/development/roadmap.md) for full roadmap and completed milestones.
+Phases 1–4 are complete. Remaining items (MCP tools, TPM attestation, multi-node sync) are infrastructure-dependent — MCP tools will be implemented in [bote](https://github.com/MacCracken/bote). See [docs/development/roadmap.md](docs/development/roadmap.md) for details.
 
 ## Reference Code
 
