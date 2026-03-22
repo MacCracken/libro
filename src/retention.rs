@@ -7,7 +7,6 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::chain::{AuditChain, ChainArchive};
 use crate::entry::AuditEntry;
 
 /// A retention policy that determines which entries to keep.
@@ -24,7 +23,7 @@ pub enum RetentionPolicy {
 impl RetentionPolicy {
     /// Returns the split index: entries before this index are archived,
     /// entries from this index onward are retained.
-    fn split_index(&self, entries: &[AuditEntry]) -> usize {
+    pub(crate) fn split_index(&self, entries: &[AuditEntry]) -> usize {
         match self {
             RetentionPolicy::KeepCount(n) => entries.len().saturating_sub(*n),
             RetentionPolicy::KeepDuration(duration) => {
@@ -43,41 +42,10 @@ impl RetentionPolicy {
     }
 }
 
-impl AuditChain {
-    /// Apply a retention policy, archiving entries that fall outside the
-    /// retention window. Returns the archived entries (if any).
-    ///
-    /// The chain maintains integrity: the first retained entry links to
-    /// the last archived entry's hash via `prev_chain_hash`.
-    ///
-    /// Returns `None` if no entries need archiving.
-    pub fn apply_retention(&mut self, policy: &RetentionPolicy) -> Option<ChainArchive> {
-        let split = policy.split_index(self.entries());
-        if split == 0 {
-            return None;
-        }
-
-        let all_entries = std::mem::take(&mut self.entries);
-        let (archived, retained) = all_entries.split_at(split);
-
-        let head_hash = archived
-            .last()
-            .map(|e| e.hash().to_owned())
-            .unwrap_or_default();
-
-        self.entries = retained.to_vec();
-        self.prev_chain_hash = Some(head_hash.clone());
-
-        Some(ChainArchive {
-            entries: archived.to_vec(),
-            head_hash,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::AuditChain;
     use crate::entry::EventSeverity;
 
     fn build_chain(n: usize) -> AuditChain {

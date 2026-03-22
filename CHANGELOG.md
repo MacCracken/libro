@@ -24,15 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AuditEntry` accessor methods: `id()`, `timestamp()`, `severity()`, `source()`, `action()`, `details()`, `agent_id()`, `prev_hash()`, `hash()`
 - Advisory file locking (`flock`) on `FileStore` append and load for concurrent-process safety
 - `fs2` dependency for cross-platform file locking
-- 45 tests, 95% line coverage
+- 70 tests, 95% line coverage
 
 ### Changed
+- **Breaking:** `compute_hash` now length-prefixes each variable-length field (little-endian u64) to prevent second-preimage collisions via field boundary shifting. Hashes from previous versions are incompatible.
 - **Breaking:** `AuditEntry` fields are now private — use accessor methods instead. Construction still via `AuditEntry::new()` and `.with_agent()`. This prevents accidental mutation that bypasses hash integrity.
 - **Breaking:** `compute_hash` now uses `EventSeverity::as_str()` (stable) instead of `Debug` format, and canonical sorted-key JSON for details. Hashes from previous versions are incompatible.
 - `AuditChain::verify()` now delegates to `verify_chain()` after genesis check, eliminating duplicated logic
+- `AuditChain::apply_retention()` moved from orphan impl in `retention.rs` to `chain.rs`
+- CSV export now escapes `agent_id` field (user-provided, may contain commas)
+- `RetentionPolicy::apply_retention` avoids double clone via `Vec::split_off`
+- Key types re-exported from crate root: `QueryFilter`, `RetentionPolicy`, `to_jsonl`, `to_csv`
 
 ### Removed
 - `LibroError::EmptyChain` variant (was dead code, never constructed)
+- `SqliteStore::query_by_source`, `query_by_severity`, `query_by_agent` — superseded by `SqliteStore::query(&QueryFilter)`
+- `tracing` dependency (was listed but never used)
 
 ## [0.21.3] — 2026-03-21
 

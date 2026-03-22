@@ -27,7 +27,10 @@ pub use error::LibroError;
 
 pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
+pub use export::{to_csv, to_jsonl};
 pub use file_store::FileStore;
+pub use query::QueryFilter;
+pub use retention::RetentionPolicy;
 #[cfg(feature = "sqlite")]
 pub use sqlite_store::SqliteStore;
 pub use verify::verify_chain;

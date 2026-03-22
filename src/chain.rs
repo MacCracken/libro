@@ -3,6 +3,7 @@
 use crate::LibroError;
 use crate::entry::{AuditEntry, EventSeverity};
 use crate::query::QueryFilter;
+use crate::retention::RetentionPolicy;
 use crate::verify::verify_chain;
 
 /// An append-only audit chain with hash-linked entries.
@@ -130,6 +131,36 @@ impl AuditChain {
             entries,
             prev_chain_hash: None,
         }
+    }
+
+    /// Apply a retention policy, archiving entries that fall outside the
+    /// retention window. Returns the archived entries (if any).
+    ///
+    /// The chain maintains integrity: the first retained entry links to
+    /// the last archived entry's hash via `prev_chain_hash`.
+    ///
+    /// Returns `None` if no entries need archiving.
+    pub fn apply_retention(&mut self, policy: &RetentionPolicy) -> Option<ChainArchive> {
+        let split = policy.split_index(self.entries());
+        if split == 0 {
+            return None;
+        }
+
+        let mut all_entries = std::mem::take(&mut self.entries);
+        let retained = all_entries.split_off(split);
+
+        let head_hash = all_entries
+            .last()
+            .map(|e| e.hash().to_owned())
+            .unwrap_or_default();
+
+        self.entries = retained;
+        self.prev_chain_hash = Some(head_hash.clone());
+
+        Some(ChainArchive {
+            entries: all_entries,
+            head_hash,
+        })
     }
 }
 

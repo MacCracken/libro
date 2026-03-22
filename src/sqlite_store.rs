@@ -77,34 +77,6 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Query entries by source.
-    pub fn query_by_source(&self, source: &str) -> crate::Result<Vec<AuditEntry>> {
-        let conn = self.lock();
-        let mut stmt = conn
-            .prepare(&format!("{SELECT_COLS} WHERE source = ?1 ORDER BY seq"))
-            .map_err(|e| LibroError::Store(e.to_string()))?;
-        Self::collect_rows(&mut stmt, params![source])
-    }
-
-    /// Query entries by severity.
-    pub fn query_by_severity(&self, severity: EventSeverity) -> crate::Result<Vec<AuditEntry>> {
-        let sev_str = severity.as_str();
-        let conn = self.lock();
-        let mut stmt = conn
-            .prepare(&format!("{SELECT_COLS} WHERE severity = ?1 ORDER BY seq"))
-            .map_err(|e| LibroError::Store(e.to_string()))?;
-        Self::collect_rows(&mut stmt, params![sev_str])
-    }
-
-    /// Query entries by agent ID.
-    pub fn query_by_agent(&self, agent_id: &str) -> crate::Result<Vec<AuditEntry>> {
-        let conn = self.lock();
-        let mut stmt = conn
-            .prepare(&format!("{SELECT_COLS} WHERE agent_id = ?1 ORDER BY seq"))
-            .map_err(|e| LibroError::Store(e.to_string()))?;
-        Self::collect_rows(&mut stmt, params![agent_id])
-    }
-
     /// Query entries using a composable [`QueryFilter`].
     ///
     /// Translates filter fields to SQL WHERE clauses for efficient indexed queries.
@@ -299,62 +271,6 @@ mod tests {
         assert_eq!(loaded[1].hash(), e2.hash());
         assert!(loaded[0].verify());
         assert!(loaded[1].verify());
-    }
-
-    #[test]
-    fn sqlite_store_query_by_source() {
-        let mut store = SqliteStore::in_memory().unwrap();
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(
-            EventSeverity::Security,
-            "aegis",
-            "alert",
-            serde_json::json!({}),
-            e1.hash(),
-        );
-        let e3 = AuditEntry::new(
-            EventSeverity::Info,
-            "daimon",
-            "stop",
-            serde_json::json!({}),
-            e2.hash(),
-        );
-
-        store.append(&e1).unwrap();
-        store.append(&e2).unwrap();
-        store.append(&e3).unwrap();
-
-        let daimon = store.query_by_source("daimon").unwrap();
-        assert_eq!(daimon.len(), 2);
-        assert_eq!(daimon[0].action(), "start");
-        assert_eq!(daimon[1].action(), "stop");
-
-        let aegis = store.query_by_severity(EventSeverity::Security).unwrap();
-        assert_eq!(aegis.len(), 1);
-        assert_eq!(aegis[0].source(), "aegis");
-    }
-
-    #[test]
-    fn sqlite_store_query_by_agent() {
-        let mut store = SqliteStore::in_memory().unwrap();
-        let e1 =
-            AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "")
-                .with_agent("agent-01");
-        let e2 = AuditEntry::new(
-            EventSeverity::Info,
-            "daimon",
-            "start",
-            serde_json::json!({}),
-            e1.hash(),
-        )
-        .with_agent("agent-02");
-
-        store.append(&e1).unwrap();
-        store.append(&e2).unwrap();
-
-        let results = store.query_by_agent("agent-01").unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].agent_id(), Some("agent-01"));
     }
 
     #[test]

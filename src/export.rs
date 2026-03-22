@@ -36,7 +36,7 @@ pub fn to_csv(entries: &[AuditEntry], mut writer: impl Write) -> crate::Result<(
             csv_escape(entry.source()),
             csv_escape(entry.action()),
             csv_escape(&entry.details().to_string()),
-            entry.agent_id().unwrap_or(""),
+            csv_escape(entry.agent_id().unwrap_or("")),
             entry.prev_hash(),
             entry.hash(),
         )?;
@@ -126,6 +126,22 @@ mod tests {
         assert!(output.contains("\"source,with,commas\""));
         // Quotes in action should be doubled
         assert!(output.contains("\"action \"\"quoted\"\"\""));
+    }
+
+    #[test]
+    fn csv_escapes_agent_id() {
+        let entry = AuditEntry::new(
+            EventSeverity::Info,
+            "src",
+            "act",
+            serde_json::json!({}),
+            "",
+        )
+        .with_agent("agent,with,commas");
+        let mut buf = Vec::new();
+        to_csv(&[entry], &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("\"agent,with,commas\""));
     }
 
     #[test]
