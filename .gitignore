@@ -38,4 +38,5 @@ benchmark-results/*.md
 # Claude Code
 .claude/
 
-# Cargo lock is committed (library best practice varies, we track it)
+# Cargo.lock — generated during CI/CD, not committed for library crates
+Cargo.lock
