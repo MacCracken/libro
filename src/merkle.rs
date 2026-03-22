@@ -117,7 +117,11 @@ impl MerkleTree {
         let mut idx = index;
 
         while level_size > 1 {
-            let sibling_idx = if idx.is_multiple_of(2) { idx + 1 } else { idx - 1 };
+            let sibling_idx = if idx.is_multiple_of(2) {
+                idx + 1
+            } else {
+                idx - 1
+            };
 
             let sibling_hash = if sibling_idx < level_size {
                 self.nodes[level_start + sibling_idx].clone()

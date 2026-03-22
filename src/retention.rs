@@ -113,9 +113,7 @@ mod tests {
     fn keep_duration_recent() {
         let mut chain = build_chain(5);
         // All entries were just created, so keeping 1 hour should retain all
-        let archive = chain.apply_retention(&RetentionPolicy::KeepDuration(
-            Duration::hours(1),
-        ));
+        let archive = chain.apply_retention(&RetentionPolicy::KeepDuration(Duration::hours(1)));
         assert!(archive.is_none());
         assert_eq!(chain.len(), 5);
     }
@@ -130,7 +128,9 @@ mod tests {
     #[test]
     fn retention_preserves_chain_continuity() {
         let mut chain = build_chain(10);
-        let archive = chain.apply_retention(&RetentionPolicy::KeepCount(5)).unwrap();
+        let archive = chain
+            .apply_retention(&RetentionPolicy::KeepCount(5))
+            .unwrap();
 
         // Append new entry after retention
         chain.append(EventSeverity::Info, "src", "new", serde_json::json!({}));

@@ -23,8 +23,21 @@ impl EventSeverity {
     /// All variants at or above this severity level.
     pub fn at_or_above(self) -> &'static [EventSeverity] {
         match self {
-            Self::Debug => &[Self::Debug, Self::Info, Self::Warning, Self::Error, Self::Critical, Self::Security],
-            Self::Info => &[Self::Info, Self::Warning, Self::Error, Self::Critical, Self::Security],
+            Self::Debug => &[
+                Self::Debug,
+                Self::Info,
+                Self::Warning,
+                Self::Error,
+                Self::Critical,
+                Self::Security,
+            ],
+            Self::Info => &[
+                Self::Info,
+                Self::Warning,
+                Self::Error,
+                Self::Critical,
+                Self::Security,
+            ],
             Self::Warning => &[Self::Warning, Self::Error, Self::Critical, Self::Security],
             Self::Error => &[Self::Error, Self::Critical, Self::Security],
             Self::Critical => &[Self::Critical, Self::Security],
@@ -67,15 +80,33 @@ pub struct AuditEntry {
 
 impl AuditEntry {
     // --- Accessors ---
-    pub fn id(&self) -> Uuid { self.id }
-    pub fn timestamp(&self) -> DateTime<Utc> { self.timestamp }
-    pub fn severity(&self) -> EventSeverity { self.severity }
-    pub fn source(&self) -> &str { &self.source }
-    pub fn action(&self) -> &str { &self.action }
-    pub fn details(&self) -> &serde_json::Value { &self.details }
-    pub fn agent_id(&self) -> Option<&str> { self.agent_id.as_deref() }
-    pub fn prev_hash(&self) -> &str { &self.prev_hash }
-    pub fn hash(&self) -> &str { &self.hash }
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    pub fn severity(&self) -> EventSeverity {
+        self.severity
+    }
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+    pub fn details(&self) -> &serde_json::Value {
+        &self.details
+    }
+    pub fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+    pub fn prev_hash(&self) -> &str {
+        &self.prev_hash
+    }
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
 }
 
 impl AuditEntry {
@@ -117,7 +148,17 @@ impl AuditEntry {
         prev_hash: String,
         hash: String,
     ) -> Self {
-        Self { id, timestamp, severity, source, action, details, agent_id, prev_hash, hash }
+        Self {
+            id,
+            timestamp,
+            severity,
+            source,
+            action,
+            details,
+            agent_id,
+            prev_hash,
+            hash,
+        }
     }
 
     pub fn with_agent(mut self, agent_id: impl Into<String>) -> Self {
@@ -145,7 +186,10 @@ impl AuditEntry {
         hash_field(&mut hasher, self.action.as_bytes());
         // Canonical JSON: sorted keys for deterministic hashing
         canonical_json_hash(&self.details, &mut hasher);
-        hash_field(&mut hasher, self.agent_id.as_deref().unwrap_or("").as_bytes());
+        hash_field(
+            &mut hasher,
+            self.agent_id.as_deref().unwrap_or("").as_bytes(),
+        );
         hash_field(&mut hasher, self.prev_hash.as_bytes());
         format!("{:x}", hasher.finalize())
     }
@@ -433,12 +477,26 @@ mod tests {
         let details_b = serde_json::json!({"a": 2, "m": 3, "z": 1});
 
         let entry_a = AuditEntry::from_raw(
-            id, ts, EventSeverity::Info, "s".into(), "a".into(),
-            details_a, None, "".into(), String::new(),
+            id,
+            ts,
+            EventSeverity::Info,
+            "s".into(),
+            "a".into(),
+            details_a,
+            None,
+            "".into(),
+            String::new(),
         );
         let entry_b = AuditEntry::from_raw(
-            id, ts, EventSeverity::Info, "s".into(), "a".into(),
-            details_b, None, "".into(), String::new(),
+            id,
+            ts,
+            EventSeverity::Info,
+            "s".into(),
+            "a".into(),
+            details_b,
+            None,
+            "".into(),
+            String::new(),
         );
         assert_eq!(entry_a.compute_hash(), entry_b.compute_hash());
     }

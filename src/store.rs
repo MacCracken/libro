@@ -81,7 +81,13 @@ mod tests {
     fn load_and_verify_valid() {
         let mut store = MemoryStore::new();
         let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), e1.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Info,
+            "s",
+            "b",
+            serde_json::json!({}),
+            e1.hash(),
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
@@ -93,7 +99,13 @@ mod tests {
     fn load_and_verify_corrupted() {
         let mut store = MemoryStore::new();
         let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), "wrong");
+        let e2 = AuditEntry::new(
+            EventSeverity::Info,
+            "s",
+            "b",
+            serde_json::json!({}),
+            "wrong",
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
@@ -103,12 +115,26 @@ mod tests {
     #[test]
     fn trait_query_default() {
         let mut store = MemoryStore::new();
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({}), e1.hash());
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+            "",
+        );
+        let e2 = AuditEntry::new(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+            e1.hash(),
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
-        let results = store.query(&crate::QueryFilter::new().source("aegis")).unwrap();
+        let results = store
+            .query(&crate::QueryFilter::new().source("aegis"))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source(), "aegis");
     }
@@ -117,8 +143,18 @@ mod tests {
     fn load_page_default() {
         let mut store = MemoryStore::new();
         for i in 0..10 {
-            let prev = if i == 0 { String::new() } else { store.load_all().unwrap().last().unwrap().hash().to_owned() };
-            let e = AuditEntry::new(EventSeverity::Info, "s", format!("e{i}"), serde_json::json!({}), prev);
+            let prev = if i == 0 {
+                String::new()
+            } else {
+                store.load_all().unwrap().last().unwrap().hash().to_owned()
+            };
+            let e = AuditEntry::new(
+                EventSeverity::Info,
+                "s",
+                format!("e{i}"),
+                serde_json::json!({}),
+                prev,
+            );
             store.append(&e).unwrap();
         }
         let page = store.load_page(3, 3).unwrap();

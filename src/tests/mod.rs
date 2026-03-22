@@ -1,7 +1,7 @@
-use crate::*;
 use crate::merkle::{MerkleTree, verify_proof};
 use crate::retention::RetentionPolicy;
 use crate::store::AuditStore;
+use crate::*;
 
 #[test]
 fn full_chain_lifecycle() {
@@ -67,8 +67,18 @@ fn chain_rotate_and_persist_to_file_store() {
 
     // Build a chain and rotate it to a file store
     let mut chain = AuditChain::new();
-    chain.append(entry::EventSeverity::Info, "daimon", "start", serde_json::json!({}));
-    chain.append(entry::EventSeverity::Security, "aegis", "alert", serde_json::json!({}));
+    chain.append(
+        entry::EventSeverity::Info,
+        "daimon",
+        "start",
+        serde_json::json!({}),
+    );
+    chain.append(
+        entry::EventSeverity::Security,
+        "aegis",
+        "alert",
+        serde_json::json!({}),
+    );
 
     let archive = chain.rotate();
 
@@ -81,7 +91,12 @@ fn chain_rotate_and_persist_to_file_store() {
     assert_eq!(store.len(), 2);
 
     // Continue the chain
-    chain.append(entry::EventSeverity::Info, "daimon", "stop", serde_json::json!({}));
+    chain.append(
+        entry::EventSeverity::Info,
+        "daimon",
+        "stop",
+        serde_json::json!({}),
+    );
     assert!(chain.verify().is_ok());
 
     // Reload archive and verify
@@ -150,7 +165,12 @@ fn retention_then_append_then_review() {
         );
     }
     chain.apply_retention(&RetentionPolicy::KeepCount(3));
-    chain.append(entry::EventSeverity::Security, "aegis", "alert", serde_json::json!({}));
+    chain.append(
+        entry::EventSeverity::Security,
+        "aegis",
+        "alert",
+        serde_json::json!({}),
+    );
 
     assert!(chain.verify().is_ok());
 
@@ -220,8 +240,20 @@ fn export_to_file_store_then_load_and_verify() {
 #[test]
 fn verify_chain_linkage_failure_path() {
     // Specifically exercises the broken-linkage warn! path in verify.rs
-    let e1 = entry::AuditEntry::new(entry::EventSeverity::Info, "s", "a", serde_json::json!({}), "");
-    let e2 = entry::AuditEntry::new(entry::EventSeverity::Info, "s", "b", serde_json::json!({}), "not-the-right-hash");
+    let e1 = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "s",
+        "a",
+        serde_json::json!({}),
+        "",
+    );
+    let e2 = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "s",
+        "b",
+        serde_json::json!({}),
+        "not-the-right-hash",
+    );
     let err = verify_chain(&[e1, e2]).unwrap_err();
     assert!(err.to_string().contains("entry 1"));
 }
@@ -230,7 +262,12 @@ fn verify_chain_linkage_failure_path() {
 fn merkle_tree_from_chain() {
     let mut chain = AuditChain::new();
     for i in 0..10 {
-        chain.append(entry::EventSeverity::Info, "src", format!("e{i}"), serde_json::json!({}));
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
     }
 
     let tree = MerkleTree::build(chain.entries()).unwrap();
@@ -245,7 +282,11 @@ fn merkle_tree_from_chain() {
     // Merkle root changes if we add an entry
     let mut chain2 = AuditChain::from_entries(chain.entries().to_vec());
     chain2.entries.push(entry::AuditEntry::new(
-        entry::EventSeverity::Info, "src", "e10", serde_json::json!({}), chain.head_hash().unwrap(),
+        entry::EventSeverity::Info,
+        "src",
+        "e10",
+        serde_json::json!({}),
+        chain.head_hash().unwrap(),
     ));
     let tree2 = MerkleTree::build(chain2.entries()).unwrap();
     assert_ne!(tree.root(), tree2.root());
@@ -263,7 +304,12 @@ fn signing_merkle_chain_integration() {
     let mut chain = AuditChain::new();
     let mut sigs = Vec::new();
     for i in 0..5 {
-        chain.append(entry::EventSeverity::Info, "src", format!("e{i}"), serde_json::json!({}));
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
         sigs.push(key.sign(&chain.entries().last().unwrap()));
     }
 

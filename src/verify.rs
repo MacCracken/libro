@@ -82,8 +82,7 @@ mod tests {
 
     #[test]
     fn verify_tampered_self_hash() {
-        let mut e1 =
-            AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let mut e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
         e1.corrupt_hash("tampered");
         let err = verify_chain(&[e1]).unwrap_err();
         assert!(err.to_string().contains("entry 0"));

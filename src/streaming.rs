@@ -63,7 +63,12 @@ impl AuditStream {
 
     /// Build the topic string for an entry: `{prefix}/{source}/{action}`.
     fn topic_for(&self, entry: &AuditEntry) -> String {
-        format!("{}/{}/{}", self.topic_prefix, entry.source(), entry.action())
+        format!(
+            "{}/{}/{}",
+            self.topic_prefix,
+            entry.source(),
+            entry.action()
+        )
     }
 
     /// Publish an audit entry to the stream.
@@ -81,10 +86,7 @@ impl AuditStream {
     /// - `libro/#` — all entries
     /// - `libro/daimon/*` — all actions from daimon
     /// - `libro/*/alert` — alerts from any source
-    pub fn subscribe(
-        &self,
-        pattern: &str,
-    ) -> broadcast::Receiver<StreamMessage> {
+    pub fn subscribe(&self, pattern: &str) -> broadcast::Receiver<StreamMessage> {
         self.hub.subscribe(pattern)
     }
 
@@ -118,8 +120,8 @@ impl std::fmt::Debug for AuditStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entry::EventSeverity;
     use crate::AuditChain;
+    use crate::entry::EventSeverity;
 
     #[tokio::test]
     async fn publish_subscribe_entry() {
@@ -127,7 +129,12 @@ mod tests {
         let mut rx = stream.subscribe("libro/#");
 
         let mut chain = AuditChain::new();
-        let entry = chain.append(EventSeverity::Info, "daimon", "agent.start", serde_json::json!({}));
+        let entry = chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "agent.start",
+            serde_json::json!({}),
+        );
         stream.publish(entry);
 
         let msg = rx.recv().await.unwrap();
@@ -143,9 +150,19 @@ mod tests {
         let mut rx_aegis = stream.subscribe("libro/aegis/#");
 
         let mut chain = AuditChain::new();
-        let e1 = chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        let e1 = chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+        );
         stream.publish(e1);
-        let e2 = chain.append(EventSeverity::Security, "aegis", "alert", serde_json::json!({}));
+        let e2 = chain.append(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+        );
         stream.publish(e2);
 
         let msg = rx_daimon.recv().await.unwrap();
@@ -163,9 +180,19 @@ mod tests {
         let mut rx = stream.subscribe("libro/*/alert");
 
         let mut chain = AuditChain::new();
-        let e1 = chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        let e1 = chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+        );
         stream.publish(e1);
-        let e2 = chain.append(EventSeverity::Security, "aegis", "alert", serde_json::json!({}));
+        let e2 = chain.append(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+        );
         stream.publish(e2);
 
         let msg = rx.recv().await.unwrap();
@@ -179,7 +206,12 @@ mod tests {
         let mut rx = stream.subscribe("libro/aegis/#");
 
         let mut chain = AuditChain::new();
-        let entry = chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        let entry = chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+        );
         stream.publish(entry);
 
         assert!(rx.try_recv().is_err());
@@ -188,7 +220,13 @@ mod tests {
     #[test]
     fn custom_prefix() {
         let stream = AuditStream::with_prefix("audit/prod");
-        let entry = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "");
+        let entry = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+            "",
+        );
         assert_eq!(stream.topic_for(&entry), "audit/prod/daimon/start");
     }
 

@@ -81,14 +81,8 @@ impl AuditChain {
             *agents.entry(agent_key).or_default() += 1;
         }
 
-        let earliest = self
-            .entries()
-            .first()
-            .map(|e| e.timestamp().to_rfc3339());
-        let latest = self
-            .entries()
-            .last()
-            .map(|e| e.timestamp().to_rfc3339());
+        let earliest = self.entries().first().map(|e| e.timestamp().to_rfc3339());
+        let latest = self.entries().last().map(|e| e.timestamp().to_rfc3339());
 
         ChainReview {
             entry_count: self.len(),
@@ -167,9 +161,24 @@ mod tests {
     #[test]
     fn review_populated_chain() {
         let mut chain = AuditChain::new();
-        chain.append(EventSeverity::Info, "daimon", "agent.start", serde_json::json!({}));
-        chain.append(EventSeverity::Security, "aegis", "alert", serde_json::json!({}));
-        chain.append(EventSeverity::Info, "daimon", "agent.stop", serde_json::json!({}));
+        chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "agent.start",
+            serde_json::json!({}),
+        );
+        chain.append(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+        );
+        chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "agent.stop",
+            serde_json::json!({}),
+        );
 
         let review = chain.review();
         assert_eq!(review.entry_count, 3);
@@ -203,7 +212,12 @@ mod tests {
     #[test]
     fn review_with_agents() {
         let mut chain = AuditChain::new();
-        chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+        );
         let e = AuditEntry::new(
             EventSeverity::Info,
             "daimon",
@@ -256,7 +270,12 @@ mod tests {
     #[test]
     fn chain_display_entries() {
         let mut chain = AuditChain::new();
-        chain.append(EventSeverity::Info, "daimon", "start", serde_json::json!({}));
+        chain.append(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+        );
         chain.append(EventSeverity::Info, "daimon", "stop", serde_json::json!({}));
 
         // Each entry should be displayable

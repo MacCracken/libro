@@ -130,14 +130,8 @@ mod tests {
 
     #[test]
     fn csv_escapes_agent_id() {
-        let entry = AuditEntry::new(
-            EventSeverity::Info,
-            "src",
-            "act",
-            serde_json::json!({}),
-            "",
-        )
-        .with_agent("agent,with,commas");
+        let entry = AuditEntry::new(EventSeverity::Info, "src", "act", serde_json::json!({}), "")
+            .with_agent("agent,with,commas");
         let mut buf = Vec::new();
         to_csv(&[entry], &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();

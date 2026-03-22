@@ -42,9 +42,9 @@ pub mod review;
 pub mod signing;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_store;
+pub mod store;
 #[cfg(feature = "streaming")]
 pub mod streaming;
-pub mod store;
 pub mod verify;
 
 mod error;
@@ -54,7 +54,7 @@ pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
 pub use export::{to_csv, to_jsonl};
 pub use file_store::FileStore;
-pub use merkle::{MerkleTree, MerkleProof};
+pub use merkle::{MerkleProof, MerkleTree};
 pub use query::QueryFilter;
 pub use retention::RetentionPolicy;
 pub use review::ChainReview;

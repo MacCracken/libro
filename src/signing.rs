@@ -18,8 +18,7 @@
 //! ```
 
 use ed25519_dalek::{
-    Signature, Signer, SigningKey as DalekSigningKey, Verifier,
-    VerifyingKey as DalekVerifyingKey,
+    Signature, Signer, SigningKey as DalekSigningKey, Verifier, VerifyingKey as DalekVerifyingKey,
 };
 use rand_core::OsRng;
 
@@ -152,7 +151,13 @@ mod tests {
     #[test]
     fn sign_and_verify() {
         let key = SigningKey::generate();
-        let entry = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "");
+        let entry = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+            "",
+        );
         let sig = key.sign(&entry);
 
         assert!(sig.verify(&entry, &key.verifying_key()));
@@ -214,7 +219,13 @@ mod tests {
         let vk = key.verifying_key();
 
         let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), e1.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Info,
+            "s",
+            "b",
+            serde_json::json!({}),
+            e1.hash(),
+        );
 
         let sig1 = key.sign(&e1);
         let sig2 = key.sign(&e2);

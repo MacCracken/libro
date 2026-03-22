@@ -1,9 +1,9 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use libro::{AuditChain, EventSeverity};
-use libro::merkle::MerkleTree;
 use libro::export;
+use libro::merkle::MerkleTree;
 use libro::query::QueryFilter;
 use libro::store::AuditStore;
+use libro::{AuditChain, EventSeverity};
 
 fn make_chain(n: usize) -> AuditChain {
     let mut chain = AuditChain::new();
@@ -21,15 +21,11 @@ fn make_chain(n: usize) -> AuditChain {
 // --- Chain operations ---
 
 fn bench_append_100(c: &mut Criterion) {
-    c.bench_function("chain_append_100", |b| {
-        b.iter(|| make_chain(100))
-    });
+    c.bench_function("chain_append_100", |b| b.iter(|| make_chain(100)));
 }
 
 fn bench_append_1000(c: &mut Criterion) {
-    c.bench_function("chain_append_1000", |b| {
-        b.iter(|| make_chain(1000))
-    });
+    c.bench_function("chain_append_1000", |b| b.iter(|| make_chain(1000)));
 }
 
 fn bench_verify_100(c: &mut Criterion) {
@@ -55,9 +51,7 @@ fn bench_merkle_build_1000(c: &mut Criterion) {
 fn bench_merkle_proof(c: &mut Criterion) {
     let chain = make_chain(1000);
     let tree = MerkleTree::build(chain.entries()).unwrap();
-    c.bench_function("merkle_proof_1000", |b| {
-        b.iter(|| tree.proof(500).unwrap())
-    });
+    c.bench_function("merkle_proof_1000", |b| b.iter(|| tree.proof(500).unwrap()));
 }
 
 fn bench_merkle_verify_proof(c: &mut Criterion) {
@@ -74,9 +68,7 @@ fn bench_merkle_verify_proof(c: &mut Criterion) {
 fn bench_query_1000(c: &mut Criterion) {
     let chain = make_chain(1000);
     let filter = QueryFilter::new().source("bench").action("event-500");
-    c.bench_function("query_filter_1000", |b| {
-        b.iter(|| chain.query(&filter))
-    });
+    c.bench_function("query_filter_1000", |b| b.iter(|| chain.query(&filter)));
 }
 
 // --- Export ---
@@ -129,7 +121,14 @@ fn bench_append_batch_1000(c: &mut Criterion) {
         b.iter(|| {
             let mut chain = AuditChain::new();
             let events: Vec<_> = (0..1000)
-                .map(|i| (EventSeverity::Info, "bench".to_owned(), format!("event-{i}"), serde_json::json!({})))
+                .map(|i| {
+                    (
+                        EventSeverity::Info,
+                        "bench".to_owned(),
+                        format!("event-{i}"),
+                        serde_json::json!({}),
+                    )
+                })
                 .collect();
             chain.append_batch(events);
             chain
@@ -139,9 +138,7 @@ fn bench_append_batch_1000(c: &mut Criterion) {
 
 fn bench_page_1000(c: &mut Criterion) {
     let chain = make_chain(1000);
-    c.bench_function("chain_page_mid_100", |b| {
-        b.iter(|| chain.page(450, 100))
-    });
+    c.bench_function("chain_page_mid_100", |b| b.iter(|| chain.page(450, 100)));
 }
 
 fn bench_file_store_load_100(c: &mut Criterion) {

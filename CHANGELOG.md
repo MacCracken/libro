@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.3] — 2026-03-22
+
 ### Added
 - `FileStore` — append-only JSON Lines file backend (`file_store` module)
 - `SqliteStore` — queryable SQLite backend with indexed columns, behind `sqlite` feature flag
@@ -133,7 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
-[Unreleased]: https://github.com/MacCracken/libro/compare/v0.21.3...HEAD
+[Unreleased]: https://github.com/MacCracken/libro/compare/v0.22.3...HEAD
+[0.22.3]: https://github.com/MacCracken/libro/compare/v0.21.3...v0.22.3
 [0.21.3]: https://github.com/MacCracken/libro/compare/v0.21.2...v0.21.3
 [0.21.2]: https://github.com/MacCracken/libro/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/MacCracken/libro/compare/v0.21.0...v0.21.1

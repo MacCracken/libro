@@ -129,12 +129,30 @@ mod tests {
     use super::*;
 
     fn make_chain() -> Vec<AuditEntry> {
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "agent.start", serde_json::json!({}), "")
-            .with_agent("agent-01");
-        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({}), e1.hash())
-            .with_agent("agent-01");
-        let e3 = AuditEntry::new(EventSeverity::Info, "daimon", "agent.stop", serde_json::json!({}), e2.hash())
-            .with_agent("agent-02");
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "agent.start",
+            serde_json::json!({}),
+            "",
+        )
+        .with_agent("agent-01");
+        let e2 = AuditEntry::new(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+            e1.hash(),
+        )
+        .with_agent("agent-01");
+        let e3 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "agent.stop",
+            serde_json::json!({}),
+            e2.hash(),
+        )
+        .with_agent("agent-02");
         vec![e1, e2, e3]
     }
 
@@ -148,7 +166,9 @@ mod tests {
     #[test]
     fn filter_by_severity() {
         let entries = make_chain();
-        let results = QueryFilter::new().severity(EventSeverity::Security).apply(&entries);
+        let results = QueryFilter::new()
+            .severity(EventSeverity::Security)
+            .apply(&entries);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source(), "aegis");
     }
@@ -207,12 +227,16 @@ mod tests {
     fn filter_min_severity() {
         let entries = make_chain();
         // Security is the highest, so min_severity=Security should only match aegis
-        let results = QueryFilter::new().min_severity(EventSeverity::Security).apply(&entries);
+        let results = QueryFilter::new()
+            .min_severity(EventSeverity::Security)
+            .apply(&entries);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source(), "aegis");
 
         // min_severity=Info should match all (all are Info or Security)
-        let results = QueryFilter::new().min_severity(EventSeverity::Info).apply(&entries);
+        let results = QueryFilter::new()
+            .min_severity(EventSeverity::Info)
+            .apply(&entries);
         assert_eq!(results.len(), 3);
     }
 

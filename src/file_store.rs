@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use tracing::{debug, error, info};
 
+use crate::LibroError;
 use crate::entry::AuditEntry;
 use crate::store::AuditStore;
-use crate::LibroError;
 
 /// Append-only file store using JSON Lines format.
 #[derive(Debug)]
@@ -31,10 +31,7 @@ impl FileStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        OpenOptions::new().create(true).append(true).open(&path)?;
 
         let count = Self::count_lines(&path)?;
         info!(path = %path.display(), entries = count, "file store opened");
@@ -68,7 +65,11 @@ impl AuditStore for FileStore {
         writeln!(file, "{json}")?;
         file.unlock()?;
         self.count += 1;
-        debug!(hash = entry.hash(), index = self.count - 1, "entry appended to file store");
+        debug!(
+            hash = entry.hash(),
+            index = self.count - 1,
+            "entry appended to file store"
+        );
         Ok(())
     }
 
@@ -111,8 +112,20 @@ mod tests {
 
         assert!(store.is_empty());
 
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "agent.start", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({"ip": "10.0.0.1"}), e1.hash());
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "agent.start",
+            serde_json::json!({}),
+            "",
+        );
+        let e2 = AuditEntry::new(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({"ip": "10.0.0.1"}),
+            e1.hash(),
+        );
 
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
@@ -133,7 +146,8 @@ mod tests {
         // Write with one instance
         {
             let mut store = FileStore::open(&path).unwrap();
-            let entry = AuditEntry::new(EventSeverity::Info, "src", "act", serde_json::json!({}), "");
+            let entry =
+                AuditEntry::new(EventSeverity::Info, "src", "act", serde_json::json!({}), "");
             store.append(&entry).unwrap();
         }
 
@@ -194,12 +208,26 @@ mod tests {
         let path = dir.path().join("audit.jsonl");
         let mut store = FileStore::open(&path).unwrap();
 
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({}), e1.hash());
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+            "",
+        );
+        let e2 = AuditEntry::new(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+            e1.hash(),
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
-        let results = store.query(&crate::QueryFilter::new().source("aegis")).unwrap();
+        let results = store
+            .query(&crate::QueryFilter::new().source("aegis"))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action(), "alert");
     }
@@ -211,7 +239,13 @@ mod tests {
         let mut store = FileStore::open(&path).unwrap();
 
         let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), e1.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Info,
+            "s",
+            "b",
+            serde_json::json!({}),
+            e1.hash(),
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
@@ -225,18 +259,42 @@ mod tests {
         let path = dir.path().join("audit.jsonl");
         let mut store = FileStore::open(&path).unwrap();
 
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "")
-            .with_agent("agent-01");
-        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({}), e1.hash())
-            .with_agent("agent-01");
-        let e3 = AuditEntry::new(EventSeverity::Info, "daimon", "stop", serde_json::json!({}), e2.hash())
-            .with_agent("agent-02");
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+            "",
+        )
+        .with_agent("agent-01");
+        let e2 = AuditEntry::new(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+            e1.hash(),
+        )
+        .with_agent("agent-01");
+        let e3 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "stop",
+            serde_json::json!({}),
+            e2.hash(),
+        )
+        .with_agent("agent-02");
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
         store.append(&e3).unwrap();
 
         // Combined: source + agent
-        let results = store.query(&crate::QueryFilter::new().source("daimon").agent_id("agent-01")).unwrap();
+        let results = store
+            .query(
+                &crate::QueryFilter::new()
+                    .source("daimon")
+                    .agent_id("agent-01"),
+            )
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action(), "start");
     }
@@ -246,7 +304,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.jsonl");
 
-        let e1 = AuditEntry::new(EventSeverity::Info, "src", "first", serde_json::json!({}), "");
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "src",
+            "first",
+            serde_json::json!({}),
+            "",
+        );
         {
             let mut store = FileStore::open(&path).unwrap();
             store.append(&e1).unwrap();
@@ -255,7 +319,13 @@ mod tests {
         // Reopen, append more
         let mut store = FileStore::open(&path).unwrap();
         assert_eq!(store.len(), 1);
-        let e2 = AuditEntry::new(EventSeverity::Warning, "src", "second", serde_json::json!({}), e1.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Warning,
+            "src",
+            "second",
+            serde_json::json!({}),
+            e1.hash(),
+        );
         store.append(&e2).unwrap();
         assert_eq!(store.len(), 2);
 

@@ -9,13 +9,12 @@ use std::sync::Mutex;
 use rusqlite::{Connection, params};
 use tracing::{debug, info};
 
+use crate::LibroError;
 use crate::entry::{AuditEntry, EventSeverity};
 use crate::query::QueryFilter;
 use crate::store::AuditStore;
-use crate::LibroError;
 
-const SELECT_COLS: &str =
-    "SELECT id, timestamp, severity, source, action, details, agent_id, prev_hash, hash FROM audit_entries";
+const SELECT_COLS: &str = "SELECT id, timestamp, severity, source, action, details, agent_id, prev_hash, hash FROM audit_entries";
 
 /// SQLite-backed audit store.
 pub struct SqliteStore {
@@ -42,8 +41,7 @@ impl SqliteStore {
 
     /// Create an in-memory SQLite store (useful for testing).
     pub fn in_memory() -> crate::Result<Self> {
-        let conn =
-            Connection::open_in_memory().map_err(|e| LibroError::Store(e.to_string()))?;
+        let conn = Connection::open_in_memory().map_err(|e| LibroError::Store(e.to_string()))?;
         let store = Self {
             conn: Mutex::new(conn),
         };
@@ -103,11 +101,7 @@ impl SqliteStore {
         let agent_id: Option<String> = row.get(6)?;
 
         let id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
         })?;
         let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp_str)
             .map_err(|e| {
@@ -136,14 +130,9 @@ impl SqliteStore {
                 ));
             }
         };
-        let details: serde_json::Value =
-            serde_json::from_str(&details_str).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    5,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?;
+        let details: serde_json::Value = serde_json::from_str(&details_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+        })?;
 
         Ok(AuditEntry::from_raw(
             id,
@@ -273,8 +262,13 @@ mod tests {
         let mut store = SqliteStore::in_memory().unwrap();
         assert!(store.is_empty());
 
-        let e1 =
-            AuditEntry::new(EventSeverity::Info, "daimon", "agent.start", serde_json::json!({}), "");
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "agent.start",
+            serde_json::json!({}),
+            "",
+        );
         let e2 = AuditEntry::new(
             EventSeverity::Security,
             "aegis",
@@ -298,19 +292,39 @@ mod tests {
     #[test]
     fn sqlite_store_query_filter() {
         let mut store = SqliteStore::in_memory().unwrap();
-        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "")
-            .with_agent("agent-01");
-        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({}), e1.hash())
-            .with_agent("agent-01");
-        let e3 = AuditEntry::new(EventSeverity::Info, "daimon", "stop", serde_json::json!({}), e2.hash())
-            .with_agent("agent-02");
+        let e1 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "start",
+            serde_json::json!({}),
+            "",
+        )
+        .with_agent("agent-01");
+        let e2 = AuditEntry::new(
+            EventSeverity::Security,
+            "aegis",
+            "alert",
+            serde_json::json!({}),
+            e1.hash(),
+        )
+        .with_agent("agent-01");
+        let e3 = AuditEntry::new(
+            EventSeverity::Info,
+            "daimon",
+            "stop",
+            serde_json::json!({}),
+            e2.hash(),
+        )
+        .with_agent("agent-02");
 
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
         store.append(&e3).unwrap();
 
         // Combined filter
-        let results = store.query(&QueryFilter::new().source("daimon").agent_id("agent-01")).unwrap();
+        let results = store
+            .query(&QueryFilter::new().source("daimon").agent_id("agent-01"))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action(), "start");
 
@@ -332,15 +346,29 @@ mod tests {
     fn sqlite_store_query_severity_and_before() {
         let mut store = SqliteStore::in_memory().unwrap();
         let e1 = AuditEntry::new(EventSeverity::Info, "src", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Warning, "src", "b", serde_json::json!({}), e1.hash());
-        let e3 = AuditEntry::new(EventSeverity::Error, "src", "c", serde_json::json!({}), e2.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Warning,
+            "src",
+            "b",
+            serde_json::json!({}),
+            e1.hash(),
+        );
+        let e3 = AuditEntry::new(
+            EventSeverity::Error,
+            "src",
+            "c",
+            serde_json::json!({}),
+            e2.hash(),
+        );
 
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
         store.append(&e3).unwrap();
 
         // Severity filter
-        let results = store.query(&QueryFilter::new().severity(EventSeverity::Warning)).unwrap();
+        let results = store
+            .query(&QueryFilter::new().severity(EventSeverity::Warning))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action(), "b");
 
@@ -354,7 +382,13 @@ mod tests {
     fn sqlite_store_load_and_verify() {
         let mut store = SqliteStore::in_memory().unwrap();
         let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), e1.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Info,
+            "s",
+            "b",
+            serde_json::json!({}),
+            e1.hash(),
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
@@ -367,7 +401,13 @@ mod tests {
         let mut store = SqliteStore::in_memory().unwrap();
         let mut prev = String::new();
         for i in 0..10 {
-            let e = AuditEntry::new(EventSeverity::Info, "s", format!("e{i}"), serde_json::json!({}), &prev);
+            let e = AuditEntry::new(
+                EventSeverity::Info,
+                "s",
+                format!("e{i}"),
+                serde_json::json!({}),
+                &prev,
+            );
             prev = e.hash().to_owned();
             store.append(&e).unwrap();
         }
@@ -383,15 +423,33 @@ mod tests {
     fn sqlite_store_min_severity_query() {
         let mut store = SqliteStore::in_memory().unwrap();
         let e1 = AuditEntry::new(EventSeverity::Debug, "s", "a", serde_json::json!({}), "");
-        let e2 = AuditEntry::new(EventSeverity::Warning, "s", "b", serde_json::json!({}), e1.hash());
-        let e3 = AuditEntry::new(EventSeverity::Critical, "s", "c", serde_json::json!({}), e2.hash());
+        let e2 = AuditEntry::new(
+            EventSeverity::Warning,
+            "s",
+            "b",
+            serde_json::json!({}),
+            e1.hash(),
+        );
+        let e3 = AuditEntry::new(
+            EventSeverity::Critical,
+            "s",
+            "c",
+            serde_json::json!({}),
+            e2.hash(),
+        );
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
         store.append(&e3).unwrap();
 
-        let results = store.query(&QueryFilter::new().min_severity(EventSeverity::Warning)).unwrap();
+        let results = store
+            .query(&QueryFilter::new().min_severity(EventSeverity::Warning))
+            .unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|e| e.severity() >= EventSeverity::Warning));
+        assert!(
+            results
+                .iter()
+                .all(|e| e.severity() >= EventSeverity::Warning)
+        );
     }
 
     #[test]
