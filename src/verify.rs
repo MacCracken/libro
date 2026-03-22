@@ -12,16 +12,17 @@ pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
     }
 
     for (i, entry) in entries.iter().enumerate() {
-        if !entry.verify() {
+        let expected_hash = entry.compute_hash();
+        if entry.hash() != expected_hash {
             warn!(
                 index = i,
                 hash = entry.hash(),
-                expected = entry.compute_hash(),
+                expected = %expected_hash,
                 "entry self-hash verification failed"
             );
             return Err(LibroError::IntegrityViolation {
                 index: i,
-                expected: entry.compute_hash(),
+                expected: expected_hash,
                 actual: entry.hash().to_owned(),
             });
         }

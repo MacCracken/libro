@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::chain::AuditChain;
+use crate::entry::abbreviate_hash;
 
 /// A structured review of an audit chain's contents and integrity.
 #[derive(Debug)]
@@ -116,17 +117,10 @@ impl fmt::Display for ChainReview {
             writeln!(f, "Latest:     {latest}")?;
         }
         if let Some(ref head) = self.head_hash {
-            writeln!(f, "Head:       {}..{}", &head[..8], &head[head.len() - 4..])?;
+            writeln!(f, "Head:       {}", abbreviate_hash(head))?;
         }
-        if let Some(ref prev) = self.continued_from
-            && !prev.is_empty()
-        {
-            writeln!(
-                f,
-                "Continues:  {}..{}",
-                &prev[..8.min(prev.len())],
-                &prev[prev.len().saturating_sub(4)..]
-            )?;
+        if let Some(ref prev) = self.continued_from {
+            writeln!(f, "Continues:  {}", abbreviate_hash(prev))?;
         }
 
         if !self.sources.is_empty() {

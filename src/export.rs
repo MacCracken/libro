@@ -145,6 +145,39 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_roundtrip_verify() {
+        let entries = sample_entries();
+        let mut buf = Vec::new();
+        to_jsonl(&entries, &mut buf).unwrap();
+
+        // Re-import
+        let output = String::from_utf8(buf).unwrap();
+        let reimported: Vec<AuditEntry> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+
+        // Verify chain integrity is preserved through export/import cycle
+        assert!(crate::verify_chain(&reimported).is_ok());
+    }
+
+    #[test]
+    fn csv_details_with_newlines() {
+        let entry = AuditEntry::new(
+            EventSeverity::Info,
+            "src",
+            "act",
+            serde_json::json!({"multi": "line\nvalue"}),
+            "",
+        );
+        let mut buf = Vec::new();
+        to_csv(&[entry], &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        // The JSON details contain a newline, so the field should be quoted
+        assert!(output.contains("\"{")); // details field is quoted
+    }
+
+    #[test]
     fn jsonl_empty() {
         let mut buf = Vec::new();
         to_jsonl(&[], &mut buf).unwrap();

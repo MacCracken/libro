@@ -79,54 +79,6 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Query entries using a composable [`QueryFilter`].
-    ///
-    /// Translates filter fields to SQL WHERE clauses for efficient indexed queries.
-    pub fn query(&self, filter: &QueryFilter) -> crate::Result<Vec<AuditEntry>> {
-        let mut clauses = Vec::new();
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(ref source) = filter.source {
-            param_values.push(Box::new(source.clone()));
-            clauses.push(format!("source = ?{}", param_values.len()));
-        }
-        if let Some(severity) = filter.severity {
-            param_values.push(Box::new(severity.as_str().to_owned()));
-            clauses.push(format!("severity = ?{}", param_values.len()));
-        }
-        if let Some(ref agent_id) = filter.agent_id {
-            param_values.push(Box::new(agent_id.clone()));
-            clauses.push(format!("agent_id = ?{}", param_values.len()));
-        }
-        if let Some(ref action) = filter.action {
-            param_values.push(Box::new(action.clone()));
-            clauses.push(format!("action = ?{}", param_values.len()));
-        }
-        if let Some(after) = filter.after {
-            param_values.push(Box::new(after.to_rfc3339()));
-            clauses.push(format!("timestamp > ?{}", param_values.len()));
-        }
-        if let Some(before) = filter.before {
-            param_values.push(Box::new(before.to_rfc3339()));
-            clauses.push(format!("timestamp < ?{}", param_values.len()));
-        }
-
-        let where_clause = if clauses.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", clauses.join(" AND "))
-        };
-
-        let sql = format!("{SELECT_COLS}{where_clause} ORDER BY seq");
-        let conn = self.lock();
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| LibroError::Store(e.to_string()))?;
-
-        let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
-        Self::collect_rows(&mut stmt, params.as_slice())
-    }
-
     fn collect_rows(
         stmt: &mut rusqlite::Statement,
         params: impl rusqlite::Params,
@@ -230,6 +182,53 @@ impl AuditStore for SqliteStore {
         Ok(())
     }
 
+    /// Override: translates [`QueryFilter`] to SQL WHERE clauses for indexed queries.
+    fn query(&self, filter: &QueryFilter) -> crate::Result<Vec<AuditEntry>> {
+        let mut clauses = Vec::new();
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref source) = filter.source {
+            param_values.push(Box::new(source.clone()));
+            clauses.push(format!("source = ?{}", param_values.len()));
+        }
+        if let Some(severity) = filter.severity {
+            param_values.push(Box::new(severity.as_str().to_owned()));
+            clauses.push(format!("severity = ?{}", param_values.len()));
+        }
+        if let Some(ref agent_id) = filter.agent_id {
+            param_values.push(Box::new(agent_id.clone()));
+            clauses.push(format!("agent_id = ?{}", param_values.len()));
+        }
+        if let Some(ref action) = filter.action {
+            param_values.push(Box::new(action.clone()));
+            clauses.push(format!("action = ?{}", param_values.len()));
+        }
+        if let Some(after) = filter.after {
+            param_values.push(Box::new(after.to_rfc3339()));
+            clauses.push(format!("timestamp > ?{}", param_values.len()));
+        }
+        if let Some(before) = filter.before {
+            param_values.push(Box::new(before.to_rfc3339()));
+            clauses.push(format!("timestamp < ?{}", param_values.len()));
+        }
+
+        let where_clause = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", clauses.join(" AND "))
+        };
+
+        let sql = format!("{SELECT_COLS}{where_clause} ORDER BY seq");
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| LibroError::Store(e.to_string()))?;
+
+        let params: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        Self::collect_rows(&mut stmt, params.as_slice())
+    }
+
     fn load_all(&self) -> crate::Result<Vec<AuditEntry>> {
         let conn = self.lock();
         let mut stmt = conn
@@ -307,6 +306,40 @@ mod tests {
         let after = e1.timestamp();
         let results = store.query(&QueryFilter::new().after(after)).unwrap();
         assert!(results.iter().all(|e| e.timestamp() > after));
+    }
+
+    #[test]
+    fn sqlite_store_query_severity_and_before() {
+        let mut store = SqliteStore::in_memory().unwrap();
+        let e1 = AuditEntry::new(EventSeverity::Info, "src", "a", serde_json::json!({}), "");
+        let e2 = AuditEntry::new(EventSeverity::Warning, "src", "b", serde_json::json!({}), e1.hash());
+        let e3 = AuditEntry::new(EventSeverity::Error, "src", "c", serde_json::json!({}), e2.hash());
+
+        store.append(&e1).unwrap();
+        store.append(&e2).unwrap();
+        store.append(&e3).unwrap();
+
+        // Severity filter
+        let results = store.query(&QueryFilter::new().severity(EventSeverity::Warning)).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action(), "b");
+
+        // Before filter
+        let before = e3.timestamp();
+        let results = store.query(&QueryFilter::new().before(before)).unwrap();
+        assert!(results.iter().all(|e| e.timestamp() < before));
+    }
+
+    #[test]
+    fn sqlite_store_load_and_verify() {
+        let mut store = SqliteStore::in_memory().unwrap();
+        let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), e1.hash());
+        store.append(&e1).unwrap();
+        store.append(&e2).unwrap();
+
+        let entries = store.load_and_verify().unwrap();
+        assert_eq!(entries.len(), 2);
     }
 
     #[test]

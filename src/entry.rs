@@ -151,18 +151,26 @@ impl std::fmt::Display for AuditEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "[{}] {} {}/{} hash={}..{}",
+            "[{}] {} {}/{} hash={}",
             self.timestamp.format("%Y-%m-%d %H:%M:%S"),
             self.severity,
             self.source,
             self.action,
-            &self.hash[..8],
-            &self.hash[self.hash.len() - 4..],
+            abbreviate_hash(&self.hash),
         )?;
         if let Some(ref agent) = self.agent_id {
             write!(f, " agent={agent}")?;
         }
         Ok(())
+    }
+}
+
+/// Abbreviate a hex hash for display: "a1b2c3d4..ef56" or the full string if short.
+pub(crate) fn abbreviate_hash(hash: &str) -> String {
+    if hash.len() > 12 {
+        format!("{}..{}", &hash[..8], &hash[hash.len() - 4..])
+    } else {
+        hash.to_owned()
     }
 }
 
@@ -350,6 +358,66 @@ mod tests {
         assert!(e1.verify());
         assert!(e2.verify());
         assert_ne!(e1.hash(), e2.hash());
+    }
+
+    #[test]
+    fn abbreviate_hash_long() {
+        let h = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        assert_eq!(super::abbreviate_hash(h), "a1b2c3d4..a1b2");
+    }
+
+    #[test]
+    fn abbreviate_hash_short() {
+        assert_eq!(super::abbreviate_hash("abc"), "abc");
+        assert_eq!(super::abbreviate_hash(""), "");
+    }
+
+    #[test]
+    fn display_entry_with_empty_hash() {
+        // Simulate a deserialized entry with corrupt empty hash
+        let entry = AuditEntry::from_raw(
+            uuid::Uuid::new_v4(),
+            chrono::Utc::now(),
+            EventSeverity::Info,
+            "src".into(),
+            "act".into(),
+            serde_json::json!({}),
+            None,
+            "".into(),
+            "".into(),
+        );
+        // Should not panic
+        let display = format!("{entry}");
+        assert!(display.contains("src/act"));
+    }
+
+    #[test]
+    fn canonical_json_key_order_determinism() {
+        // Build two entries with identical content but different JSON key insertion order,
+        // using the same id/timestamp/prev_hash so hashes are directly comparable.
+        let id = uuid::Uuid::new_v4();
+        let ts = chrono::Utc::now();
+
+        let details_a = serde_json::json!({"z": 1, "a": 2, "m": 3});
+        let details_b = serde_json::json!({"a": 2, "m": 3, "z": 1});
+
+        let entry_a = AuditEntry::from_raw(
+            id, ts, EventSeverity::Info, "s".into(), "a".into(),
+            details_a, None, "".into(), String::new(),
+        );
+        let entry_b = AuditEntry::from_raw(
+            id, ts, EventSeverity::Info, "s".into(), "a".into(),
+            details_b, None, "".into(), String::new(),
+        );
+        assert_eq!(entry_a.compute_hash(), entry_b.compute_hash());
+    }
+
+    #[test]
+    fn empty_source_and_action() {
+        let entry = AuditEntry::new(EventSeverity::Info, "", "", serde_json::json!(null), "");
+        assert!(entry.verify());
+        let display = format!("{entry}");
+        assert!(display.contains("/")); // source/action separator still present
     }
 
     #[test]

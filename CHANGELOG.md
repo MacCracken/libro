@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AuditChain::review()` — produce a structured chain summary with `Display` for human-readable output
 - `Display` impl for `AuditEntry` and `EventSeverity`
 - `tracing` instrumentation: append, verify, rotate, retention, store open, parse errors
-- 78 tests, 94% line coverage
+- `AuditStore::load_and_verify()` — convenience that loads and verifies in one call
+- `AuditStore::query()` — trait-level query with default load+filter impl; `SqliteStore` overrides with SQL WHERE
+- 84 tests, 94% line coverage
 
 ### Changed
 - **Breaking:** `compute_hash` now length-prefixes each variable-length field (little-endian u64) to prevent second-preimage collisions via field boundary shifting. Hashes from previous versions are incompatible.
@@ -37,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AuditChain::verify()` now delegates to `verify_chain()` after genesis check, eliminating duplicated logic
 - `AuditChain::apply_retention()` moved from orphan impl in `retention.rs` to `chain.rs`
 - CSV export now escapes `agent_id` field (user-provided, may contain commas)
+- `AuditEntry::Display` no longer panics on short/empty hash strings
+- `FileStore::open` uses atomic `OpenOptions::create(true)` instead of TOCTOU `exists()`+`create()`
+- `verify_chain` computes hash once per entry instead of twice on failure
+- `rotate()` on empty chain no longer sets `prev_chain_hash` to `Some("")`
+- `query()` moved to `AuditStore` trait (polymorphic access via `dyn AuditStore`)
+- `AuditStore::load_all` docs now warn that it does not verify integrity
 - `RetentionPolicy::apply_retention` avoids double clone via `Vec::split_off`
 - Key types re-exported from crate root: `QueryFilter`, `RetentionPolicy`, `to_jsonl`, `to_csv`
 

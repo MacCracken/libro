@@ -12,7 +12,6 @@ use fs2::FileExt;
 use tracing::{debug, error, info};
 
 use crate::entry::AuditEntry;
-use crate::query::QueryFilter;
 use crate::store::AuditStore;
 use crate::LibroError;
 
@@ -28,13 +27,14 @@ impl FileStore {
     pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref().to_path_buf();
 
-        // Create the file if it doesn't exist
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            File::create(&path)?;
+        // Ensure parent directories exist, then create-or-open atomically
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
 
         let count = Self::count_lines(&path)?;
         info!(path = %path.display(), entries = count, "file store opened");
@@ -57,16 +57,6 @@ impl FileStore {
             }
         }
         Ok(count)
-    }
-}
-
-impl FileStore {
-    /// Query entries using a [`QueryFilter`].
-    ///
-    /// Loads all entries from disk and filters in memory.
-    pub fn query(&self, filter: &QueryFilter) -> crate::Result<Vec<AuditEntry>> {
-        let all = self.load_all()?;
-        Ok(all.into_iter().filter(|e| filter.matches(e)).collect())
     }
 }
 
@@ -209,9 +199,46 @@ mod tests {
         store.append(&e1).unwrap();
         store.append(&e2).unwrap();
 
-        let results = store.query(&crate::query::QueryFilter::new().source("aegis")).unwrap();
+        let results = store.query(&crate::QueryFilter::new().source("aegis")).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action(), "alert");
+    }
+
+    #[test]
+    fn file_store_load_and_verify() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let mut store = FileStore::open(&path).unwrap();
+
+        let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let e2 = AuditEntry::new(EventSeverity::Info, "s", "b", serde_json::json!({}), e1.hash());
+        store.append(&e1).unwrap();
+        store.append(&e2).unwrap();
+
+        let entries = store.load_and_verify().unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn file_store_query_combined() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let mut store = FileStore::open(&path).unwrap();
+
+        let e1 = AuditEntry::new(EventSeverity::Info, "daimon", "start", serde_json::json!({}), "")
+            .with_agent("agent-01");
+        let e2 = AuditEntry::new(EventSeverity::Security, "aegis", "alert", serde_json::json!({}), e1.hash())
+            .with_agent("agent-01");
+        let e3 = AuditEntry::new(EventSeverity::Info, "daimon", "stop", serde_json::json!({}), e2.hash())
+            .with_agent("agent-02");
+        store.append(&e1).unwrap();
+        store.append(&e2).unwrap();
+        store.append(&e3).unwrap();
+
+        // Combined: source + agent
+        let results = store.query(&crate::QueryFilter::new().source("daimon").agent_id("agent-01")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action(), "start");
     }
 
     #[test]

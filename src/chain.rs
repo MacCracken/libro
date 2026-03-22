@@ -136,7 +136,9 @@ impl AuditChain {
     pub fn rotate(&mut self) -> ChainArchive {
         let head_hash = self.head_hash().unwrap_or("").to_owned();
         let entries = std::mem::take(&mut self.entries);
-        self.prev_chain_hash = Some(head_hash.clone());
+        if !head_hash.is_empty() {
+            self.prev_chain_hash = Some(head_hash.clone());
+        }
         info!(
             archived = entries.len(),
             head_hash = %head_hash,
@@ -284,6 +286,8 @@ mod tests {
         let archive = chain.rotate();
         assert!(archive.entries.is_empty());
         assert_eq!(archive.head_hash, "");
+        // Empty rotation should NOT set prev_chain_hash
+        assert!(chain.prev_chain_hash.is_none());
     }
 
     #[test]
