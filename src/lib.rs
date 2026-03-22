@@ -17,6 +17,7 @@ pub mod export;
 pub mod file_store;
 pub mod query;
 pub mod retention;
+pub mod review;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_store;
 pub mod store;
@@ -31,6 +32,7 @@ pub use export::{to_csv, to_jsonl};
 pub use file_store::FileStore;
 pub use query::QueryFilter;
 pub use retention::RetentionPolicy;
+pub use review::ChainReview;
 #[cfg(feature = "sqlite")]
 pub use sqlite_store::SqliteStore;
 pub use verify::verify_chain;

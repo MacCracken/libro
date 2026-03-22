@@ -75,6 +75,7 @@ chain.verify().expect("chain is valid");
 | `query` | `QueryFilter` — composable, multi-field entry filtering |
 | `export` | Export to JSON Lines and CSV (`to_jsonl`, `to_csv`) |
 | `retention` | `RetentionPolicy` — keep N entries, keep by age, keep after timestamp |
+| `review` | `ChainReview` — structured chain summary with integrity, distributions, time range |
 | `verify` | Standalone chain verification (for external audit tools) |
 
 ## Roadmap

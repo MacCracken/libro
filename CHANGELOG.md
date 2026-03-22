@@ -24,7 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AuditEntry` accessor methods: `id()`, `timestamp()`, `severity()`, `source()`, `action()`, `details()`, `agent_id()`, `prev_hash()`, `hash()`
 - Advisory file locking (`flock`) on `FileStore` append and load for concurrent-process safety
 - `fs2` dependency for cross-platform file locking
-- 70 tests, 95% line coverage
+- `review` module: `ChainReview` with integrity status, time range, source/severity/agent distributions
+- `AuditChain::review()` — produce a structured chain summary with `Display` for human-readable output
+- `Display` impl for `AuditEntry` and `EventSeverity`
+- `tracing` instrumentation: append, verify, rotate, retention, store open, parse errors
+- 78 tests, 94% line coverage
 
 ### Changed
 - **Breaking:** `compute_hash` now length-prefixes each variable-length field (little-endian u64) to prevent second-preimage collisions via field boundary shifting. Hashes from previous versions are incompatible.

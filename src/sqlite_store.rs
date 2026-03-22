@@ -7,6 +7,7 @@
 use std::sync::Mutex;
 
 use rusqlite::{Connection, params};
+use tracing::{debug, info};
 
 use crate::entry::{AuditEntry, EventSeverity};
 use crate::query::QueryFilter;
@@ -35,6 +36,7 @@ impl SqliteStore {
             conn: Mutex::new(conn),
         };
         store.init_schema()?;
+        info!("sqlite store opened");
         Ok(store)
     }
 
@@ -224,6 +226,7 @@ impl AuditStore for SqliteStore {
                 ],
             )
             .map_err(|e| LibroError::Store(e.to_string()))?;
+        debug!(hash = entry.hash(), "entry appended to sqlite store");
         Ok(())
     }
 

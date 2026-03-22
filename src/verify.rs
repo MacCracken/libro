@@ -1,5 +1,7 @@
 //! Chain verification — validate integrity of an audit chain.
 
+use tracing::warn;
+
 use crate::LibroError;
 use crate::entry::AuditEntry;
 
@@ -11,6 +13,12 @@ pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
 
     for (i, entry) in entries.iter().enumerate() {
         if !entry.verify() {
+            warn!(
+                index = i,
+                hash = entry.hash(),
+                expected = entry.compute_hash(),
+                "entry self-hash verification failed"
+            );
             return Err(LibroError::IntegrityViolation {
                 index: i,
                 expected: entry.compute_hash(),
@@ -18,6 +26,12 @@ pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
             });
         }
         if i > 0 && entry.prev_hash() != entries[i - 1].hash() {
+            warn!(
+                index = i,
+                expected = entries[i - 1].hash(),
+                actual = entry.prev_hash(),
+                "chain linkage broken"
+            );
             return Err(LibroError::IntegrityViolation {
                 index: i,
                 expected: entries[i - 1].hash().to_owned(),

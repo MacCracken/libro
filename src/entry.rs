@@ -141,6 +141,31 @@ impl AuditEntry {
     }
 }
 
+impl std::fmt::Display for EventSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::fmt::Display for AuditEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}] {} {}/{} hash={}..{}",
+            self.timestamp.format("%Y-%m-%d %H:%M:%S"),
+            self.severity,
+            self.source,
+            self.action,
+            &self.hash[..8],
+            &self.hash[self.hash.len() - 4..],
+        )?;
+        if let Some(ref agent) = self.agent_id {
+            write!(f, " agent={agent}")?;
+        }
+        Ok(())
+    }
+}
+
 /// Write a length-prefixed field into the hasher to prevent field boundary ambiguity.
 fn hash_field(hasher: &mut Sha256, data: &[u8]) {
     hasher.update((data.len() as u64).to_le_bytes());

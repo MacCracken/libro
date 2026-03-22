@@ -1,5 +1,7 @@
 //! The audit chain — append-only, hash-linked sequence of entries.
 
+use tracing::{debug, info, warn};
+
 use crate::LibroError;
 use crate::entry::{AuditEntry, EventSeverity};
 use crate::query::QueryFilter;
@@ -43,6 +45,14 @@ impl AuditChain {
             .or_else(|| self.prev_chain_hash.clone())
             .unwrap_or_default();
         let entry = AuditEntry::new(severity, source, action, details, prev_hash);
+        debug!(
+            hash = entry.hash(),
+            source = entry.source(),
+            action = entry.action(),
+            severity = entry.severity().as_str(),
+            index = self.entries.len(),
+            "chain entry appended"
+        );
         self.entries.push(entry);
         self.entries.last().unwrap()
     }
@@ -86,7 +96,12 @@ impl AuditChain {
             });
         }
 
-        verify_chain(&self.entries)
+        let result = verify_chain(&self.entries);
+        match &result {
+            Ok(()) => info!(entries = self.entries.len(), "chain verification passed"),
+            Err(e) => warn!(error = %e, "chain verification failed"),
+        }
+        result
     }
 
     /// Query entries by source.
@@ -122,6 +137,11 @@ impl AuditChain {
         let head_hash = self.head_hash().unwrap_or("").to_owned();
         let entries = std::mem::take(&mut self.entries);
         self.prev_chain_hash = Some(head_hash.clone());
+        info!(
+            archived = entries.len(),
+            head_hash = %head_hash,
+            "chain rotated"
+        );
         ChainArchive { entries, head_hash }
     }
 
@@ -156,6 +176,12 @@ impl AuditChain {
 
         self.entries = retained;
         self.prev_chain_hash = Some(head_hash.clone());
+
+        info!(
+            archived = all_entries.len(),
+            retained = self.entries.len(),
+            "retention policy applied"
+        );
 
         Some(ChainArchive {
             entries: all_entries,

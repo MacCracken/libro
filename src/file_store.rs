@@ -9,6 +9,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
+use tracing::{debug, error, info};
 
 use crate::entry::AuditEntry;
 use crate::query::QueryFilter;
@@ -36,6 +37,7 @@ impl FileStore {
         }
 
         let count = Self::count_lines(&path)?;
+        info!(path = %path.display(), entries = count, "file store opened");
         Ok(Self { path, count })
     }
 
@@ -76,6 +78,7 @@ impl AuditStore for FileStore {
         writeln!(file, "{json}")?;
         file.unlock()?;
         self.count += 1;
+        debug!(hash = entry.hash(), index = self.count - 1, "entry appended to file store");
         Ok(())
     }
 
@@ -91,6 +94,7 @@ impl AuditStore for FileStore {
                 continue;
             }
             let entry: AuditEntry = serde_json::from_str(&line).map_err(|e| {
+                error!(line = line_num + 1, error = %e, "failed to parse entry from file store");
                 LibroError::Store(format!("line {}: {e}", line_num + 1))
             })?;
             entries.push(entry);
