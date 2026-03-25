@@ -38,6 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --features full
   test:
     name: Test (${{ matrix.os }})
     needs: [check]

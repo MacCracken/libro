@@ -1,6 +1,6 @@
 [package]
 name = "libro"
-version = "0.22.4"
+version = "0.25.3"
 edition = "2024"
 rust-version = "1.89"
 license = "AGPL-3.0-only"
@@ -18,6 +18,8 @@ default = []
 sqlite = ["dep:rusqlite"]
 signing = ["dep:ed25519-dalek", "dep:rand_core"]
 streaming = ["dep:majra", "dep:tokio"]
+kernel-audit = ["dep:agnosys"]
+full = ["sqlite", "signing", "streaming"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +35,9 @@ rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 rusqlite = { version = "0.34", features = ["bundled"], optional = true }
 majra = { version = "0.21.3", features = ["pubsub"], optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
+
+# Kernel audit subsystem (optional — agnosys Linux audit netlink interface)
+agnosys = { git = "https://github.com/MacCracken/agnosys", features = ["audit"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

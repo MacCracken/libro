@@ -2,7 +2,7 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [graph]
-all-features = true
+features = ["full"]
 
 [advisories]
 version = 2
@@ -24,11 +24,11 @@ allow = [
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
 highlight = "all"
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/MacCracken/agnosys"]

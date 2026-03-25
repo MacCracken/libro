@@ -40,3 +40,4 @@ benchmark-results/*.md
 
 # Cargo.lock — generated during CI/CD, not committed for library crates
 Cargo.lock
+/.cargo/

@@ -34,6 +34,7 @@ pub mod chain;
 pub mod entry;
 pub mod export;
 pub mod file_store;
+pub mod kernel_audit;
 pub mod merkle;
 pub mod query;
 pub mod retention;
