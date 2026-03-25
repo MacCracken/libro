@@ -135,9 +135,8 @@ mod tests {
     fn read_kernel_events_without_kernel() {
         let result = read_kernel_events();
         // Without feature: error. With feature but no AGNOS kernel: Ok(empty).
-        match result {
-            Ok(entries) => assert!(entries.is_empty()),
-            Err(_) => {} // expected without feature
+        if let Ok(entries) = result {
+            assert!(entries.is_empty());
         }
     }
 
