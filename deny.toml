@@ -19,7 +19,6 @@ allow = [
     "CC0-1.0",
     "Unicode-3.0",
     "Unlicense",
-    "AGPL-3.0-only",
     "GPL-3.0-only",
     "LGPL-2.1-or-later",
     "Zlib",
