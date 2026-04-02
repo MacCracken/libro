@@ -1,5 +1,6 @@
 //! The audit chain — append-only, hash-linked sequence of entries.
 
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::LibroError;
@@ -17,7 +18,8 @@ pub struct AuditChain {
 }
 
 /// Archived entries from a chain rotation.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ChainArchive {
     /// The drained entries.
     pub entries: Vec<AuditEntry>,

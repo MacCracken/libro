@@ -3,6 +3,24 @@
 //! Stores entries in a single `audit_entries` table with indexed columns
 //! for efficient queries by timestamp, severity, source, and agent_id.
 //! Requires the `sqlite` feature flag.
+//!
+//! # Usage
+//!
+//! ```rust,no_run
+//! use libro::SqliteStore;
+//! use libro::store::AuditStore;
+//! use libro::{AuditEntry, EventSeverity, QueryFilter};
+//!
+//! let mut store = SqliteStore::open("audit.db").unwrap();
+//!
+//! let entry = AuditEntry::new(
+//!     EventSeverity::Info, "myapp", "user.login",
+//!     serde_json::json!({"user": "alice"}), "",
+//! );
+//! store.append(&entry).unwrap();
+//!
+//! let results = store.query(&QueryFilter::new().source("myapp")).unwrap();
+//! ```
 
 use std::sync::Mutex;
 

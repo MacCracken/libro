@@ -23,6 +23,7 @@ use ed25519_dalek::{
     Signature, Signer, SigningKey as DalekSigningKey, Verifier, VerifyingKey as DalekVerifyingKey,
 };
 use rand_core::OsRng;
+use serde::{Deserialize, Serialize};
 
 use crate::entry::AuditEntry;
 
@@ -39,7 +40,8 @@ pub struct VerifyingKey {
 }
 
 /// A signature over an audit entry's hash.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EntrySignature {
     /// The entry hash that was signed.
     pub entry_hash: String,
@@ -109,6 +111,24 @@ impl VerifyingKey {
     #[must_use]
     pub fn to_hex(&self) -> String {
         hex_encode(self.inner.to_bytes())
+    }
+}
+
+impl Serialize for VerifyingKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for VerifyingKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let hex = String::deserialize(deserializer)?;
+        let bytes = hex_decode(&hex)
+            .ok_or_else(|| serde::de::Error::custom("invalid hex for verifying key"))?;
+        let array: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("verifying key must be 32 bytes"))?;
+        VerifyingKey::from_bytes(&array).map_err(serde::de::Error::custom)
     }
 }
 

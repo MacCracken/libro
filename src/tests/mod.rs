@@ -478,3 +478,246 @@ fn signing_key_deterministic_from_seed() {
     let sig2 = key2.sign(&entry);
     assert_eq!(sig1.signature, sig2.signature);
 }
+
+// --- Serde roundtrip tests ---
+
+#[test]
+fn serde_roundtrip_merkle_proof() {
+    let mut chain = AuditChain::new();
+    for i in 0..5 {
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
+    }
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+
+    // Populated proof
+    let proof = tree.proof(2).unwrap();
+    let json = serde_json::to_string(&proof).unwrap();
+    let back: crate::MerkleProof = serde_json::from_str(&json).unwrap();
+    assert_eq!(proof, back);
+    assert!(verify_proof(&back));
+
+    // Single-entry proof (empty path)
+    let single = AuditChain::new();
+    let mut s = AuditChain::new();
+    drop(single);
+    s.append(
+        entry::EventSeverity::Info,
+        "src",
+        "only",
+        serde_json::json!({}),
+    );
+    let tree1 = MerkleTree::build(s.entries()).unwrap();
+    let proof1 = tree1.proof(0).unwrap();
+    let json1 = serde_json::to_string(&proof1).unwrap();
+    let back1: crate::MerkleProof = serde_json::from_str(&json1).unwrap();
+    assert_eq!(proof1, back1);
+    assert!(back1.path.is_empty());
+}
+
+#[test]
+fn serde_roundtrip_chain_archive() {
+    let mut chain = AuditChain::new();
+    for i in 0..3 {
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
+    }
+    let archive = chain.rotate();
+    let json = serde_json::to_string(&archive).unwrap();
+    let back: crate::ChainArchive = serde_json::from_str(&json).unwrap();
+    assert_eq!(archive, back);
+    assert!(verify_chain(&back.entries).is_ok());
+}
+
+#[test]
+fn serde_roundtrip_chain_review() {
+    let mut chain = AuditChain::new();
+    chain.append(
+        entry::EventSeverity::Info,
+        "daimon",
+        "start",
+        serde_json::json!({}),
+    );
+    chain.append(
+        entry::EventSeverity::Security,
+        "aegis",
+        "alert",
+        serde_json::json!({}),
+    );
+    let review = chain.review();
+    let json = serde_json::to_string(&review).unwrap();
+    let back: crate::ChainReview = serde_json::from_str(&json).unwrap();
+    assert_eq!(review, back);
+}
+
+#[test]
+fn serde_roundtrip_integrity_status() {
+    use crate::review::IntegrityStatus;
+
+    let variants = [
+        IntegrityStatus::Valid,
+        IntegrityStatus::Empty,
+        IntegrityStatus::Invalid("broken at entry 3".to_owned()),
+    ];
+    for variant in &variants {
+        let json = serde_json::to_string(variant).unwrap();
+        let back: IntegrityStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(*variant, back);
+    }
+}
+
+#[test]
+fn serde_roundtrip_query_filter() {
+    // Empty filter
+    let empty = crate::QueryFilter::new();
+    let json = serde_json::to_string(&empty).unwrap();
+    assert_eq!(json, "{}"); // all fields skipped
+    let back: crate::QueryFilter = serde_json::from_str(&json).unwrap();
+    // Verify the deserialized filter matches everything (same as empty)
+    let entry = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "src",
+        "act",
+        serde_json::json!({}),
+        "",
+    );
+    assert!(back.matches(&entry));
+
+    // Populated filter
+    let filter = crate::QueryFilter::new()
+        .source("daimon")
+        .severity(entry::EventSeverity::Security)
+        .action("alert");
+    let json = serde_json::to_string(&filter).unwrap();
+    let back: crate::QueryFilter = serde_json::from_str(&json).unwrap();
+    // Verify deserialized filter still works
+    let matching = entry::AuditEntry::new(
+        entry::EventSeverity::Security,
+        "daimon",
+        "alert",
+        serde_json::json!({}),
+        "",
+    );
+    assert!(back.matches(&matching));
+    assert!(!back.matches(&entry)); // doesn't match Info/src/act
+}
+
+#[test]
+fn serde_roundtrip_retention_policy() {
+    use chrono::Duration;
+
+    // KeepCount
+    let kc = RetentionPolicy::KeepCount(1000);
+    let json = serde_json::to_string(&kc).unwrap();
+    let back: RetentionPolicy = serde_json::from_str(&json).unwrap();
+    assert_eq!(kc, back);
+    assert!(json.contains("\"KeepCount\""));
+
+    // KeepDuration
+    let kd = RetentionPolicy::KeepDuration(Duration::hours(24));
+    let json = serde_json::to_string(&kd).unwrap();
+    let back: RetentionPolicy = serde_json::from_str(&json).unwrap();
+    assert_eq!(kd, back);
+    assert!(json.contains("86400")); // 24h in seconds
+
+    // KeepAfter
+    let ts = chrono::Utc::now();
+    let ka = RetentionPolicy::KeepAfter(ts);
+    let json = serde_json::to_string(&ka).unwrap();
+    let back: RetentionPolicy = serde_json::from_str(&json).unwrap();
+    assert_eq!(ka, back);
+}
+
+#[cfg(feature = "signing")]
+#[test]
+fn serde_roundtrip_entry_signature() {
+    use crate::signing::SigningKey;
+
+    let key = SigningKey::generate();
+    let entry = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "src",
+        "act",
+        serde_json::json!({}),
+        "",
+    );
+    let sig = key.sign(&entry);
+    let json = serde_json::to_string(&sig).unwrap();
+    let back: crate::signing::EntrySignature = serde_json::from_str(&json).unwrap();
+    assert_eq!(sig, back);
+    assert!(back.verify(&entry, &key.verifying_key()));
+}
+
+#[cfg(feature = "signing")]
+#[test]
+fn serde_roundtrip_verifying_key() {
+    use crate::signing::SigningKey;
+
+    let key = SigningKey::generate();
+    let vk = key.verifying_key();
+    let json = serde_json::to_string(&vk).unwrap();
+    let back: crate::signing::VerifyingKey = serde_json::from_str(&json).unwrap();
+    assert_eq!(vk.to_hex(), back.to_hex());
+
+    // Verify the deserialized key works for signature verification
+    let entry = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "src",
+        "act",
+        serde_json::json!({}),
+        "",
+    );
+    let sig = key.sign(&entry);
+    assert!(sig.verify(&entry, &back));
+}
+
+// --- PartialEq tests ---
+
+#[test]
+fn audit_entry_partial_eq() {
+    let e1 = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "src",
+        "act",
+        serde_json::json!({}),
+        "",
+    );
+    // Serde roundtrip preserves equality
+    let json = serde_json::to_string(&e1).unwrap();
+    let e2: entry::AuditEntry = serde_json::from_str(&json).unwrap();
+    assert_eq!(e1, e2);
+
+    // Different entries are not equal
+    let e3 = entry::AuditEntry::new(
+        entry::EventSeverity::Security,
+        "other",
+        "act",
+        serde_json::json!({}),
+        "",
+    );
+    assert_ne!(e1, e3);
+}
+
+#[test]
+fn chain_archive_clone_equals_original() {
+    let mut chain = AuditChain::new();
+    for i in 0..3 {
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
+    }
+    let archive = chain.rotate();
+    let cloned = archive.clone();
+    assert_eq!(archive, cloned);
+}

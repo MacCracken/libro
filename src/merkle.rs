@@ -8,6 +8,7 @@
 //!
 //! The tree uses SHA-256, consistent with the chain's hash algorithm.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::entry::AuditEntry;
@@ -22,7 +23,8 @@ pub struct MerkleTree {
 }
 
 /// An inclusion proof for a single entry in the Merkle tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MerkleProof {
     /// The entry index this proof is for.
     pub index: usize,
@@ -35,7 +37,8 @@ pub struct MerkleProof {
 }
 
 /// A node in a Merkle proof path.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ProofNode {
     /// The sibling hash.
     pub hash: String,
@@ -44,7 +47,7 @@ pub struct ProofNode {
 }
 
 /// Side indicator for proof path nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Side {
     Left,

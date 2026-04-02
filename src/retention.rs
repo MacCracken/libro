@@ -6,11 +6,12 @@
 //! chain integrity — entries are never silently deleted.
 
 use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::entry::AuditEntry;
 
 /// A retention policy that determines which entries to keep.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RetentionPolicy {
     /// Keep the most recent N entries.
@@ -19,6 +20,72 @@ pub enum RetentionPolicy {
     KeepDuration(Duration),
     /// Keep entries newer than this absolute timestamp.
     KeepAfter(DateTime<Utc>),
+}
+
+/// Custom serialization for `RetentionPolicy`.
+///
+/// Serializes as a tagged enum with `type` and `value` fields:
+/// - `KeepCount` → `{"type": "KeepCount", "value": 1000}`
+/// - `KeepDuration` → `{"type": "KeepDuration", "value": 86400}` (seconds)
+/// - `KeepAfter` → `{"type": "KeepAfter", "value": "2026-03-01T00:00:00Z"}`
+impl Serialize for RetentionPolicy {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("RetentionPolicy", 2)?;
+        match self {
+            RetentionPolicy::KeepCount(n) => {
+                state.serialize_field("type", "KeepCount")?;
+                state.serialize_field("value", n)?;
+            }
+            RetentionPolicy::KeepDuration(d) => {
+                state.serialize_field("type", "KeepDuration")?;
+                state.serialize_field("value", &d.num_seconds())?;
+            }
+            RetentionPolicy::KeepAfter(dt) => {
+                state.serialize_field("type", "KeepAfter")?;
+                state.serialize_field("value", &dt.to_rfc3339())?;
+            }
+        }
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RetentionPolicy {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Tagged {
+            r#type: String,
+            value: serde_json::Value,
+        }
+        let tagged = Tagged::deserialize(deserializer)?;
+        match tagged.r#type.as_str() {
+            "KeepCount" => {
+                let n = tagged
+                    .value
+                    .as_u64()
+                    .ok_or_else(|| serde::de::Error::custom("KeepCount value must be a number"))?;
+                Ok(RetentionPolicy::KeepCount(n as usize))
+            }
+            "KeepDuration" => {
+                let secs = tagged.value.as_i64().ok_or_else(|| {
+                    serde::de::Error::custom("KeepDuration value must be seconds")
+                })?;
+                Ok(RetentionPolicy::KeepDuration(Duration::seconds(secs)))
+            }
+            "KeepAfter" => {
+                let s = tagged.value.as_str().ok_or_else(|| {
+                    serde::de::Error::custom("KeepAfter value must be an RFC3339 timestamp")
+                })?;
+                let dt = chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(serde::de::Error::custom)?
+                    .with_timezone(&Utc);
+                Ok(RetentionPolicy::KeepAfter(dt))
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unknown RetentionPolicy type: {other}"
+            ))),
+        }
+    }
 }
 
 impl RetentionPolicy {

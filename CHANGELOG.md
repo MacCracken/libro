@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-04-02
+
+### Added
+- **Serde** (`Serialize`/`Deserialize`) on: `ChainArchive`, `ChainReview`, `IntegrityStatus`, `MerkleProof`, `ProofNode`, `Side`, `QueryFilter`, `RetentionPolicy`, `EntrySignature`, `VerifyingKey`
+- **`PartialEq`** on: `AuditEntry`, `ChainArchive`, `ChainReview`, `IntegrityStatus`, `MerkleProof`, `ProofNode`, `EntrySignature`, `RetentionPolicy`
+- **`Clone`** on: `ChainArchive`, `IntegrityStatus`
+- **`#[non_exhaustive]`** on public structs: `ChainArchive`, `ChainReview`, `MerkleProof`, `ProofNode`, `EntrySignature`
+- **`#[non_exhaustive]`** on public enums: `EventSeverity`, `Side`, `IntegrityStatus`, `RetentionPolicy`
+- **`#[must_use]`** on pure functions: `verify()`, `compute_hash()`, `matches()`, `verify_proof()`, `root()`, `leaf_count()`, `at_or_above()`, `as_str()`, signing key methods
+- **`#[inline]`** on hot-path accessors: all `AuditEntry` field accessors, `EventSeverity::as_str()`, `QueryFilter::matches()`, chain size methods, `hash_pair()`
+- Re-exported `ProofNode`, `Side`, and `IntegrityStatus` from crate root
+- Doc comments on `verify_chain()`, all `LibroError` variants, `SqliteStore` module with usage example
+- Custom serde for `RetentionPolicy` — `KeepDuration` serialized as seconds (i64), `KeepAfter` as RFC3339
+- Custom serde for `VerifyingKey` — serialized as hex string
+- `#[serde(skip_serializing_if = "Option::is_none")]` on `QueryFilter` fields for compact JSON
+- Signing and SQLite benchmarks (`sign_entry`, `verify_signature`, `sqlite_append_100`, `sqlite_query_100`)
+- 14 new serde roundtrip tests, trait assertion tests, edge case tests (166 total)
+
+### Changed
+- `csv_escape()` uses `Cow<str>` to avoid allocation when no escaping needed
+- `abbreviate_hash()` uses `Cow<str>` to avoid allocation for short hashes
+- Merkle tree `build()` moves levels instead of cloning — 25% faster build
+- Merkle tree pre-allocates `next_level` Vec with capacity
+- Signing `hex_encode()` uses `write!` into pre-allocated buffer
+- Benchmark script now runs with `--all-features`
+
+### Fixed
+- Clippy `needless_borrow` in test code
+
 ## [0.22.4] — 2026-03-22
 
 ### Added
@@ -140,7 +169,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
-[Unreleased]: https://github.com/MacCracken/libro/compare/v0.22.3...HEAD
+[Unreleased]: https://github.com/MacCracken/libro/compare/v0.90.0...HEAD
+[0.90.0]: https://github.com/MacCracken/libro/compare/v0.25.3...v0.90.0
 [0.22.3]: https://github.com/MacCracken/libro/compare/v0.21.3...v0.22.3
 [0.21.3]: https://github.com/MacCracken/libro/compare/v0.21.2...v0.21.3
 [0.21.2]: https://github.com/MacCracken/libro/compare/v0.21.1...v0.21.2

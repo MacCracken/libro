@@ -55,10 +55,10 @@ pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
 pub use export::{to_csv, to_jsonl};
 pub use file_store::FileStore;
-pub use merkle::{MerkleProof, MerkleTree};
+pub use merkle::{MerkleProof, MerkleTree, ProofNode, Side};
 pub use query::QueryFilter;
 pub use retention::RetentionPolicy;
-pub use review::ChainReview;
+pub use review::{ChainReview, IntegrityStatus};
 #[cfg(feature = "sqlite")]
 pub use sqlite_store::SqliteStore;
 #[cfg(feature = "streaming")]
@@ -74,6 +74,9 @@ mod tests;
 #[cfg(test)]
 mod assert_traits {
     fn _assert_send_sync<T: Send + Sync>() {}
+    fn _assert_partial_eq<T: PartialEq>() {}
+    fn _assert_clone<T: Clone>() {}
+    fn _assert_serde<T: serde::Serialize + serde::de::DeserializeOwned>() {}
 
     #[test]
     fn core_types_are_send_sync() {
@@ -86,5 +89,55 @@ mod assert_traits {
         _assert_send_sync::<super::FileStore>();
         _assert_send_sync::<super::MerkleTree>();
         _assert_send_sync::<super::MerkleProof>();
+    }
+
+    #[test]
+    fn core_types_are_partial_eq() {
+        _assert_partial_eq::<super::AuditEntry>();
+        _assert_partial_eq::<super::ChainArchive>();
+        _assert_partial_eq::<super::ChainReview>();
+        _assert_partial_eq::<super::IntegrityStatus>();
+        _assert_partial_eq::<super::MerkleProof>();
+        _assert_partial_eq::<super::ProofNode>();
+        _assert_partial_eq::<super::Side>();
+        _assert_partial_eq::<super::RetentionPolicy>();
+        _assert_partial_eq::<super::EventSeverity>();
+    }
+
+    #[test]
+    fn core_types_are_clone() {
+        _assert_clone::<super::AuditEntry>();
+        _assert_clone::<super::ChainArchive>();
+        _assert_clone::<super::IntegrityStatus>();
+        _assert_clone::<super::MerkleTree>();
+        _assert_clone::<super::MerkleProof>();
+        _assert_clone::<super::ProofNode>();
+        _assert_clone::<super::RetentionPolicy>();
+        _assert_clone::<super::QueryFilter>();
+    }
+
+    #[test]
+    fn core_types_are_serde() {
+        _assert_serde::<super::AuditEntry>();
+        _assert_serde::<super::EventSeverity>();
+        _assert_serde::<super::ChainArchive>();
+        _assert_serde::<super::ChainReview>();
+        _assert_serde::<super::IntegrityStatus>();
+        _assert_serde::<super::MerkleProof>();
+        _assert_serde::<super::ProofNode>();
+        _assert_serde::<super::Side>();
+        _assert_serde::<super::QueryFilter>();
+        _assert_serde::<super::RetentionPolicy>();
+    }
+
+    #[cfg(feature = "signing")]
+    #[test]
+    fn signing_types_traits() {
+        use super::signing::{EntrySignature, VerifyingKey};
+        _assert_serde::<EntrySignature>();
+        _assert_serde::<VerifyingKey>();
+        _assert_partial_eq::<EntrySignature>();
+        _assert_clone::<EntrySignature>();
+        _assert_clone::<VerifyingKey>();
     }
 }

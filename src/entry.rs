@@ -69,7 +69,7 @@ impl EventSeverity {
 /// Fields are not directly mutable — all construction goes through [`AuditEntry::new`]
 /// and [`AuditEntry::with_agent`], which recompute the hash. This ensures integrity
 /// by construction: a valid `AuditEntry` always has a correct self-hash.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AuditEntry {
     id: Uuid,
     timestamp: DateTime<Utc>,
@@ -249,7 +249,6 @@ pub(crate) fn abbreviate_hash(hash: &str) -> Cow<'_, str> {
         Cow::Borrowed(hash)
     }
 }
-
 
 /// Write a length-prefixed field into the hasher to prevent field boundary ambiguity.
 fn hash_field(hasher: &mut Sha256, data: &[u8]) {

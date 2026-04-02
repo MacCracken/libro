@@ -5,6 +5,7 @@
 //! `SqliteStore` translates filters to SQL WHERE clauses.
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::entry::{AuditEntry, EventSeverity};
 
@@ -20,14 +21,21 @@ use crate::entry::{AuditEntry, EventSeverity};
 ///     .source("daimon")
 ///     .severity(EventSeverity::Security);
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryFilter {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) severity: Option<EventSeverity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) after: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) before: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) min_severity: Option<EventSeverity>,
 }
 

@@ -6,11 +6,14 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::chain::AuditChain;
 use crate::entry::abbreviate_hash;
 
 /// A structured review of an audit chain's contents and integrity.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ChainReview {
     /// Total number of entries.
     pub entry_count: usize,
@@ -33,7 +36,7 @@ pub struct ChainReview {
 }
 
 /// Chain integrity status.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum IntegrityStatus {
     /// Chain verified successfully.

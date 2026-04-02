@@ -1,4 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+#[cfg(feature = "sqlite")]
+use libro::SqliteStore;
 use libro::export;
 use libro::merkle::MerkleTree;
 use libro::query::QueryFilter;
@@ -6,8 +8,6 @@ use libro::query::QueryFilter;
 use libro::signing::SigningKey;
 use libro::store::AuditStore;
 use libro::{AuditChain, EventSeverity};
-#[cfg(feature = "sqlite")]
-use libro::SqliteStore;
 
 fn make_chain(n: usize) -> AuditChain {
     let mut chain = AuditChain::new();
@@ -228,11 +228,7 @@ criterion_group!(
 );
 
 #[cfg(feature = "signing")]
-criterion_group!(
-    signing_benches,
-    bench_sign_entry,
-    bench_verify_signature,
-);
+criterion_group!(signing_benches, bench_sign_entry, bench_verify_signature,);
 
 #[cfg(feature = "sqlite")]
 criterion_group!(

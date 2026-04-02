@@ -6,6 +6,15 @@ use crate::LibroError;
 use crate::entry::AuditEntry;
 
 /// Verify a sequence of audit entries forms a valid chain.
+///
+/// Checks two properties for each entry:
+/// 1. **Self-hash integrity** — the entry's stored hash matches its recomputed hash.
+/// 2. **Chain linkage** — each entry's `prev_hash` matches the preceding entry's hash.
+///
+/// Returns `Ok(())` if all entries are valid, or a [`LibroError::IntegrityViolation`]
+/// identifying the first invalid entry.
+///
+/// An empty slice is considered valid.
 pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
     if entries.is_empty() {
         return Ok(());
