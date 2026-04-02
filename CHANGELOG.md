@@ -9,12 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.91.0] — 2026-04-02
 
+### Added
+- `cargo vet` supply-chain auditing — initialized with trusted publisher imports from Mozilla, Google, Bytecode Alliance, ISRG, and Zcash (119 audited, 54 exempted)
+- CI: `cargo vet --locked` enforcement in security job
+- CI: `--all-features` on all Linux jobs (check, clippy, test, MSRV, coverage)
+- CI: macOS test matrix uses `--features full` to exclude Linux-only `kernel-audit`
+
 ### Changed
 - Upgraded majra from 0.21.3 to 1.0 (stable release)
 - Upgraded rusqlite from 0.34 to 0.39
 - Upgraded criterion from 0.5 to 0.8
 - License changed from AGPL-3.0-only to GPL-3.0-only (aligns with AGNOS ecosystem)
-- Updated `cargo-deny` config: added `CC0-1.0`, `MIT-0`, `Unlicense`, `LGPL-2.1-or-later` to license allowlist; removed stale entries
+- `cargo-deny` config: `all-features = true` (was `features = ["full"]`), added `CC0-1.0`, `MIT-0`, `Unlicense`, `LGPL-2.1-or-later` to license allowlist, restored agnosys git source, removed stale entries
 
 ### Fixed
 - `SqliteStore::len()` adapted for rusqlite 0.39 (`usize` no longer implements `FromSql`)
