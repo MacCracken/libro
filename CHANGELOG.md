@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.91.0] — 2026-04-02
+
+### Changed
+- Upgraded majra from 0.21.3 to 1.0 (stable release)
+- Upgraded rusqlite from 0.34 to 0.39
+- Upgraded criterion from 0.5 to 0.8
+- License changed from AGPL-3.0-only to GPL-3.0-only (aligns with AGNOS ecosystem)
+- Updated `cargo-deny` config: added `CC0-1.0`, `MIT-0`, `Unlicense`, `LGPL-2.1-or-later` to license allowlist; removed stale entries
+
+### Fixed
+- `SqliteStore::len()` adapted for rusqlite 0.39 (`usize` no longer implements `FromSql`)
+
 ## [0.90.0] — 2026-04-02
 
 ### Added
@@ -181,7 +193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
-[Unreleased]: https://github.com/MacCracken/libro/compare/v0.90.0...HEAD
+[Unreleased]: https://github.com/MacCracken/libro/compare/v0.91.0...HEAD
+[0.91.0]: https://github.com/MacCracken/libro/compare/v0.90.0...v0.91.0
 [0.90.0]: https://github.com/MacCracken/libro/compare/v0.25.3...v0.90.0
 [0.22.4]: https://github.com/MacCracken/libro/compare/v0.22.3...v0.22.4
 [0.22.3]: https://github.com/MacCracken/libro/compare/v0.21.3...v0.22.3

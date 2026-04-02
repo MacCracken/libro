@@ -1,9 +1,9 @@
 [package]
 name = "libro"
-version = "0.90.0"
+version = "0.91.0"
 edition = "2024"
 rust-version = "1.89"
-license = "AGPL-3.0-only"
+license = "GPL-3.0-only"
 description = "Cryptographic audit chain — tamper-proof event logging with hash-linked entries and verification"
 homepage = "https://github.com/MacCracken/libro"
 repository = "https://github.com/MacCracken/libro"
@@ -34,8 +34,8 @@ sha2 = { version = "0.10", optional = true }
 fs2 = "0.4"
 ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
 rand_core = { version = "0.6", features = ["getrandom"], optional = true }
-rusqlite = { version = "0.34", features = ["bundled"], optional = true }
-majra = { version = "0.21.3", features = ["pubsub"], optional = true }
+rusqlite = { version = "0.39", features = ["bundled"], optional = true }
+majra = { version = "1.0", features = ["pubsub"], optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
 
 # Kernel audit subsystem (optional — agnosys Linux audit netlink interface)
@@ -43,11 +43,11 @@ agnosys = { git = "https://github.com/MacCracken/agnosys", features = ["audit"],
 
 [dev-dependencies]
 tempfile = "3"
-criterion = { version = "0.5", features = ["html_reports"] }
-rusqlite = { version = "0.34", features = ["bundled"] }
+criterion = { version = "0.8", features = ["html_reports"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
-majra = { version = "0.21.3", features = ["pubsub"] }
+majra = { version = "1.0", features = ["pubsub"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[bench]]

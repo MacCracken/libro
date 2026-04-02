@@ -271,7 +271,9 @@ impl AuditStore for SqliteStore {
 
     fn len(&self) -> usize {
         self.lock()
-            .query_row("SELECT COUNT(*) FROM audit_entries", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM audit_entries", [], |row| {
+                row.get::<_, i64>(0).map(|n| n as usize)
+            })
             .unwrap_or(0)
     }
 }
