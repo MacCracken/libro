@@ -1,5 +1,7 @@
 //! Audit entries with hash linking.
 
+use std::borrow::Cow;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,6 +11,7 @@ use uuid::Uuid;
 /// Variants are ordered by increasing severity:
 /// `Debug < Info < Warning < Error < Critical < Security`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EventSeverity {
     Debug,
     Info,
@@ -21,6 +24,7 @@ pub enum EventSeverity {
 impl EventSeverity {
     /// Stable string representation used in hashing and storage.
     /// All variants at or above this severity level.
+    #[must_use]
     pub fn at_or_above(self) -> &'static [EventSeverity] {
         match self {
             Self::Debug => &[
@@ -46,6 +50,8 @@ impl EventSeverity {
     }
 
     /// Stable string representation used in hashing and storage.
+    #[inline]
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Debug => "Debug",
@@ -80,30 +86,39 @@ pub struct AuditEntry {
 
 impl AuditEntry {
     // --- Accessors ---
+    #[inline]
     pub fn id(&self) -> Uuid {
         self.id
     }
+    #[inline]
     pub fn timestamp(&self) -> DateTime<Utc> {
         self.timestamp
     }
+    #[inline]
     pub fn severity(&self) -> EventSeverity {
         self.severity
     }
+    #[inline]
     pub fn source(&self) -> &str {
         &self.source
     }
+    #[inline]
     pub fn action(&self) -> &str {
         &self.action
     }
+    #[inline]
     pub fn details(&self) -> &serde_json::Value {
         &self.details
     }
+    #[inline]
     pub fn agent_id(&self) -> Option<&str> {
         self.agent_id.as_deref()
     }
+    #[inline]
     pub fn prev_hash(&self) -> &str {
         &self.prev_hash
     }
+    #[inline]
     pub fn hash(&self) -> &str {
         &self.hash
     }
@@ -175,6 +190,7 @@ impl AuditEntry {
     ///
     /// Each variable-length field is length-prefixed (little-endian u64) to
     /// prevent second-preimage attacks via field boundary shifting.
+    #[must_use]
     pub fn compute_hash(&self) -> String {
         let mut hasher = Sha256::new();
         // Fixed-length fields (no prefix needed)
@@ -195,6 +211,7 @@ impl AuditEntry {
     }
 
     /// Verify this entry's hash matches its content.
+    #[must_use]
     pub fn verify(&self) -> bool {
         self.hash == self.compute_hash()
     }
@@ -225,13 +242,14 @@ impl std::fmt::Display for AuditEntry {
 }
 
 /// Abbreviate a hex hash for display: "a1b2c3d4..ef56" or the full string if short.
-pub(crate) fn abbreviate_hash(hash: &str) -> String {
+pub(crate) fn abbreviate_hash(hash: &str) -> Cow<'_, str> {
     if hash.len() > 12 {
-        format!("{}..{}", &hash[..8], &hash[hash.len() - 4..])
+        Cow::Owned(format!("{}..{}", &hash[..8], &hash[hash.len() - 4..]))
     } else {
-        hash.to_owned()
+        Cow::Borrowed(hash)
     }
 }
+
 
 /// Write a length-prefixed field into the hasher to prevent field boundary ambiguity.
 fn hash_field(hasher: &mut Sha256, data: &[u8]) {

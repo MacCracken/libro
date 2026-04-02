@@ -34,6 +34,7 @@ pub struct ChainReview {
 
 /// Chain integrity status.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum IntegrityStatus {
     /// Chain verified successfully.
     Valid,

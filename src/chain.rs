@@ -88,20 +88,28 @@ impl AuditChain {
     }
 
     /// Number of entries in the chain.
+    #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Get all entries.
+    #[inline]
+    #[must_use]
     pub fn entries(&self) -> &[AuditEntry] {
         &self.entries
     }
 
     /// Get the last entry's hash (chain head).
+    #[inline]
+    #[must_use]
     pub fn head_hash(&self) -> Option<&str> {
         self.entries.last().map(|e| e.hash())
     }

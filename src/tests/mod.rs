@@ -310,7 +310,7 @@ fn signing_merkle_chain_integration() {
             format!("e{i}"),
             serde_json::json!({}),
         );
-        sigs.push(key.sign(&chain.entries().last().unwrap()));
+        sigs.push(key.sign(chain.entries().last().unwrap()));
     }
 
     // Verify chain integrity
@@ -349,4 +349,132 @@ fn signing_merkle_chain_integration() {
     // but chain verification catches the actual tamper
     let tampered_tree = MerkleTree::build(&entries).unwrap();
     assert_eq!(tree.root(), tampered_tree.root()); // merkle uses stored hash, not recomputed
+}
+
+#[test]
+fn chain_batch_empty_input() {
+    let mut chain = AuditChain::new();
+    let appended = chain.append_batch(std::iter::empty());
+    assert!(appended.is_empty());
+    assert!(chain.is_empty());
+}
+
+#[test]
+fn retention_keep_count_equal_to_len() {
+    let mut chain = AuditChain::new();
+    for i in 0..5 {
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
+    }
+    // KeepCount == chain length should archive nothing
+    let archive = chain.apply_retention(&RetentionPolicy::KeepCount(5));
+    assert!(archive.is_none());
+    assert_eq!(chain.len(), 5);
+    assert!(chain.verify().is_ok());
+}
+
+#[test]
+fn merkle_proof_all_odd_sizes() {
+    // Verify proofs work for various odd tree sizes (edge case: duplication logic)
+    for n in [1, 3, 5, 7, 9, 11, 13, 15, 17] {
+        let mut chain = AuditChain::new();
+        for i in 0..n {
+            chain.append(
+                entry::EventSeverity::Info,
+                "src",
+                format!("e{i}"),
+                serde_json::json!({}),
+            );
+        }
+        let tree = MerkleTree::build(chain.entries()).unwrap();
+        for i in 0..n {
+            let proof = tree.proof(i).unwrap();
+            assert!(
+                verify_proof(&proof),
+                "proof failed for tree size {n}, index {i}"
+            );
+        }
+    }
+}
+
+#[test]
+fn csv_export_roundtrip_no_special_chars() {
+    // Verify CSV export doesn't allocate when no escaping needed (Cow::Borrowed)
+    let mut chain = AuditChain::new();
+    chain.append(
+        entry::EventSeverity::Info,
+        "simple_source",
+        "simple_action",
+        serde_json::json!({"key": "value"}),
+    );
+    let mut buf = Vec::new();
+    export::to_csv(chain.entries(), &mut buf).unwrap();
+    let output = String::from_utf8(buf).unwrap();
+    assert!(output.contains("simple_source"));
+    assert!(output.contains("simple_action"));
+}
+
+#[test]
+fn unicode_in_entry_fields() {
+    // Verify hashing handles Unicode correctly
+    let mut chain = AuditChain::new();
+    chain.append(
+        entry::EventSeverity::Info,
+        "日本語ソース",
+        "действие",
+        serde_json::json!({"emoji": "🔒", "arabic": "مرحبا"}),
+    );
+    assert!(chain.verify().is_ok());
+
+    // Export and re-import preserves Unicode
+    let mut buf = Vec::new();
+    export::to_jsonl(chain.entries(), &mut buf).unwrap();
+    let line = String::from_utf8(buf).unwrap();
+    let reimported: entry::AuditEntry = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(reimported.source(), "日本語ソース");
+    assert_eq!(reimported.action(), "действие");
+    assert!(reimported.verify());
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_store_unicode_roundtrip() {
+    let mut store = SqliteStore::in_memory().unwrap();
+    let e = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "日本語",
+        "действие",
+        serde_json::json!({"key": "值"}),
+        "",
+    );
+    store.append(&e).unwrap();
+    let loaded = store.load_all().unwrap();
+    assert_eq!(loaded[0].source(), "日本語");
+    assert!(loaded[0].verify());
+}
+
+#[cfg(feature = "signing")]
+#[test]
+fn signing_key_deterministic_from_seed() {
+    use crate::signing::SigningKey;
+
+    let seed = [42u8; 32];
+    let key1 = SigningKey::from_bytes(&seed);
+    let key2 = SigningKey::from_bytes(&seed);
+    assert_eq!(key1.verifying_key().to_hex(), key2.verifying_key().to_hex());
+
+    let entry = entry::AuditEntry::new(
+        entry::EventSeverity::Info,
+        "src",
+        "act",
+        serde_json::json!({}),
+        "",
+    );
+    let sig1 = key1.sign(&entry);
+    let sig2 = key2.sign(&entry);
+    assert_eq!(sig1.signature, sig2.signature);
 }

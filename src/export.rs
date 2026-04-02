@@ -3,6 +3,7 @@
 //! All export functions write to any [`std::io::Write`] target, making them
 //! composable with files, buffers, network streams, and stdout.
 
+use std::borrow::Cow;
 use std::io::Write;
 
 use crate::entry::AuditEntry;
@@ -45,11 +46,12 @@ pub fn to_csv(entries: &[AuditEntry], mut writer: impl Write) -> crate::Result<(
 }
 
 /// Escape a CSV field: wrap in quotes if it contains commas, quotes, or newlines.
-fn csv_escape(field: &str) -> String {
+/// Returns `Cow::Borrowed` when no escaping is needed to avoid allocation.
+fn csv_escape(field: &str) -> Cow<'_, str> {
     if field.contains(',') || field.contains('"') || field.contains('\n') {
-        format!("\"{}\"", field.replace('"', "\"\""))
+        Cow::Owned(format!("\"{}\"", field.replace('"', "\"\"")))
     } else {
-        field.to_owned()
+        Cow::Borrowed(field)
     }
 }
 

@@ -22,7 +22,7 @@ echo "Commit: $COMMIT"
 echo ""
 
 # Run benchmarks, capture output
-BENCH_OUTPUT=$(cargo bench --bench chain "$@" 2>&1) || true
+BENCH_OUTPUT=$(cargo bench --bench chain --all-features "$@" 2>&1) || true
 
 echo "$BENCH_OUTPUT"
 

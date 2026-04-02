@@ -45,6 +45,7 @@ pub struct ProofNode {
 
 /// Side indicator for proof path nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Side {
     Left,
     Right,
@@ -62,18 +63,17 @@ impl MerkleTree {
         let leaves: Vec<String> = entries.iter().map(|e| e.hash().to_owned()).collect();
         let leaf_count = leaves.len();
 
-        // Build tree bottom-up
+        // Build tree bottom-up, moving levels into nodes to avoid clones
         let mut current_level = leaves;
         let mut nodes = Vec::new();
 
         loop {
-            nodes.extend(current_level.iter().cloned());
-
             if current_level.len() == 1 {
+                nodes.extend(current_level);
                 break;
             }
 
-            let mut next_level = Vec::new();
+            let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
             let mut i = 0;
             while i < current_level.len() {
                 let left = &current_level[i];
@@ -86,6 +86,7 @@ impl MerkleTree {
                 next_level.push(hash_pair(left, right));
                 i += 2;
             }
+            nodes.extend(current_level);
             current_level = next_level;
         }
 
@@ -93,12 +94,16 @@ impl MerkleTree {
     }
 
     /// The Merkle root hash.
+    #[inline]
+    #[must_use]
     pub fn root(&self) -> &str {
         // Root is the last node
         self.nodes.last().map(|s| s.as_str()).unwrap_or("")
     }
 
     /// Number of leaves (entries) in the tree.
+    #[inline]
+    #[must_use]
     pub fn leaf_count(&self) -> usize {
         self.leaf_count
     }
@@ -159,6 +164,7 @@ impl MerkleTree {
 ///
 /// Returns `true` if the proof is valid — the leaf hash, combined with
 /// the proof path, produces the expected root.
+#[must_use]
 pub fn verify_proof(proof: &MerkleProof) -> bool {
     let mut current = proof.leaf_hash.clone();
 
@@ -173,6 +179,7 @@ pub fn verify_proof(proof: &MerkleProof) -> bool {
 }
 
 /// Hash two child nodes to produce a parent node.
+#[inline]
 fn hash_pair(left: &str, right: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(left.as_bytes());

@@ -11,6 +11,7 @@ use crate::entry::AuditEntry;
 
 /// A retention policy that determines which entries to keep.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RetentionPolicy {
     /// Keep the most recent N entries.
     KeepCount(usize),

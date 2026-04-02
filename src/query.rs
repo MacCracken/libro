@@ -79,6 +79,8 @@ impl QueryFilter {
     }
 
     /// Test whether a single entry matches this filter.
+    #[inline]
+    #[must_use]
     pub fn matches(&self, entry: &AuditEntry) -> bool {
         if let Some(ref s) = self.source
             && entry.source() != s

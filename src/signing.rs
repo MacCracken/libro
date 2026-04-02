@@ -17,6 +17,8 @@
 //! assert!(sig.verify(&entry, &key.verifying_key()));
 //! ```
 
+use std::fmt::Write;
+
 use ed25519_dalek::{
     Signature, Signer, SigningKey as DalekSigningKey, Verifier, VerifyingKey as DalekVerifyingKey,
 };
@@ -64,11 +66,13 @@ impl SigningKey {
     }
 
     /// Export the signing key's 32-byte seed.
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 32] {
         self.inner.to_bytes()
     }
 
     /// Get the corresponding verifying (public) key.
+    #[must_use]
     pub fn verifying_key(&self) -> VerifyingKey {
         VerifyingKey {
             inner: self.inner.verifying_key(),
@@ -96,11 +100,13 @@ impl VerifyingKey {
     }
 
     /// Export the verifying key's 32 bytes.
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 32] {
         self.inner.to_bytes()
     }
 
     /// Hex-encoded verifying key for storage/display.
+    #[must_use]
     pub fn to_hex(&self) -> String {
         hex_encode(self.inner.to_bytes())
     }
@@ -112,6 +118,7 @@ impl EntrySignature {
     /// Checks that:
     /// 1. The entry's current hash matches the signed hash
     /// 2. The Ed25519 signature is valid for that hash
+    #[must_use]
     pub fn verify(&self, entry: &AuditEntry, key: &VerifyingKey) -> bool {
         if entry.hash() != self.entry_hash {
             return false;
@@ -130,7 +137,11 @@ impl EntrySignature {
 }
 
 fn hex_encode<const N: usize>(bytes: [u8; N]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let mut hex = String::with_capacity(N * 2);
+    for b in bytes {
+        write!(hex, "{b:02x}").expect("write to String is infallible");
+    }
+    hex
 }
 
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
