@@ -32,7 +32,7 @@ use crate::entry::{AuditEntry, EventSeverity};
 use crate::query::QueryFilter;
 use crate::store::AuditStore;
 
-const SELECT_COLS: &str = "SELECT id, timestamp, severity, source, action, details, agent_id, prev_hash, hash FROM audit_entries";
+const SELECT_COLS: &str = "SELECT id, timestamp, severity, source, action, details, agent_id, prev_hash, hash, hash_algorithm FROM audit_entries";
 
 /// SQLite-backed audit store.
 pub struct SqliteStore {
@@ -75,16 +75,17 @@ impl SqliteStore {
         self.lock()
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS audit_entries (
-                    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id         TEXT    NOT NULL UNIQUE,
-                    timestamp  TEXT    NOT NULL,
-                    severity   TEXT    NOT NULL,
-                    source     TEXT    NOT NULL,
-                    action     TEXT    NOT NULL,
-                    details    TEXT    NOT NULL,
-                    agent_id   TEXT,
-                    prev_hash  TEXT    NOT NULL,
-                    hash       TEXT    NOT NULL UNIQUE
+                    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id             TEXT    NOT NULL UNIQUE,
+                    timestamp      TEXT    NOT NULL,
+                    severity       TEXT    NOT NULL,
+                    source         TEXT    NOT NULL,
+                    action         TEXT    NOT NULL,
+                    details        TEXT    NOT NULL,
+                    agent_id       TEXT,
+                    prev_hash      TEXT    NOT NULL,
+                    hash           TEXT    NOT NULL UNIQUE,
+                    hash_algorithm TEXT    NOT NULL DEFAULT 'blake3'
                 );
                 CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_entries(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_severity  ON audit_entries(severity);
@@ -152,6 +153,8 @@ impl SqliteStore {
             rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
         })?;
 
+        let hash_algorithm: String = row.get(9)?;
+
         Ok(AuditEntry::from_raw(
             id,
             timestamp,
@@ -162,6 +165,7 @@ impl SqliteStore {
             agent_id,
             row.get(7)?,
             row.get(8)?,
+            hash_algorithm,
         ))
     }
 }
@@ -170,8 +174,8 @@ impl AuditStore for SqliteStore {
     fn append(&mut self, entry: &AuditEntry) -> crate::Result<()> {
         self.lock()
             .execute(
-                "INSERT INTO audit_entries (id, timestamp, severity, source, action, details, agent_id, prev_hash, hash)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO audit_entries (id, timestamp, severity, source, action, details, agent_id, prev_hash, hash, hash_algorithm)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     entry.id().to_string(),
                     entry.timestamp().to_rfc3339(),
@@ -182,6 +186,7 @@ impl AuditStore for SqliteStore {
                     entry.agent_id(),
                     entry.prev_hash(),
                     entry.hash(),
+                    entry.hash_algorithm(),
                 ],
             )
             .map_err(|e| LibroError::Store(e.to_string()))?;

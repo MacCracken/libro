@@ -9,9 +9,9 @@
 //! The tree uses SHA-256, consistent with the chain's hash algorithm.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::entry::AuditEntry;
+use crate::hasher::ChainHasher;
 
 /// A Merkle tree built from audit entry hashes.
 #[derive(Debug, Clone)]
@@ -184,10 +184,10 @@ pub fn verify_proof(proof: &MerkleProof) -> bool {
 /// Hash two child nodes to produce a parent node.
 #[inline]
 fn hash_pair(left: &str, right: &str) -> String {
-    let mut hasher = Sha256::new();
+    let mut hasher = ChainHasher::new();
     hasher.update(left.as_bytes());
     hasher.update(right.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hasher.finalize_hex()
 }
 
 #[cfg(test)]

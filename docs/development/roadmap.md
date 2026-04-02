@@ -1,54 +1,33 @@
 # Roadmap
 
-## Completed
+## v1.0 Criteria
 
-### Phase 1 — Persistence
-- [x] Hash-linked audit entries (SHA-256) with length-prefixed field separators
-- [x] Append-only chain with verification
-- [x] Severity levels (Debug through Security)
-- [x] Agent ID tracking
-- [x] AuditStore trait with memory backend
-- [x] File-based store (append-only JSON Lines with flock)
-- [x] SQLite store (indexed, behind `sqlite` feature flag)
-- [x] Chain rotation (archive + new chain linked to previous head)
+- [x] Stable public API — all types have appropriate traits, serde, `#[non_exhaustive]`
+- [x] Cryptographic hardening — BLAKE3 default, SHA-256 fallback, hash algorithm versioning
+- [x] Key rotation support — `key_id` on signatures, `sign_with_key_id()`
+- [x] Compliance documentation — standards mapping, consumer responsibilities
+- [x] Retention presets — named constructors for PCI DSS, HIPAA, SOX, GDPR
+- [x] P(-1) scaffold hardening — benchmarks, audit, cleanliness checks
+- [ ] Consumer integration validation — at least one AGNOS crate (daimon, aegis, stiva, sigil, or ark) uses libro 0.90.0 in production
+- [ ] Release candidate period — 2 weeks minimum with no API changes
 
-### Phase 2 — Query & Export
-- [x] Composable query filters (source, severity, agent, action, time range)
-- [x] Query on AuditStore trait (polymorphic, SQL-optimized for SqliteStore)
-- [x] Export to JSON Lines and CSV
-- [x] Retention policies (KeepCount, KeepDuration, KeepAfter)
+## Post-v1
 
-### Phase 3 — Advanced
-- [x] Merkle tree for efficient partial verification (O(log N) proofs)
-- [x] Ed25519 digital signatures per entry (behind `signing` feature flag)
-- [x] Chain review with structured summary and Display impls
-- [x] Tracing instrumentation (append, verify, rotate, retention, store ops)
+### Integration (via bote) — DONE (bote 0.91.0)
+- [x] MCP tools: `libro_query`, `libro_verify`, `libro_export`
+- [x] Audit integration: bote dispatches audit events to libro chain
 
-### Phase 4 — Ergonomics & Streaming
-- [x] `EventSeverity` ordering (`Ord`/`PartialOrd`) with `min_severity` query filter
-- [x] Batch append (`append_batch`) for multiple entries in one call
-- [x] Chain pagination (`page`, `load_page` on `AuditStore` trait, SQL LIMIT/OFFSET for SqliteStore)
-- [x] Streaming subscription via majra pub/sub (behind `streaming` feature flag)
-
-### Phase 5 — v1 API Stabilization (0.90.0)
-- [x] Serde on all wire-facing types: `MerkleProof`, `ProofNode`, `Side`, `EntrySignature`, `VerifyingKey`, `ChainArchive`, `ChainReview`, `IntegrityStatus`, `QueryFilter`, `RetentionPolicy`
-- [x] `PartialEq` on all data types: `AuditEntry`, `ChainArchive`, `ChainReview`, `IntegrityStatus`, `MerkleProof`, `ProofNode`, `EntrySignature`, `RetentionPolicy`
-- [x] `Clone` on `ChainArchive`, `IntegrityStatus`
-- [x] `#[non_exhaustive]` on all public enums and structs with public fields
-- [x] `#[must_use]` on all pure/verification functions
-- [x] `#[inline]` on hot-path accessors
-- [x] Re-export `ProofNode`, `Side`, `IntegrityStatus` from crate root
-- [x] Complete documentation coverage
-- [x] 166 tests, 95%+ coverage
-
-## Post-v1 (infrastructure-dependent)
-
-### Integration (via bote)
-- [ ] MCP tools: `libro_query`, `libro_verify`, `libro_export` — implemented in [bote](https://github.com/MacCracken/bote) as registered tool handlers using libro as a dependency
-- [ ] Audit integration: bote dispatches audit events to libro chain
+### Cryptographic Evolution
+- [ ] Post-quantum signature scheme (CRYSTALS-Dilithium or ML-DSA) via feature flag
+- [ ] Hybrid signing: Ed25519 + PQ for transition period
+- [ ] RFC 3161 trusted timestamping integration (optional TSA client)
+- [ ] Merkle root anchoring to external witness (periodic root hash export)
 
 ### Hardware Security
 - [ ] Remote attestation (TPM-backed chain sealing) — requires `tss-esapi` + TPM hardware
+- [ ] FIPS 140-3 validated cryptographic backend (via `aws-lc-rs` or validated OpenSSL)
 
 ### Distributed
-- [ ] Multi-node chain sync (federated audit across fleet) — requires networking/consensus infrastructure
+- [ ] Multi-node chain sync (federated audit across fleet)
+- [ ] Conflict resolution for concurrent appends
+- [ ] Consensus-backed append (Raft/PBFT for multi-writer chains)

@@ -23,9 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom serde for `VerifyingKey` — serialized as hex string
 - `#[serde(skip_serializing_if = "Option::is_none")]` on `QueryFilter` fields for compact JSON
 - Signing and SQLite benchmarks (`sign_entry`, `verify_signature`, `sqlite_append_100`, `sqlite_query_100`)
-- 14 new serde roundtrip tests, trait assertion tests, edge case tests (166 total)
+- **BLAKE3** as default hash backend — 4-10x faster than SHA-256, 128-bit collision resistance, 256-bit output
+- `sha256` feature flag for NIST FIPS 180-4 compliance environments
+- `hash_algorithm` field on `AuditEntry` — identifies the hash algorithm used, enables verification across algorithm transitions
+- `ChainHasher` internal abstraction for pluggable hash backends
+- `key_id` field on `EntrySignature` — identifies signing key for key rotation workflows
+- `SigningKey::sign_with_key_id()` — sign with an explicit key identifier
+- `RetentionPolicy::pci_dss()` — PCI DSS 4.0 Req 10.7 (12 months)
+- `RetentionPolicy::hipaa()` — HIPAA 45 CFR 164.530(j) (6 years)
+- `RetentionPolicy::sox()` — SOX Section 802 (7 years)
+- `RetentionPolicy::gdpr()` — GDPR-aligned with caller-specified purpose duration
+- Compliance standards mapping documentation (`docs/compliance/standards-mapping.md`)
+- 168 tests, 95%+ coverage (up from 145)
 
 ### Changed
+- **Breaking:** Default hash algorithm changed from SHA-256 to BLAKE3; use `sha256` feature for SHA-256
 - `csv_escape()` uses `Cow<str>` to avoid allocation when no escaping needed
 - `abbreviate_hash()` uses `Cow<str>` to avoid allocation for short hashes
 - Merkle tree `build()` moves levels instead of cloning — 25% faster build
@@ -171,6 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/MacCracken/libro/compare/v0.90.0...HEAD
 [0.90.0]: https://github.com/MacCracken/libro/compare/v0.25.3...v0.90.0
+[0.22.4]: https://github.com/MacCracken/libro/compare/v0.22.3...v0.22.4
 [0.22.3]: https://github.com/MacCracken/libro/compare/v0.21.3...v0.22.3
 [0.21.3]: https://github.com/MacCracken/libro/compare/v0.21.2...v0.21.3
 [0.21.2]: https://github.com/MacCracken/libro/compare/v0.21.1...v0.21.2

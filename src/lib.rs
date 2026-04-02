@@ -8,11 +8,12 @@
 //!
 //! | Flag | Description |
 //! |------|-------------|
+//! | `sha256` | Use SHA-256 instead of BLAKE3 (for NIST FIPS 180-4 compliance) |
 //! | `sqlite` | SQLite-backed audit store with indexed queries |
 //! | `signing` | Ed25519 digital signatures per entry |
 //! | `streaming` | Real-time pub/sub via majra |
 //!
-//! None are enabled by default.
+//! None are enabled by default. The default hash algorithm is BLAKE3.
 //!
 //! ## Modules
 //!
@@ -34,6 +35,7 @@ pub mod chain;
 pub mod entry;
 pub mod export;
 pub mod file_store;
+pub(crate) mod hasher;
 pub mod kernel_audit;
 pub mod merkle;
 pub mod query;

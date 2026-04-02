@@ -89,6 +89,34 @@ impl<'de> Deserialize<'de> for RetentionPolicy {
 }
 
 impl RetentionPolicy {
+    // --- Compliance presets ---
+
+    /// PCI DSS 4.0 Requirement 10.7: retain audit logs for at least 12 months.
+    #[must_use]
+    pub fn pci_dss() -> Self {
+        RetentionPolicy::KeepDuration(Duration::days(365))
+    }
+
+    /// HIPAA 45 CFR 164.530(j): retain records for 6 years.
+    #[must_use]
+    pub fn hipaa() -> Self {
+        RetentionPolicy::KeepDuration(Duration::days(6 * 365))
+    }
+
+    /// SOX Section 802: retain audit records for 7 years.
+    #[must_use]
+    pub fn sox() -> Self {
+        RetentionPolicy::KeepDuration(Duration::days(7 * 365))
+    }
+
+    /// GDPR-aligned: retain for a specified purpose duration.
+    /// GDPR does not mandate a fixed period — use the duration appropriate
+    /// to your data processing purpose.
+    #[must_use]
+    pub fn gdpr(purpose_duration: Duration) -> Self {
+        RetentionPolicy::KeepDuration(purpose_duration)
+    }
+
     /// Returns the split index: entries before this index are archived,
     /// entries from this index onward are retained.
     pub(crate) fn split_index(&self, entries: &[AuditEntry]) -> usize {

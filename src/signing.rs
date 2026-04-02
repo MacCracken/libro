@@ -40,6 +40,11 @@ pub struct VerifyingKey {
 }
 
 /// A signature over an audit entry's hash.
+///
+/// Contains the Ed25519 signature, the entry hash it covers, the verifying key,
+/// and an optional `key_id` for key rotation workflows. When using multiple
+/// signing keys (e.g., during key rotation), the `key_id` identifies which
+/// key produced this signature.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct EntrySignature {
@@ -49,6 +54,13 @@ pub struct EntrySignature {
     pub signature: String,
     /// The verifying key that can validate this signature, hex-encoded.
     pub verifying_key: String,
+    /// Optional key identifier for key rotation workflows.
+    ///
+    /// When set, consumers can use this to look up the correct verifying key
+    /// from a key registry. When `None`, the embedded `verifying_key` field
+    /// is the sole identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
 }
 
 impl SigningKey {
@@ -89,7 +101,22 @@ impl SigningKey {
             entry_hash: hash.to_owned(),
             signature: hex_encode(sig.to_bytes()),
             verifying_key: hex_encode(self.inner.verifying_key().to_bytes()),
+            key_id: None,
         }
+    }
+
+    /// Sign an audit entry with a key identifier for key rotation workflows.
+    ///
+    /// The `key_id` is stored in the signature to help consumers look up
+    /// the correct verifying key from a key registry.
+    pub fn sign_with_key_id(
+        &self,
+        entry: &AuditEntry,
+        key_id: impl Into<String>,
+    ) -> EntrySignature {
+        let mut sig = self.sign(entry);
+        sig.key_id = Some(key_id.into());
+        sig
     }
 }
 
@@ -298,5 +325,35 @@ mod tests {
         let result = VerifyingKey::from_bytes(&[0u8; 32]);
         // May or may not error depending on the curve point — just check it doesn't panic
         let _ = result;
+    }
+
+    #[test]
+    fn sign_with_key_id() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+
+        // Without key_id
+        let sig = key.sign(&entry);
+        assert!(sig.key_id.is_none());
+
+        // With key_id
+        let sig = key.sign_with_key_id(&entry, "key-v2");
+        assert_eq!(sig.key_id.as_deref(), Some("key-v2"));
+        assert!(sig.verify(&entry, &key.verifying_key()));
+
+        // Serde roundtrip preserves key_id
+        let json = serde_json::to_string(&sig).unwrap();
+        assert!(json.contains("key_id"));
+        let back: EntrySignature = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.key_id.as_deref(), Some("key-v2"));
+    }
+
+    #[test]
+    fn key_id_skipped_when_none() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let sig = key.sign(&entry);
+        let json = serde_json::to_string(&sig).unwrap();
+        assert!(!json.contains("key_id")); // skipped when None
     }
 }

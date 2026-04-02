@@ -4,8 +4,9 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use crate::hasher::{ChainHasher, HASH_ALGORITHM};
 
 /// Event severity level.
 /// Variants are ordered by increasing severity:
@@ -78,10 +79,18 @@ pub struct AuditEntry {
     action: String,
     details: serde_json::Value,
     agent_id: Option<String>,
-    /// SHA-256 hash of the previous entry (empty string for genesis).
+    /// Hash of the previous entry (empty string for genesis).
     prev_hash: String,
-    /// SHA-256 hash of this entry (computed on creation).
+    /// Hash of this entry (computed on creation).
     hash: String,
+    /// The hash algorithm used (e.g., "blake3" or "sha256").
+    /// Enables verification across algorithm transitions.
+    #[serde(default = "default_hash_algorithm")]
+    hash_algorithm: String,
+}
+
+fn default_hash_algorithm() -> String {
+    HASH_ALGORITHM.to_owned()
 }
 
 impl AuditEntry {
@@ -122,6 +131,11 @@ impl AuditEntry {
     pub fn hash(&self) -> &str {
         &self.hash
     }
+    /// The hash algorithm used for this entry (e.g., "blake3" or "sha256").
+    #[inline]
+    pub fn hash_algorithm(&self) -> &str {
+        &self.hash_algorithm
+    }
 }
 
 impl AuditEntry {
@@ -143,6 +157,7 @@ impl AuditEntry {
             agent_id: None,
             prev_hash: prev_hash.into(),
             hash: String::new(),
+            hash_algorithm: HASH_ALGORITHM.to_owned(),
         };
         entry.hash = entry.compute_hash();
         entry
@@ -162,6 +177,7 @@ impl AuditEntry {
         agent_id: Option<String>,
         prev_hash: String,
         hash: String,
+        hash_algorithm: String,
     ) -> Self {
         Self {
             id,
@@ -173,6 +189,7 @@ impl AuditEntry {
             agent_id,
             prev_hash,
             hash,
+            hash_algorithm,
         }
     }
 
@@ -192,7 +209,7 @@ impl AuditEntry {
     /// prevent second-preimage attacks via field boundary shifting.
     #[must_use]
     pub fn compute_hash(&self) -> String {
-        let mut hasher = Sha256::new();
+        let mut hasher = ChainHasher::new();
         // Fixed-length fields (no prefix needed)
         hasher.update(self.id.as_bytes());
         // Variable-length fields: length-prefixed
@@ -207,7 +224,7 @@ impl AuditEntry {
             self.agent_id.as_deref().unwrap_or("").as_bytes(),
         );
         hash_field(&mut hasher, self.prev_hash.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hasher.finalize_hex()
     }
 
     /// Verify this entry's hash matches its content.
@@ -251,13 +268,13 @@ pub(crate) fn abbreviate_hash(hash: &str) -> Cow<'_, str> {
 }
 
 /// Write a length-prefixed field into the hasher to prevent field boundary ambiguity.
-fn hash_field(hasher: &mut Sha256, data: &[u8]) {
-    hasher.update((data.len() as u64).to_le_bytes());
+fn hash_field(hasher: &mut ChainHasher, data: &[u8]) {
+    hasher.update(&(data.len() as u64).to_le_bytes());
     hasher.update(data);
 }
 
 /// Write a JSON value into a hasher with sorted object keys for deterministic hashing.
-fn canonical_json_hash(value: &serde_json::Value, hasher: &mut Sha256) {
+fn canonical_json_hash(value: &serde_json::Value, hasher: &mut ChainHasher) {
     match value {
         serde_json::Value::Null => hasher.update(b"null"),
         serde_json::Value::Bool(b) => {
@@ -477,6 +494,7 @@ mod tests {
             None,
             "".into(),
             "".into(),
+            HASH_ALGORITHM.to_owned(),
         );
         // Should not panic
         let display = format!("{entry}");
@@ -503,6 +521,7 @@ mod tests {
             None,
             "".into(),
             String::new(),
+            HASH_ALGORITHM.to_owned(),
         );
         let entry_b = AuditEntry::from_raw(
             id,
@@ -514,6 +533,7 @@ mod tests {
             None,
             "".into(),
             String::new(),
+            HASH_ALGORITHM.to_owned(),
         );
         assert_eq!(entry_a.compute_hash(), entry_b.compute_hash());
     }
