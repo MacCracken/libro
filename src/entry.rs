@@ -6,7 +6,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::LibroError;
 use crate::hasher::{ChainHasher, HASH_ALGORITHM};
+
+/// Default maximum length for the `source` field (1 KiB).
+pub const MAX_SOURCE_LEN: usize = 1024;
+/// Default maximum length for the `action` field (1 KiB).
+pub const MAX_ACTION_LEN: usize = 1024;
+/// Default maximum serialized size for the `details` JSON value (1 MiB).
+pub const MAX_DETAILS_SIZE: usize = 1024 * 1024;
 
 /// Event severity level.
 /// Variants are ordered by increasing severity:
@@ -163,6 +171,51 @@ impl AuditEntry {
         entry
     }
 
+    /// Create a new entry with input validation on field lengths.
+    ///
+    /// Returns [`LibroError::FieldTooLong`] if any field exceeds the default
+    /// limits: source and action at [`MAX_SOURCE_LEN`]/[`MAX_ACTION_LEN`]
+    /// (1 KiB), details at [`MAX_DETAILS_SIZE`] (1 MiB serialized).
+    pub fn new_validated(
+        severity: EventSeverity,
+        source: impl Into<String>,
+        action: impl Into<String>,
+        details: serde_json::Value,
+        prev_hash: impl Into<String>,
+    ) -> crate::Result<Self> {
+        let source = source.into();
+        let action = action.into();
+
+        if source.len() > MAX_SOURCE_LEN {
+            return Err(LibroError::FieldTooLong {
+                field: "source",
+                len: source.len(),
+                max: MAX_SOURCE_LEN,
+            });
+        }
+        if action.len() > MAX_ACTION_LEN {
+            return Err(LibroError::FieldTooLong {
+                field: "action",
+                len: action.len(),
+                max: MAX_ACTION_LEN,
+            });
+        }
+        // Estimate details size without allocating a full string:
+        // serde_json::to_string length is a reasonable proxy.
+        let details_size = serde_json::to_string(&details)
+            .map(|s| s.len())
+            .unwrap_or(0);
+        if details_size > MAX_DETAILS_SIZE {
+            return Err(LibroError::FieldTooLong {
+                field: "details",
+                len: details_size,
+                max: MAX_DETAILS_SIZE,
+            });
+        }
+
+        Ok(Self::new(severity, source, action, details, prev_hash))
+    }
+
     /// Reconstruct an entry from stored fields (e.g. from database rows).
     /// The caller is responsible for providing correct field values;
     /// use [`AuditEntry::verify`] to check integrity after reconstruction.
@@ -228,9 +281,11 @@ impl AuditEntry {
     }
 
     /// Verify this entry's hash matches its content.
+    ///
+    /// Uses constant-time comparison to prevent timing side-channel attacks.
     #[must_use]
     pub fn verify(&self) -> bool {
-        self.hash == self.compute_hash()
+        constant_time_eq(&self.hash, &self.compute_hash())
     }
 }
 
@@ -265,6 +320,21 @@ pub(crate) fn abbreviate_hash(hash: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(hash)
     }
+}
+
+/// Constant-time string comparison to prevent timing side-channel attacks.
+#[inline]
+pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Write a length-prefixed field into the hasher to prevent field boundary ambiguity.
@@ -559,5 +629,60 @@ mod tests {
         let back: AuditEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.hash(), entry.hash());
         assert!(back.verify());
+    }
+
+    #[test]
+    fn constant_time_eq_basic() {
+        assert!(super::constant_time_eq("abc", "abc"));
+        assert!(!super::constant_time_eq("abc", "abd"));
+        assert!(!super::constant_time_eq("abc", "ab"));
+        assert!(!super::constant_time_eq("", "a"));
+        assert!(super::constant_time_eq("", ""));
+    }
+
+    #[test]
+    fn new_validated_accepts_normal_input() {
+        let entry = AuditEntry::new_validated(
+            EventSeverity::Info,
+            "daimon",
+            "agent.start",
+            serde_json::json!({"ok": true}),
+            "",
+        )
+        .unwrap();
+        assert!(entry.verify());
+    }
+
+    #[test]
+    fn new_validated_rejects_oversized_source() {
+        let big = "x".repeat(super::MAX_SOURCE_LEN + 1);
+        let err =
+            AuditEntry::new_validated(EventSeverity::Info, big, "act", serde_json::json!({}), "")
+                .unwrap_err();
+        assert!(err.to_string().contains("source"));
+    }
+
+    #[test]
+    fn new_validated_rejects_oversized_action() {
+        let big = "x".repeat(super::MAX_ACTION_LEN + 1);
+        let err =
+            AuditEntry::new_validated(EventSeverity::Info, "src", big, serde_json::json!({}), "")
+                .unwrap_err();
+        assert!(err.to_string().contains("action"));
+    }
+
+    #[test]
+    fn new_validated_rejects_oversized_details() {
+        // Create a JSON value larger than MAX_DETAILS_SIZE
+        let big_str = "x".repeat(super::MAX_DETAILS_SIZE + 1);
+        let err = AuditEntry::new_validated(
+            EventSeverity::Info,
+            "src",
+            "act",
+            serde_json::json!({"data": big_str}),
+            "",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("details"));
     }
 }

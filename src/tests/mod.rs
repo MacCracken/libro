@@ -721,3 +721,138 @@ fn chain_archive_clone_equals_original() {
     let cloned = archive.clone();
     assert_eq!(archive, cloned);
 }
+
+#[cfg(feature = "anchoring")]
+#[test]
+fn anchor_chain_lifecycle() {
+    use crate::anchoring::WitnessAnchor;
+
+    let mut chain = AuditChain::new();
+    for i in 0..10 {
+        chain.append(
+            entry::EventSeverity::Info,
+            "daimon",
+            format!("event.{i}"),
+            serde_json::json!({"i": i}),
+        );
+    }
+
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+    let anchor = WitnessAnchor::new(&tree, &chain).unwrap();
+
+    assert!(anchor.verify_integrity());
+    assert!(anchor.verify_against(&tree, &chain).is_valid());
+
+    // Append more entries — anchor no longer matches
+    chain.append(
+        entry::EventSeverity::Info,
+        "daimon",
+        "event.10",
+        serde_json::json!({}),
+    );
+    let tree2 = MerkleTree::build(chain.entries()).unwrap();
+    let result = anchor.verify_against(&tree2, &chain);
+    assert!(!result.is_valid());
+
+    // New anchor chains to the previous one
+    let anchor2 = WitnessAnchor::new(&tree2, &chain)
+        .unwrap()
+        .with_prev_anchor(&anchor);
+    assert!(anchor2.verify_integrity());
+    assert_eq!(
+        anchor2.prev_anchor_hash.as_deref(),
+        Some(anchor.hash.as_str())
+    );
+}
+
+#[cfg(feature = "timestamping")]
+#[test]
+fn timestamp_request_from_chain_and_tree() {
+    use crate::timestamping::{TimestampRequest, TimestampResponse, TimestampStatus};
+
+    let mut chain = AuditChain::new();
+    chain.append(
+        entry::EventSeverity::Info,
+        "src",
+        "act",
+        serde_json::json!({}),
+    );
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+
+    // Build request from Merkle root
+    let req = TimestampRequest::from_merkle_root(&tree).with_nonce();
+    assert_eq!(req.message_imprint_hash, tree.root());
+    assert!(req.nonce.is_some());
+
+    // Encode to DER and verify it's non-empty
+    let der = req.to_der();
+    assert!(!der.is_empty());
+    assert_eq!(der[0], 0x30); // SEQUENCE tag
+
+    // Simulate a granted response
+    let resp = TimestampResponse {
+        status: TimestampStatus::Granted,
+        token: Some("aabbccdd".into()),
+        status_string: None,
+    };
+    assert!(resp.is_granted());
+
+    // Create attestation
+    let att = crate::timestamping::TimestampAttestation::for_merkle_root(&tree, &resp).unwrap();
+    assert!(att.verify_hash(tree.root()));
+}
+
+#[cfg(all(feature = "anchoring", feature = "timestamping"))]
+#[test]
+fn anchor_and_timestamp_compose() {
+    use crate::anchoring::{WitnessAnchor, WitnessReceipt};
+    use crate::timestamping::{
+        TimestampAttestation, TimestampRequest, TimestampResponse, TimestampStatus,
+    };
+
+    let mut chain = AuditChain::new();
+    for i in 0..5 {
+        chain.append(
+            entry::EventSeverity::Info,
+            "src",
+            format!("e{i}"),
+            serde_json::json!({}),
+        );
+    }
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+
+    // Create anchor
+    let anchor = WitnessAnchor::new(&tree, &chain).unwrap();
+
+    // Create timestamp request from anchor's Merkle root
+    let req = TimestampRequest::new(&anchor.merkle_root);
+    let _der = req.to_der();
+
+    // Simulate TSA response
+    let resp = TimestampResponse {
+        status: TimestampStatus::Granted,
+        token: Some("tsa_token_hex".into()),
+        status_string: None,
+    };
+
+    // Create attestation for the Merkle root
+    let att = TimestampAttestation::for_merkle_root(&tree, &resp).unwrap();
+    assert!(att.verify_hash(&anchor.merkle_root));
+
+    // Create a receipt with the TSA token data
+    let receipt = WitnessReceipt::new(
+        anchor.id,
+        "rfc3161",
+        serde_json::json!({
+            "token_der": resp.token,
+            "tsa_url": "https://tsa.example.com",
+        }),
+    )
+    .with_hash();
+
+    assert_eq!(receipt.backend, "rfc3161");
+    assert!(receipt.receipt_hash.is_some());
+
+    // Both anchor and attestation reference the same Merkle root
+    assert_eq!(anchor.merkle_root, att.hash);
+}

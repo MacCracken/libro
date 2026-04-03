@@ -24,8 +24,9 @@ const AGNOS_AUDIT_PATH: &str = "/proc/agnos/audit";
 pub fn read_kernel_events() -> crate::Result<Vec<AuditEntry>> {
     #[cfg(feature = "kernel-audit")]
     {
-        let raw_events = agnosys::audit::read_agnos_audit_events(AGNOS_AUDIT_PATH)
-            .map_err(|e| LibroError::Store(format!("kernel audit read failed: {e}")))?;
+        let raw_events =
+            agnosys::audit::read_agnos_audit_events(std::path::Path::new(AGNOS_AUDIT_PATH))
+                .map_err(|e| LibroError::Store(format!("kernel audit read failed: {e}")))?;
 
         let entries: Vec<AuditEntry> = raw_events
             .iter()

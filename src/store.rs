@@ -28,6 +28,51 @@ pub trait AuditStore: Send + Sync {
         Ok(entries)
     }
 
+    /// Verify the chain's integrity without loading all entries into memory at once.
+    ///
+    /// Reads entries in pages of `chunk_size` and verifies each chunk,
+    /// tracking cross-chunk linkage. Returns the total number of verified entries.
+    ///
+    /// This is O(`chunk_size`) in memory instead of O(N), making it suitable
+    /// for stores with millions of entries.
+    fn verify_streamed(&self, chunk_size: usize) -> crate::Result<usize> {
+        let chunk_size = chunk_size.max(1);
+        let mut offset = 0;
+        let mut prev_tail_hash: Option<String> = None;
+        let mut total = 0;
+
+        loop {
+            let chunk = self.load_page(offset, chunk_size)?;
+            if chunk.is_empty() {
+                break;
+            }
+
+            // Verify linkage from previous chunk's last entry
+            if let Some(ref expected_prev) = prev_tail_hash
+                && chunk[0].prev_hash() != expected_prev
+            {
+                return Err(crate::LibroError::IntegrityViolation {
+                    index: offset,
+                    expected: expected_prev.clone(),
+                    actual: chunk[0].prev_hash().to_owned(),
+                });
+            }
+
+            // Verify this chunk internally (adjusting index for error reporting)
+            crate::verify::verify_chain_offset(&chunk, offset)?;
+
+            prev_tail_hash = chunk.last().map(|e| e.hash().to_owned());
+            total += chunk.len();
+            offset += chunk.len();
+
+            if chunk.len() < chunk_size {
+                break;
+            }
+        }
+
+        Ok(total)
+    }
+
     /// Query entries matching a [`QueryFilter`].
     ///
     /// The default implementation loads all entries and filters in memory.
@@ -163,6 +208,51 @@ mod tests {
 
         let page = store.load_page(8, 5).unwrap();
         assert_eq!(page.len(), 2);
+    }
+
+    #[test]
+    fn verify_streamed_valid() {
+        let mut store = MemoryStore::new();
+        let mut prev = String::new();
+        for i in 0..20 {
+            let e = AuditEntry::new(
+                EventSeverity::Info,
+                "s",
+                format!("e{i}"),
+                serde_json::json!({}),
+                &prev,
+            );
+            prev = e.hash().to_owned();
+            store.append(&e).unwrap();
+        }
+        // Verify in chunks of 7 (tests cross-chunk boundary)
+        let total = store.verify_streamed(7).unwrap();
+        assert_eq!(total, 20);
+    }
+
+    #[test]
+    fn verify_streamed_corrupted() {
+        let mut store = MemoryStore::new();
+        let e1 = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let e2 = AuditEntry::new(
+            EventSeverity::Info,
+            "s",
+            "b",
+            serde_json::json!({}),
+            "wrong",
+        );
+        store.append(&e1).unwrap();
+        store.append(&e2).unwrap();
+
+        // Chunk size 1 forces cross-chunk linkage check
+        assert!(store.verify_streamed(1).is_err());
+    }
+
+    #[test]
+    fn verify_streamed_empty() {
+        let store = MemoryStore::new();
+        let total = store.verify_streamed(10).unwrap();
+        assert_eq!(total, 0);
     }
 
     #[test]

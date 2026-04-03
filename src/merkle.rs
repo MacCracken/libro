@@ -178,7 +178,7 @@ pub fn verify_proof(proof: &MerkleProof) -> bool {
         };
     }
 
-    current == proof.root
+    crate::entry::constant_time_eq(&current, &proof.root)
 }
 
 /// Hash two child nodes to produce a parent node.

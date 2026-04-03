@@ -129,6 +129,7 @@ impl QueryFilter {
     }
 
     /// Filter a slice of entries, returning references to matches.
+    #[must_use]
     pub fn apply<'a>(&self, entries: &'a [AuditEntry]) -> Vec<&'a AuditEntry> {
         entries.iter().filter(|e| self.matches(e)).collect()
     }

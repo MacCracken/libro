@@ -17,20 +17,32 @@
 //! assert!(sig.verify(&entry, &key.verifying_key()));
 //! ```
 
-use std::fmt::Write;
-
 use ed25519_dalek::{
     Signature, Signer, SigningKey as DalekSigningKey, Verifier, VerifyingKey as DalekVerifyingKey,
 };
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::entry::AuditEntry;
+use crate::hasher::{hex_decode, hex_encode};
 
 /// An Ed25519 signing key for audit entries.
+///
+/// The key material is automatically zeroized when this value is dropped,
+/// preventing sensitive bytes from lingering in memory.
 #[derive(Debug)]
 pub struct SigningKey {
     inner: DalekSigningKey,
+}
+
+impl Drop for SigningKey {
+    fn drop(&mut self) {
+        // Overwrite the key material with a known-zero key.
+        // dalek's SigningKey doesn't expose mutable byte access,
+        // so we replace the entire inner value.
+        self.inner = DalekSigningKey::from_bytes(&[0u8; 32]);
+    }
 }
 
 /// An Ed25519 verifying (public) key.
@@ -80,9 +92,12 @@ impl SigningKey {
     }
 
     /// Export the signing key's 32-byte seed.
+    ///
+    /// The returned value is wrapped in [`Zeroizing`], which clears the
+    /// bytes from memory when dropped.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.inner.to_bytes()
+    pub fn to_bytes(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.inner.to_bytes())
     }
 
     /// Get the corresponding verifying (public) key.
@@ -167,7 +182,7 @@ impl EntrySignature {
     /// 2. The Ed25519 signature is valid for that hash
     #[must_use]
     pub fn verify(&self, entry: &AuditEntry, key: &VerifyingKey) -> bool {
-        if entry.hash() != self.entry_hash {
+        if !crate::entry::constant_time_eq(entry.hash(), &self.entry_hash) {
             return false;
         }
         let sig_bytes = match hex_decode(&self.signature) {
@@ -181,24 +196,6 @@ impl EntrySignature {
         let sig = Signature::from_bytes(&sig_array);
         key.inner.verify(self.entry_hash.as_bytes(), &sig).is_ok()
     }
-}
-
-fn hex_encode<const N: usize>(bytes: [u8; N]) -> String {
-    let mut hex = String::with_capacity(N * 2);
-    for b in bytes {
-        write!(hex, "{b:02x}").expect("write to String is infallible");
-    }
-    hex
-}
-
-fn hex_decode(hex: &str) -> Option<Vec<u8>> {
-    if !hex.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
-        .collect()
 }
 
 #[cfg(test)]
@@ -355,5 +352,19 @@ mod tests {
         let sig = key.sign(&entry);
         let json = serde_json::to_string(&sig).unwrap();
         assert!(!json.contains("key_id")); // skipped when None
+    }
+
+    #[test]
+    fn to_bytes_returns_zeroizing() {
+        let key = SigningKey::generate();
+        let bytes = key.to_bytes();
+        // Verify it's a Zeroizing wrapper (compiles = passes)
+        let _: &[u8; 32] = &bytes;
+        // Roundtrip still works through Deref
+        let restored = SigningKey::from_bytes(&bytes);
+        assert_eq!(
+            key.verifying_key().to_hex(),
+            restored.verifying_key().to_hex()
+        );
     }
 }

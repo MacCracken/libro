@@ -10,11 +10,20 @@ use crate::retention::RetentionPolicy;
 use crate::verify::verify_chain;
 
 /// An append-only audit chain with hash-linked entries.
+///
+/// Optionally enforces a maximum capacity. When set, appending beyond the
+/// limit triggers automatic rotation — excess entries are drained into a
+/// [`ChainArchive`] before the new entry is appended. Use
+/// [`with_capacity`](AuditChain::with_capacity) to enable this.
 #[derive(Debug, Default)]
 pub struct AuditChain {
     pub(crate) entries: Vec<AuditEntry>,
     /// After rotation, holds the head hash of the previous chain for continuity.
     pub(crate) prev_chain_hash: Option<String>,
+    /// Optional maximum number of entries before auto-rotation.
+    max_capacity: Option<usize>,
+    /// Accumulates archives produced by auto-rotation.
+    overflow_archives: Vec<ChainArchive>,
 }
 
 /// Archived entries from a chain rotation.
@@ -32,7 +41,59 @@ impl AuditChain {
         Self::default()
     }
 
+    /// Create a chain with a maximum entry capacity.
+    ///
+    /// When the chain reaches `max_entries`, the next append triggers an
+    /// automatic rotation. Archived entries are accessible via
+    /// [`take_overflow`](AuditChain::take_overflow).
+    ///
+    /// A capacity of `0` is treated as unlimited (no auto-rotation).
+    pub fn with_capacity(max_entries: usize) -> Self {
+        Self {
+            max_capacity: if max_entries == 0 {
+                None
+            } else {
+                Some(max_entries)
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Returns the configured maximum capacity, if any.
+    #[inline]
+    #[must_use]
+    pub fn max_capacity(&self) -> Option<usize> {
+        self.max_capacity
+    }
+
+    /// Drain and return all archives produced by auto-rotation.
+    ///
+    /// After calling this, the internal overflow buffer is empty until the
+    /// next auto-rotation occurs.
+    pub fn take_overflow(&mut self) -> Vec<ChainArchive> {
+        std::mem::take(&mut self.overflow_archives)
+    }
+
+    /// Auto-rotate if at capacity. Called before each append.
+    fn auto_rotate_if_full(&mut self) {
+        if let Some(max) = self.max_capacity
+            && self.entries.len() >= max
+        {
+            info!(
+                max_capacity = max,
+                entries = self.entries.len(),
+                "auto-rotating chain at capacity"
+            );
+            let archive = self.rotate();
+            self.overflow_archives.push(archive);
+        }
+    }
+
     /// Append an event to the chain. Automatically links to the previous entry's hash.
+    ///
+    /// If the chain has a configured [`max_capacity`](AuditChain::with_capacity)
+    /// and is at the limit, the current entries are auto-rotated into an archive
+    /// before appending. Retrieve archives with [`take_overflow`](AuditChain::take_overflow).
     pub fn append(
         &mut self,
         severity: EventSeverity,
@@ -40,6 +101,7 @@ impl AuditChain {
         action: impl Into<String>,
         details: serde_json::Value,
     ) -> &AuditEntry {
+        self.auto_rotate_if_full();
         let prev_hash = self
             .entries
             .last()
@@ -68,6 +130,7 @@ impl AuditChain {
         details: serde_json::Value,
         agent_id: impl Into<String>,
     ) -> &AuditEntry {
+        self.auto_rotate_if_full();
         let prev_hash = self
             .entries
             .last()
@@ -215,6 +278,8 @@ impl AuditChain {
         Self {
             entries,
             prev_chain_hash: None,
+            max_capacity: None,
+            overflow_archives: Vec::new(),
         }
     }
 
@@ -541,5 +606,84 @@ mod tests {
         assert_eq!(entry.prev_hash(), head);
         assert!(entry.verify());
         assert!(chain.verify().is_ok());
+    }
+
+    #[test]
+    fn capacity_auto_rotates() {
+        let mut chain = AuditChain::with_capacity(3);
+        for i in 0..3 {
+            chain.append(
+                EventSeverity::Info,
+                "s",
+                format!("e{i}"),
+                serde_json::json!({}),
+            );
+        }
+        assert_eq!(chain.len(), 3);
+        assert!(chain.take_overflow().is_empty());
+
+        // 4th append triggers auto-rotation
+        chain.append(EventSeverity::Info, "s", "e3", serde_json::json!({}));
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain.entries()[0].action(), "e3");
+
+        let archives = chain.take_overflow();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].entries.len(), 3);
+
+        // Chain still verifies
+        assert!(chain.verify().is_ok());
+
+        // New entry links to the archived chain's head
+        assert_eq!(chain.entries()[0].prev_hash(), archives[0].head_hash);
+    }
+
+    #[test]
+    fn capacity_zero_means_unlimited() {
+        let mut chain = AuditChain::with_capacity(0);
+        assert!(chain.max_capacity().is_none());
+        for i in 0..100 {
+            chain.append(
+                EventSeverity::Info,
+                "s",
+                format!("e{i}"),
+                serde_json::json!({}),
+            );
+        }
+        assert_eq!(chain.len(), 100);
+        assert!(chain.take_overflow().is_empty());
+    }
+
+    #[test]
+    fn capacity_multiple_auto_rotations() {
+        let mut chain = AuditChain::with_capacity(2);
+        for i in 0..7 {
+            chain.append(
+                EventSeverity::Info,
+                "s",
+                format!("e{i}"),
+                serde_json::json!({}),
+            );
+        }
+        // 7 entries with capacity 2: rotations at 3rd, 5th, 7th append
+        let archives = chain.take_overflow();
+        assert_eq!(archives.len(), 3);
+        assert!(chain.verify().is_ok());
+    }
+
+    #[test]
+    fn capacity_with_agent_auto_rotates() {
+        let mut chain = AuditChain::with_capacity(1);
+        chain.append(EventSeverity::Info, "s", "e0", serde_json::json!({}));
+        chain.append_with_agent(
+            EventSeverity::Info,
+            "s",
+            "e1",
+            serde_json::json!({}),
+            "agent-01",
+        );
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain.entries()[0].agent_id(), Some("agent-01"));
+        assert_eq!(chain.take_overflow().len(), 1);
     }
 }

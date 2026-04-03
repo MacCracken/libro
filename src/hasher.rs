@@ -12,6 +12,37 @@ pub(crate) const HASH_ALGORITHM: &str = "blake3";
 #[cfg(feature = "sha256")]
 pub(crate) const HASH_ALGORITHM: &str = "sha256";
 
+/// Encode a fixed-size byte array as a lowercase hex string.
+pub(crate) fn hex_encode<const N: usize>(bytes: [u8; N]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(N * 2);
+    for b in bytes {
+        write!(hex, "{b:02x}").expect("write to String is infallible");
+    }
+    hex
+}
+
+/// Encode a byte slice as a lowercase hex string.
+pub(crate) fn hex_encode_slice(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(hex, "{b:02x}").expect("write to String is infallible");
+    }
+    hex
+}
+
+/// Decode a hex string into bytes. Returns `None` if the input is invalid hex.
+pub(crate) fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect()
+}
+
 /// A streaming hasher that accumulates data and produces a hex-encoded digest.
 pub(crate) struct ChainHasher {
     #[cfg(not(feature = "sha256"))]

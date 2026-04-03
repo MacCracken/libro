@@ -23,4 +23,20 @@ pub enum LibroError {
     /// A JSON serialization or deserialization error.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// An input field exceeds the allowed maximum length.
+    #[error("field `{field}` too long: {len} bytes (max {max})")]
+    FieldTooLong {
+        field: &'static str,
+        len: usize,
+        max: usize,
+    },
+    /// An RFC 3161 timestamp request or response is malformed.
+    #[error("timestamp error: {0}")]
+    Timestamp(String),
+    /// A witness anchoring operation failed.
+    #[error("anchoring error: {0}")]
+    Anchoring(String),
+    /// DER encoding/decoding error.
+    #[error("DER encoding error: {0}")]
+    Der(String),
 }

@@ -31,6 +31,8 @@
 //! - [`streaming`] — Real-time pub/sub *(feature: `streaming`)*
 //! - [`sqlite_store`] — SQLite persistence *(feature: `sqlite`)*
 
+#[cfg(feature = "anchoring")]
+pub mod anchoring;
 pub mod chain;
 pub mod entry;
 pub mod export;
@@ -48,11 +50,15 @@ pub mod sqlite_store;
 pub mod store;
 #[cfg(feature = "streaming")]
 pub mod streaming;
+#[cfg(feature = "timestamping")]
+pub mod timestamping;
 pub mod verify;
 
 mod error;
 pub use error::LibroError;
 
+#[cfg(feature = "anchoring")]
+pub use anchoring::{AnchorVerification, WitnessAnchor, WitnessBackend, WitnessReceipt};
 pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
 pub use export::{to_csv, to_jsonl};
@@ -65,6 +71,8 @@ pub use review::{ChainReview, IntegrityStatus};
 pub use sqlite_store::SqliteStore;
 #[cfg(feature = "streaming")]
 pub use streaming::AuditStream;
+#[cfg(feature = "timestamping")]
+pub use timestamping::{TimestampAttestation, TimestampRequest, TimestampResponse};
 pub use verify::verify_chain;
 
 pub type Result<T> = std::result::Result<T, LibroError>;
@@ -141,5 +149,47 @@ mod assert_traits {
         _assert_partial_eq::<EntrySignature>();
         _assert_clone::<EntrySignature>();
         _assert_clone::<VerifyingKey>();
+    }
+
+    #[cfg(feature = "anchoring")]
+    #[test]
+    fn anchoring_types_traits() {
+        use super::anchoring::{AnchorVerification, WitnessAnchor, WitnessReceipt};
+        _assert_send_sync::<WitnessAnchor>();
+        _assert_send_sync::<WitnessReceipt>();
+        _assert_send_sync::<AnchorVerification>();
+        _assert_serde::<WitnessAnchor>();
+        _assert_serde::<WitnessReceipt>();
+        _assert_serde::<AnchorVerification>();
+        _assert_clone::<WitnessAnchor>();
+        _assert_clone::<WitnessReceipt>();
+        _assert_clone::<AnchorVerification>();
+        _assert_partial_eq::<WitnessAnchor>();
+        _assert_partial_eq::<WitnessReceipt>();
+        _assert_partial_eq::<AnchorVerification>();
+    }
+
+    #[cfg(feature = "timestamping")]
+    #[test]
+    fn timestamping_types_traits() {
+        use super::timestamping::{
+            TimestampAttestation, TimestampHashAlgorithm, TimestampRequest, TimestampResponse,
+            TimestampStatus, TimestampSubject,
+        };
+        _assert_send_sync::<TimestampRequest>();
+        _assert_send_sync::<TimestampResponse>();
+        _assert_send_sync::<TimestampAttestation>();
+        _assert_serde::<TimestampRequest>();
+        _assert_serde::<TimestampResponse>();
+        _assert_serde::<TimestampAttestation>();
+        _assert_serde::<TimestampHashAlgorithm>();
+        _assert_serde::<TimestampStatus>();
+        _assert_serde::<TimestampSubject>();
+        _assert_clone::<TimestampRequest>();
+        _assert_clone::<TimestampResponse>();
+        _assert_clone::<TimestampAttestation>();
+        _assert_partial_eq::<TimestampRequest>();
+        _assert_partial_eq::<TimestampResponse>();
+        _assert_partial_eq::<TimestampAttestation>();
     }
 }

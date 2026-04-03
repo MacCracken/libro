@@ -3,7 +3,7 @@
 use tracing::warn;
 
 use crate::LibroError;
-use crate::entry::AuditEntry;
+use crate::entry::{AuditEntry, constant_time_eq};
 
 /// Verify a sequence of audit entries forms a valid chain.
 ///
@@ -22,7 +22,7 @@ pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
 
     for (i, entry) in entries.iter().enumerate() {
         let expected_hash = entry.compute_hash();
-        if entry.hash() != expected_hash {
+        if !constant_time_eq(entry.hash(), &expected_hash) {
             warn!(
                 index = i,
                 hash = entry.hash(),
@@ -35,7 +35,7 @@ pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
                 actual: entry.hash().to_owned(),
             });
         }
-        if i > 0 && entry.prev_hash() != entries[i - 1].hash() {
+        if i > 0 && !constant_time_eq(entry.prev_hash(), entries[i - 1].hash()) {
             warn!(
                 index = i,
                 expected = entries[i - 1].hash(),
@@ -50,6 +50,45 @@ pub fn verify_chain(entries: &[AuditEntry]) -> crate::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Verify a chunk of entries with a global index offset for error reporting.
+///
+/// Same checks as [`verify_chain`], but reported indices are offset by `base_index`.
+/// The first entry's `prev_hash` is NOT checked against a predecessor here — that
+/// cross-chunk linkage is the caller's responsibility.
+pub fn verify_chain_offset(entries: &[AuditEntry], base_index: usize) -> crate::Result<()> {
+    for (i, entry) in entries.iter().enumerate() {
+        let global_index = base_index + i;
+        let expected_hash = entry.compute_hash();
+        if !constant_time_eq(entry.hash(), &expected_hash) {
+            warn!(
+                index = global_index,
+                hash = entry.hash(),
+                expected = %expected_hash,
+                "entry self-hash verification failed"
+            );
+            return Err(LibroError::IntegrityViolation {
+                index: global_index,
+                expected: expected_hash,
+                actual: entry.hash().to_owned(),
+            });
+        }
+        if i > 0 && !constant_time_eq(entry.prev_hash(), entries[i - 1].hash()) {
+            warn!(
+                index = global_index,
+                expected = entries[i - 1].hash(),
+                actual = entry.prev_hash(),
+                "chain linkage broken"
+            );
+            return Err(LibroError::IntegrityViolation {
+                index: global_index,
+                expected: entries[i - 1].hash().to_owned(),
+                actual: entry.prev_hash().to_owned(),
+            });
+        }
+    }
     Ok(())
 }
 
