@@ -118,12 +118,16 @@ criteria = "safe-to-deploy"
 version = "0.1.65"
 criteria = "safe-to-deploy"
 
+[[exemptions.indexmap]]
+version = "2.13.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.js-sys]]
 version = "0.3.94"
 criteria = "safe-to-deploy"
 
 [[exemptions.libro]]
-version = "0.91.0"
+version = "0.92.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.libsqlite3-sys]]
@@ -237,3 +241,7 @@ criteria = "safe-to-run"
 [[exemptions.zerocopy-derive]]
 version = "0.8.48"
 criteria = "safe-to-run"
+
+[[exemptions.zeroize_derive]]
+version = "1.4.3"
+criteria = "safe-to-deploy"
