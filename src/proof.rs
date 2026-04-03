@@ -199,42 +199,31 @@ impl IntegrityProof {
     /// tree head signature. Without signing, signature verification is skipped.
     #[cfg(feature = "signing")]
     pub fn verify(&self, verifier: &dyn EntryVerifier) -> ProofVerification {
-        self.verify_inner(Some(verifier))
+        self.verify_signed(verifier)
     }
 
     /// Verify this proof bundle without signature verification.
     pub fn verify_unsigned(&self) -> ProofVerification {
-        self.verify_inner(
-            #[cfg(feature = "signing")]
-            None,
-        )
+        self.verify_common(true)
     }
 
     #[cfg(feature = "signing")]
-    fn verify_inner(&self, verifier: Option<&dyn EntryVerifier>) -> ProofVerification {
-        // Tree head signature
-        let tree_head_valid = if let Some(v) = verifier {
-            let sig_bytes =
-                crate::hasher::hex_decode(&self.tree_head.signature).unwrap_or_default();
-            v.verify_bytes(self.tree_head.root.as_bytes(), &sig_bytes)
-        } else {
-            true // no verifier = skip signature check
-        };
-
+    fn verify_signed(&self, verifier: &dyn EntryVerifier) -> ProofVerification {
+        let sig_bytes = crate::hasher::hex_decode(&self.tree_head.signature).unwrap_or_default();
+        let tree_head_valid = verifier.verify_bytes(self.tree_head.root.as_bytes(), &sig_bytes);
         self.verify_common(tree_head_valid)
-    }
-
-    #[cfg(not(feature = "signing"))]
-    fn verify_inner(&self) -> ProofVerification {
-        self.verify_common(true)
     }
 
     fn verify_common(&self, tree_head_valid: bool) -> ProofVerification {
         // Entry verification: each entry's hash matches its content + chain links
         let entries_valid = self.verify_entries();
 
-        // Tree matches: rebuild tree from entries, compare root
-        let tree_matches = MerkleTree::build(&self.entries)
+        // Build tree once for reuse across checks
+        let rebuilt_tree = MerkleTree::build(&self.entries);
+
+        // Tree matches: compare rebuilt root against signed root
+        let tree_matches = rebuilt_tree
+            .as_ref()
             .map(|tree| {
                 crate::entry::constant_time_eq(tree.root(), &self.tree_head.root)
                     && tree.leaf_count() == self.tree_head.tree_size
@@ -252,8 +241,8 @@ impl IntegrityProof {
             if !verify_consistency(c) {
                 return false;
             }
-            // Rebuild tree to get canonical root for comparison
-            MerkleTree::build(&self.entries)
+            rebuilt_tree
+                .as_ref()
                 .and_then(|tree| tree.canonical_root(tree.leaf_count()))
                 .is_some_and(|canonical| crate::entry::constant_time_eq(&c.new_root, &canonical))
         });
@@ -328,6 +317,7 @@ impl<'a> ProofBuilder<'a> {
     }
 
     /// Build the integrity proof, consuming this builder.
+    #[must_use]
     pub fn build(self) -> IntegrityProof {
         IntegrityProof {
             tree_head: self.tree_head,
