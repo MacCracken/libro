@@ -338,7 +338,7 @@ pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 /// Write a length-prefixed field into the hasher to prevent field boundary ambiguity.
-fn hash_field(hasher: &mut ChainHasher, data: &[u8]) {
+pub(crate) fn hash_field(hasher: &mut ChainHasher, data: &[u8]) {
     hasher.update(&(data.len() as u64).to_le_bytes());
     hasher.update(data);
 }

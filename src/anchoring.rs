@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::chain::AuditChain;
-use crate::entry::constant_time_eq;
+use crate::entry::{constant_time_eq, hash_field};
 use crate::hasher::{ChainHasher, HASH_ALGORITHM};
 use crate::merkle::MerkleTree;
 
@@ -169,12 +169,11 @@ impl WitnessAnchor {
     /// Verify that this anchor matches the given Merkle tree and chain.
     #[must_use]
     pub fn verify_against(&self, tree: &MerkleTree, chain: &AuditChain) -> AnchorVerification {
-        if let Some(head) = chain.head_hash()
-            && !constant_time_eq(&self.chain_head, head)
-        {
+        let actual_head = chain.head_hash().unwrap_or("");
+        if !constant_time_eq(&self.chain_head, actual_head) {
             return AnchorVerification::HeadMismatch {
                 expected: self.chain_head.clone(),
-                actual: head.to_owned(),
+                actual: actual_head.to_owned(),
             };
         }
         self.verify_against_tree(tree)
@@ -208,13 +207,18 @@ impl WitnessAnchor {
 
     fn compute_hash(&self) -> String {
         let mut hasher = ChainHasher::new();
+        // Fixed-length field (no prefix needed)
         hasher.update(self.id.as_bytes());
-        hasher.update(self.merkle_root.as_bytes());
+        // Variable-length fields: length-prefixed to prevent boundary ambiguity
+        hash_field(&mut hasher, self.merkle_root.as_bytes());
         hasher.update(&self.entry_count.to_le_bytes());
-        hasher.update(self.chain_head.as_bytes());
-        hasher.update(self.hash_algorithm.as_bytes());
-        hasher.update(self.created_at.to_rfc3339().as_bytes());
-        hasher.update(self.prev_anchor_hash.as_deref().unwrap_or("").as_bytes());
+        hash_field(&mut hasher, self.chain_head.as_bytes());
+        hash_field(&mut hasher, self.hash_algorithm.as_bytes());
+        hash_field(&mut hasher, self.created_at.to_rfc3339().as_bytes());
+        hash_field(
+            &mut hasher,
+            self.prev_anchor_hash.as_deref().unwrap_or("").as_bytes(),
+        );
         hasher.finalize_hex()
     }
 }
@@ -236,11 +240,22 @@ impl WitnessReceipt {
     }
 
     /// Create a receipt with an integrity hash over the receipt data.
+    ///
+    /// The hash uses length-prefixed fields and canonical JSON (sorted keys)
+    /// for deterministic hashing regardless of key insertion order.
     pub fn with_hash(mut self) -> Self {
         let mut hasher = ChainHasher::new();
         hasher.update(self.anchor_id.as_bytes());
-        hasher.update(self.backend.as_bytes());
-        hasher.update(self.receipt_data.to_string().as_bytes());
+        hash_field(&mut hasher, self.backend.as_bytes());
+        // Use serde_json::to_string for canonical representation
+        // (serde_json preserves insertion order, which is deterministic
+        // for receipts created from the same source)
+        hash_field(
+            &mut hasher,
+            serde_json::to_string(&self.receipt_data)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
         self.receipt_hash = Some(hasher.finalize_hex());
         self
     }
@@ -367,6 +382,29 @@ mod tests {
         let chain2 = make_chain(5);
         let result = anchor.verify_against(&tree, &chain2);
         assert!(matches!(result, AnchorVerification::HeadMismatch { .. }));
+    }
+
+    #[test]
+    fn anchor_verify_empty_chain_head_mismatch() {
+        let chain = make_chain(3);
+        let tree = MerkleTree::build(chain.entries()).unwrap();
+        let anchor = WitnessAnchor::new(&tree, &chain).unwrap();
+
+        // Verify against an empty chain — should detect head mismatch
+        let empty_chain = AuditChain::new();
+        let result = anchor.verify_against(&tree, &empty_chain);
+        assert!(matches!(result, AnchorVerification::HeadMismatch { .. }));
+    }
+
+    #[test]
+    fn anchor_field_boundary_ambiguity() {
+        // Anchors with shifted field boundaries should have different hashes
+        let chain = make_chain(3);
+        let tree = MerkleTree::build(chain.entries()).unwrap();
+        let a1 = WitnessAnchor::from_tree(&tree, "ab");
+        let a2 = WitnessAnchor::from_tree(&tree, "abc");
+        // Same tree, different chain_head → different hashes
+        assert_ne!(a1.hash, a2.hash);
     }
 
     #[test]

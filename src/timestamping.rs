@@ -204,18 +204,14 @@ impl TimestampRequest {
     /// Add a random 16-byte nonce for replay protection.
     #[must_use]
     pub fn with_nonce(mut self) -> Self {
+        // Use two UUIDs (32 bytes of v4 randomness) as the nonce source.
+        // UUID v4 provides 122 bits of randomness; we only need 128 bits
+        // for a 16-byte nonce, so two UUIDs provide ample entropy.
+        let u1 = uuid::Uuid::new_v4();
+        let u2 = uuid::Uuid::new_v4();
         let mut nonce = [0u8; 16];
-        // Use the chain hasher with a UUID as entropy source (no rand dep needed)
-        let entropy = uuid::Uuid::new_v4();
-        let mut hasher = crate::hasher::ChainHasher::new();
-        hasher.update(entropy.as_bytes());
-        let hex = hasher.finalize_hex();
-        // Take first 32 hex chars = 16 bytes
-        for (i, chunk) in hex.as_bytes().chunks(2).take(16).enumerate() {
-            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(chunk).unwrap_or("00"), 16) {
-                nonce[i] = b;
-            }
-        }
+        nonce[..8].copy_from_slice(&u1.as_bytes()[..8]);
+        nonce[8..].copy_from_slice(&u2.as_bytes()[..8]);
         self.nonce = Some(hex_encode_slice(&nonce));
         self
     }
