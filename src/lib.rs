@@ -147,12 +147,16 @@ mod assert_traits {
     #[cfg(feature = "signing")]
     #[test]
     fn signing_types_traits() {
-        use super::signing::{EntrySignature, VerifyingKey};
+        use super::signing::{EntrySignature, SignatureAlgorithm, VerifyingKey};
         _assert_serde::<EntrySignature>();
         _assert_serde::<VerifyingKey>();
+        _assert_serde::<SignatureAlgorithm>();
         _assert_partial_eq::<EntrySignature>();
+        _assert_partial_eq::<SignatureAlgorithm>();
         _assert_clone::<EntrySignature>();
         _assert_clone::<VerifyingKey>();
+        _assert_clone::<SignatureAlgorithm>();
+        _assert_send_sync::<SignatureAlgorithm>();
     }
 
     #[cfg(feature = "anchoring")]

@@ -1,31 +1,153 @@
-//! Ed25519 digital signatures for audit entries.
+//! Digital signatures for audit entries.
 //!
-//! Provides per-entry signing and verification using Ed25519. Each entry's
-//! hash is signed, binding the signature to the entry's full content.
+//! Provides per-entry signing and verification with algorithm-agnostic traits.
+//! The default implementation uses Ed25519 via `ed25519-dalek`. Consumers can
+//! implement the [`EntrySigner`] and [`EntryVerifier`] traits for other algorithms
+//! (e.g., ML-DSA for post-quantum security).
 //!
 //! Requires the `signing` feature flag.
 //!
 //! # Usage
 //!
 //! ```rust,ignore
-//! use libro::signing::{SigningKey, EntrySignature};
+//! use libro::signing::{SigningKey, EntrySignature, EntrySigner};
 //! use libro::{AuditEntry, EventSeverity};
 //!
 //! let key = SigningKey::generate();
 //! let entry = AuditEntry::new(EventSeverity::Info, "src", "act", serde_json::json!({}), "");
-//! let sig = key.sign(&entry);
+//! let sig = key.sign_entry(&entry);
 //! assert!(sig.verify(&entry, &key.verifying_key()));
 //! ```
 
 use ed25519_dalek::{
-    Signature, Signer, SigningKey as DalekSigningKey, Verifier, VerifyingKey as DalekVerifyingKey,
+    Signature, Signer as DalekSigner, SigningKey as DalekSigningKey, Verifier as DalekVerifier,
+    VerifyingKey as DalekVerifyingKey,
 };
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::entry::AuditEntry;
-use crate::hasher::{hex_decode, hex_encode};
+use crate::hasher::{hex_decode, hex_encode, hex_encode_slice};
+
+// ---------------------------------------------------------------------------
+// Signature algorithm identifier
+// ---------------------------------------------------------------------------
+
+/// Identifies the cryptographic signature algorithm used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SignatureAlgorithm {
+    /// Ed25519 (RFC 8032).
+    #[serde(rename = "ed25519")]
+    Ed25519,
+    /// ML-DSA-65 (FIPS 204, formerly CRYSTALS-Dilithium).
+    #[serde(rename = "ml-dsa-65")]
+    MlDsa65,
+    /// Hybrid Ed25519 + ML-DSA-65 (transition period).
+    #[serde(rename = "ed25519+ml-dsa-65")]
+    Ed25519MlDsa65,
+}
+
+impl SignatureAlgorithm {
+    /// Stable string representation.
+    #[inline]
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ed25519 => "ed25519",
+            Self::MlDsa65 => "ml-dsa-65",
+            Self::Ed25519MlDsa65 => "ed25519+ml-dsa-65",
+        }
+    }
+}
+
+impl std::fmt::Display for SignatureAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for SignatureAlgorithm {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ed25519" => Ok(Self::Ed25519),
+            "ml-dsa-65" => Ok(Self::MlDsa65),
+            "ed25519+ml-dsa-65" => Ok(Self::Ed25519MlDsa65),
+            other => Err(format!("unknown signature algorithm: {other}")),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Algorithm-agnostic traits
+// ---------------------------------------------------------------------------
+
+/// Algorithm-agnostic signing trait for audit entries.
+///
+/// Implementors provide the low-level `sign_bytes` operation; the trait
+/// provides default implementations for `sign_entry` and `sign_entry_with_key_id`
+/// that handle entry hash extraction and `EntrySignature` construction.
+pub trait EntrySigner: Send + Sync {
+    /// The signature algorithm this signer uses.
+    fn algorithm(&self) -> SignatureAlgorithm;
+
+    /// The raw verifying (public) key bytes.
+    fn verifying_key_bytes(&self) -> Vec<u8>;
+
+    /// Sign raw message bytes, returning the signature bytes.
+    fn sign_bytes(&self, message: &[u8]) -> Vec<u8>;
+
+    /// Sign an audit entry, producing an [`EntrySignature`].
+    fn sign_entry(&self, entry: &AuditEntry) -> EntrySignature {
+        let hash = entry.hash();
+        let sig_bytes = self.sign_bytes(hash.as_bytes());
+        EntrySignature {
+            entry_hash: hash.to_owned(),
+            signature: hex_encode_slice(&sig_bytes),
+            verifying_key: hex_encode_slice(&self.verifying_key_bytes()),
+            key_id: None,
+            algorithm: Some(self.algorithm().as_str().to_owned()),
+        }
+    }
+
+    /// Sign an audit entry with a key identifier for key rotation workflows.
+    fn sign_entry_with_key_id(&self, entry: &AuditEntry, key_id: String) -> EntrySignature {
+        let mut sig = self.sign_entry(entry);
+        sig.key_id = Some(key_id);
+        sig
+    }
+}
+
+/// Algorithm-agnostic verification trait for audit entry signatures.
+///
+/// Implementors provide the low-level `verify_bytes` operation; the trait
+/// provides a default `verify_entry_signature` that handles entry hash
+/// checking and hex decoding.
+pub trait EntryVerifier: Send + Sync {
+    /// The signature algorithm this verifier supports.
+    fn algorithm(&self) -> SignatureAlgorithm;
+
+    /// The raw verifying (public) key bytes.
+    fn verifying_key_bytes(&self) -> Vec<u8>;
+
+    /// Verify a signature over raw message bytes.
+    fn verify_bytes(&self, message: &[u8], signature: &[u8]) -> bool;
+
+    /// Verify an [`EntrySignature`] against an audit entry.
+    fn verify_entry_signature(&self, entry: &AuditEntry, sig: &EntrySignature) -> bool {
+        if !crate::entry::constant_time_eq(entry.hash(), &sig.entry_hash) {
+            return false;
+        }
+        let sig_bytes = match hex_decode(&sig.signature) {
+            Some(b) => b,
+            None => return false,
+        };
+        self.verify_bytes(sig.entry_hash.as_bytes(), &sig_bytes)
+    }
+}
 
 /// An Ed25519 signing key for audit entries.
 ///
@@ -53,26 +175,25 @@ pub struct VerifyingKey {
 
 /// A signature over an audit entry's hash.
 ///
-/// Contains the Ed25519 signature, the entry hash it covers, the verifying key,
-/// and an optional `key_id` for key rotation workflows. When using multiple
-/// signing keys (e.g., during key rotation), the `key_id` identifies which
-/// key produced this signature.
+/// Contains the signature bytes, the entry hash it covers, the verifying key,
+/// an optional `key_id` for key rotation, and an optional `algorithm` identifier.
+/// All cryptographic material is hex-encoded for safe JSON serialization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct EntrySignature {
     /// The entry hash that was signed.
     pub entry_hash: String,
-    /// The raw Ed25519 signature bytes (64 bytes), hex-encoded.
+    /// The raw signature bytes, hex-encoded.
     pub signature: String,
     /// The verifying key that can validate this signature, hex-encoded.
     pub verifying_key: String,
     /// Optional key identifier for key rotation workflows.
-    ///
-    /// When set, consumers can use this to look up the correct verifying key
-    /// from a key registry. When `None`, the embedded `verifying_key` field
-    /// is the sole identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_id: Option<String>,
+    /// The signature algorithm used (e.g., "ed25519", "ml-dsa-65").
+    /// `None` for legacy entries (assumed Ed25519).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<String>,
 }
 
 impl SigningKey {
@@ -111,12 +232,13 @@ impl SigningKey {
     /// Sign an audit entry. The signature covers the entry's hash.
     pub fn sign(&self, entry: &AuditEntry) -> EntrySignature {
         let hash = entry.hash();
-        let sig = self.inner.sign(hash.as_bytes());
+        let sig: Signature = self.inner.sign(hash.as_bytes());
         EntrySignature {
             entry_hash: hash.to_owned(),
             signature: hex_encode(sig.to_bytes()),
             verifying_key: hex_encode(self.inner.verifying_key().to_bytes()),
             key_id: None,
+            algorithm: Some(SignatureAlgorithm::Ed25519.as_str().to_owned()),
         }
     }
 
@@ -195,6 +317,62 @@ impl EntrySignature {
         };
         let sig = Signature::from_bytes(&sig_array);
         key.inner.verify(self.entry_hash.as_bytes(), &sig).is_ok()
+    }
+
+    /// Verify this signature using any algorithm via the [`EntryVerifier`] trait.
+    ///
+    /// This enables algorithm-agnostic verification — the verifier determines
+    /// the cryptographic algorithm at runtime.
+    #[must_use]
+    pub fn verify_with(&self, entry: &AuditEntry, verifier: &dyn EntryVerifier) -> bool {
+        verifier.verify_entry_signature(entry, self)
+    }
+
+    /// Parse the `algorithm` field into a [`SignatureAlgorithm`].
+    ///
+    /// Returns `None` if the field is absent (legacy entry) or contains
+    /// an unrecognized algorithm string.
+    #[must_use]
+    pub fn algorithm_parsed(&self) -> Option<SignatureAlgorithm> {
+        self.algorithm.as_deref()?.parse().ok()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Trait implementations for Ed25519
+// ---------------------------------------------------------------------------
+
+impl EntrySigner for SigningKey {
+    fn algorithm(&self) -> SignatureAlgorithm {
+        SignatureAlgorithm::Ed25519
+    }
+
+    fn verifying_key_bytes(&self) -> Vec<u8> {
+        self.inner.verifying_key().to_bytes().to_vec()
+    }
+
+    fn sign_bytes(&self, message: &[u8]) -> Vec<u8> {
+        let sig: Signature = self.inner.sign(message);
+        sig.to_bytes().to_vec()
+    }
+}
+
+impl EntryVerifier for VerifyingKey {
+    fn algorithm(&self) -> SignatureAlgorithm {
+        SignatureAlgorithm::Ed25519
+    }
+
+    fn verifying_key_bytes(&self) -> Vec<u8> {
+        self.inner.to_bytes().to_vec()
+    }
+
+    fn verify_bytes(&self, message: &[u8], signature: &[u8]) -> bool {
+        let sig_array: [u8; 64] = match signature.try_into() {
+            Ok(a) => a,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&sig_array);
+        self.inner.verify(message, &sig).is_ok()
     }
 }
 
@@ -358,13 +536,132 @@ mod tests {
     fn to_bytes_returns_zeroizing() {
         let key = SigningKey::generate();
         let bytes = key.to_bytes();
-        // Verify it's a Zeroizing wrapper (compiles = passes)
         let _: &[u8; 32] = &bytes;
-        // Roundtrip still works through Deref
         let restored = SigningKey::from_bytes(&bytes);
         assert_eq!(
             key.verifying_key().to_hex(),
             restored.verifying_key().to_hex()
         );
+    }
+
+    // --- Trait-based signing tests ---
+
+    #[test]
+    fn trait_sign_and_verify() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+
+        let sig = EntrySigner::sign_entry(&key, &entry);
+        let vk = key.verifying_key();
+        assert!(EntryVerifier::verify_entry_signature(&vk, &entry, &sig));
+    }
+
+    #[test]
+    fn trait_wrong_key_fails() {
+        let key_a = SigningKey::generate();
+        let key_b = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+
+        let sig = EntrySigner::sign_entry(&key_a, &entry);
+        assert!(!EntryVerifier::verify_entry_signature(
+            &key_b.verifying_key(),
+            &entry,
+            &sig
+        ));
+    }
+
+    #[test]
+    fn algorithm_field_present() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let sig = key.sign(&entry);
+        assert_eq!(sig.algorithm.as_deref(), Some("ed25519"));
+    }
+
+    #[test]
+    fn algorithm_field_serde_roundtrip() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let sig = key.sign(&entry);
+
+        let json = serde_json::to_string(&sig).unwrap();
+        assert!(json.contains("\"algorithm\":\"ed25519\""));
+        let back: EntrySignature = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.algorithm, sig.algorithm);
+    }
+
+    #[test]
+    fn algorithm_field_missing_backward_compat() {
+        // Simulate a legacy JSON without the algorithm field
+        let json = r#"{"entry_hash":"abc","signature":"def","verifying_key":"012"}"#;
+        let sig: EntrySignature = serde_json::from_str(json).unwrap();
+        assert!(sig.algorithm.is_none());
+        assert!(sig.key_id.is_none());
+    }
+
+    #[test]
+    fn algorithm_parsed() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let sig = key.sign(&entry);
+        assert_eq!(sig.algorithm_parsed(), Some(SignatureAlgorithm::Ed25519));
+
+        // Missing algorithm
+        let mut sig2 = sig.clone();
+        sig2.algorithm = None;
+        assert_eq!(sig2.algorithm_parsed(), None);
+
+        // Unknown algorithm
+        sig2.algorithm = Some("unknown-algo".into());
+        assert_eq!(sig2.algorithm_parsed(), None);
+    }
+
+    #[test]
+    fn signature_algorithm_display_roundtrip() {
+        for alg in [
+            SignatureAlgorithm::Ed25519,
+            SignatureAlgorithm::MlDsa65,
+            SignatureAlgorithm::Ed25519MlDsa65,
+        ] {
+            let s = alg.to_string();
+            let parsed: SignatureAlgorithm = s.parse().unwrap();
+            assert_eq!(alg, parsed);
+        }
+    }
+
+    #[test]
+    fn verify_with_matches_verify() {
+        let key = SigningKey::generate();
+        let vk = key.verifying_key();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let sig = key.sign(&entry);
+
+        let concrete_result = sig.verify(&entry, &vk);
+        let trait_result = sig.verify_with(&entry, &vk);
+        assert_eq!(concrete_result, trait_result);
+        assert!(concrete_result);
+    }
+
+    #[test]
+    fn dyn_verifier_works() {
+        let key = SigningKey::generate();
+        let vk = key.verifying_key();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+        let sig = key.sign(&entry);
+
+        // Use as dyn trait object
+        let boxed: Box<dyn EntryVerifier> = Box::new(vk);
+        assert!(sig.verify_with(&entry, boxed.as_ref()));
+    }
+
+    #[test]
+    fn trait_sign_entry_with_key_id() {
+        let key = SigningKey::generate();
+        let entry = AuditEntry::new(EventSeverity::Info, "s", "a", serde_json::json!({}), "");
+
+        let sig = EntrySigner::sign_entry_with_key_id(&key, &entry, "key-v2".to_owned());
+        assert_eq!(sig.key_id.as_deref(), Some("key-v2"));
+        assert_eq!(sig.algorithm.as_deref(), Some("ed25519"));
+        assert!(sig.verify_with(&entry, &key.verifying_key()));
     }
 }
