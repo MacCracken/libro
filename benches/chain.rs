@@ -67,6 +67,23 @@ fn bench_merkle_verify_proof(c: &mut Criterion) {
     });
 }
 
+fn bench_merkle_consistency_proof(c: &mut Criterion) {
+    let chain = make_chain(1000);
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+    c.bench_function("merkle_consistency_1000", |b| {
+        b.iter(|| tree.consistency_proof(500).unwrap())
+    });
+}
+
+fn bench_merkle_verify_consistency(c: &mut Criterion) {
+    let chain = make_chain(1000);
+    let tree = MerkleTree::build(chain.entries()).unwrap();
+    let proof = tree.consistency_proof(500).unwrap();
+    c.bench_function("merkle_verify_consistency", |b| {
+        b.iter(|| libro::merkle::verify_consistency(&proof))
+    });
+}
+
 // --- Query ---
 
 fn bench_query_1000(c: &mut Criterion) {
@@ -218,6 +235,8 @@ criterion_group!(
     bench_merkle_build_1000,
     bench_merkle_proof,
     bench_merkle_verify_proof,
+    bench_merkle_consistency_proof,
+    bench_merkle_verify_consistency,
     bench_query_1000,
     bench_export_jsonl_1000,
     bench_export_csv_1000,

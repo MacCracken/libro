@@ -161,6 +161,81 @@ impl MerkleTree {
             root: self.root().to_owned(),
         })
     }
+
+    /// Generate an RFC 9162 consistency proof from an older tree size.
+    ///
+    /// Proves that the first `old_size` leaves of this tree produce the same
+    /// root as a tree built from only those leaves. This demonstrates the
+    /// append-only property.
+    ///
+    /// Returns `None` if `old_size` is 0 or greater than `leaf_count`.
+    pub fn consistency_proof(&self, old_size: usize) -> Option<ConsistencyProof> {
+        if old_size == 0 || old_size > self.leaf_count {
+            return None;
+        }
+
+        let old_root = self.canonical_root(old_size)?;
+        let new_root = self.canonical_root(self.leaf_count)?;
+
+        if old_size == self.leaf_count {
+            return Some(ConsistencyProof {
+                old_size,
+                new_size: self.leaf_count,
+                old_root,
+                new_root,
+                path: Vec::new(),
+            });
+        }
+
+        let mut path = Vec::new();
+        subproof(old_size, 0, self.leaf_count, true, &self.nodes, &mut path);
+
+        Some(ConsistencyProof {
+            old_size,
+            new_size: self.leaf_count,
+            old_root,
+            new_root,
+            path,
+        })
+    }
+
+    /// Compute the canonical RFC 9162 Merkle root for the first `size` leaves.
+    ///
+    /// This uses the no-duplication algorithm from RFC 9162: when a level has
+    /// an odd number of nodes, the last node is promoted directly (not duplicated).
+    /// For power-of-2 sizes, this matches [`root()`]. For others, it may differ.
+    ///
+    /// Returns `None` if `size` is 0 or greater than `leaf_count`.
+    #[must_use]
+    pub fn canonical_root(&self, size: usize) -> Option<String> {
+        if size == 0 || size > self.leaf_count {
+            return None;
+        }
+        Some(canonical_subtree_hash(&self.nodes, 0, size))
+    }
+}
+
+/// An RFC 9162 consistency proof demonstrating that a smaller tree is a
+/// prefix of a larger tree (append-only property).
+///
+/// Given tree sizes `old_size` < `new_size`, the proof contains O(log n) hashes
+/// that allow reconstructing both the old and new roots. This proves the log
+/// has not been tampered with retroactively.
+///
+/// Uses the canonical (no-duplication) Merkle root computation per RFC 9162.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ConsistencyProof {
+    /// The size of the older (smaller) tree.
+    pub old_size: usize,
+    /// The size of the newer (larger) tree.
+    pub new_size: usize,
+    /// The canonical RFC 9162 root of the old tree.
+    pub old_root: String,
+    /// The canonical RFC 9162 root of the new tree.
+    pub new_root: String,
+    /// Subtree root hashes forming the proof path.
+    pub path: Vec<String>,
 }
 
 /// Verify a Merkle inclusion proof.
@@ -179,6 +254,152 @@ pub fn verify_proof(proof: &MerkleProof) -> bool {
     }
 
     crate::entry::constant_time_eq(&current, &proof.root)
+}
+
+/// Verify an RFC 9162 consistency proof.
+///
+/// Returns `true` if the proof is valid — the path hashes, combined with
+/// the tree sizes, produce both the expected old and new roots.
+///
+/// Implements RFC 9162 Section 2.1.4.2 verification algorithm.
+#[must_use]
+pub fn verify_consistency(proof: &ConsistencyProof) -> bool {
+    if proof.old_size == 0 || proof.old_size > proof.new_size {
+        return false;
+    }
+    if proof.old_size == proof.new_size {
+        return proof.path.is_empty()
+            && crate::entry::constant_time_eq(&proof.old_root, &proof.new_root);
+    }
+
+    // Step 1: If old_size is a power of 2, prepend old_root to the proof.
+    let mut path: Vec<&str> = proof.path.iter().map(|s| s.as_str()).collect();
+    if proof.old_size.is_power_of_two() {
+        path.insert(0, &proof.old_root);
+    }
+
+    if path.is_empty() {
+        return false;
+    }
+
+    // Step 2: Set fn and sn to tree indices.
+    let mut fn_idx = proof.old_size - 1;
+    let mut sn_idx = proof.new_size - 1;
+
+    // Step 3: Right-shift both while LSB(fn) is set.
+    while fn_idx & 1 == 1 {
+        fn_idx >>= 1;
+        sn_idx >>= 1;
+    }
+
+    // Step 4: Set both fr and sr to the first proof element.
+    let mut fr = path[0].to_owned();
+    let mut sr = path[0].to_owned();
+
+    // Step 5: For each subsequent value c in the proof.
+    for c in &path[1..] {
+        // Step 5a: If sn is 0, fail.
+        if sn_idx == 0 {
+            return false;
+        }
+
+        // Step 5b: If LSB(fn) is set, or fn == sn.
+        if fn_idx & 1 == 1 || fn_idx == sn_idx {
+            // 5b.i-ii: hash(c, fr) and hash(c, sr) — left sibling
+            fr = hash_pair(c, &fr);
+            sr = hash_pair(c, &sr);
+
+            // 5b.iii: While LSB(fn) is NOT set, shift both.
+            while fn_idx != 0 && fn_idx & 1 == 0 {
+                fn_idx >>= 1;
+                sn_idx >>= 1;
+            }
+        } else {
+            // Step 5c: hash(sr, c) — right sibling (only affects sr)
+            sr = hash_pair(&sr, c);
+        }
+
+        // Step 5d: Shift both.
+        fn_idx >>= 1;
+        sn_idx >>= 1;
+    }
+
+    // Step 6: Verify sn is 0, fr matches old root, sr matches new root.
+    sn_idx == 0
+        && crate::entry::constant_time_eq(&fr, &proof.old_root)
+        && crate::entry::constant_time_eq(&sr, &proof.new_root)
+}
+
+/// RFC 9162 SUBPROOF: collect subtree root hashes for a consistency proof.
+///
+/// `m`: old tree size within this subtree
+/// `start`: starting leaf index in the full tree
+/// `n`: subtree size (number of leaves)
+/// `is_complete`: whether this subtree is part of the old tree's complete prefix
+/// `nodes`: the full tree's node storage
+/// `path`: output — proof hashes are appended here
+fn subproof(
+    m: usize,
+    start: usize,
+    n: usize,
+    is_complete: bool,
+    nodes: &[String],
+    path: &mut Vec<String>,
+) {
+    if m == n {
+        if !is_complete {
+            // Need this subtree's root in the proof
+            path.push(canonical_subtree_hash(nodes, start, n));
+        }
+        return;
+    }
+    if n == 1 {
+        // Single leaf
+        if !is_complete {
+            path.push(nodes[start].clone());
+        }
+        return;
+    }
+
+    // k = largest power of 2 less than n
+    let k = largest_power_of_2_less_than(n);
+
+    if m <= k {
+        // Old tree fits entirely in the left subtree
+        subproof(m, start, k, is_complete, nodes, path);
+        // Right subtree root is part of the proof
+        path.push(canonical_subtree_hash(nodes, start + k, n - k));
+    } else {
+        // Old tree spans into the right subtree
+        subproof(m - k, start + k, n - k, false, nodes, path);
+        // Left subtree root is part of the proof
+        path.push(canonical_subtree_hash(nodes, start, k));
+    }
+}
+
+/// Compute the canonical RFC 9162 Merkle root for a contiguous range of leaves.
+///
+/// Uses the no-duplication algorithm: when a level has an odd node count,
+/// the last node is promoted directly rather than duplicated.
+fn canonical_subtree_hash(nodes: &[String], start: usize, count: usize) -> String {
+    if count == 0 {
+        return String::new();
+    }
+    if count == 1 {
+        return nodes[start].clone();
+    }
+
+    let k = largest_power_of_2_less_than(count);
+    let left = canonical_subtree_hash(nodes, start, k);
+    let right = canonical_subtree_hash(nodes, start + k, count - k);
+    hash_pair(&left, &right)
+}
+
+/// Largest power of 2 strictly less than n.
+#[inline]
+fn largest_power_of_2_less_than(n: usize) -> usize {
+    debug_assert!(n > 1);
+    1 << (usize::BITS - 1 - (n - 1).leading_zeros())
 }
 
 /// Hash two child nodes to produce a parent node.
@@ -338,5 +559,164 @@ mod tests {
         let proof = tree.proof(0).unwrap();
         assert!(proof.path.is_empty()); // No siblings needed
         assert!(verify_proof(&proof));
+    }
+
+    // --- Consistency proof tests ---
+
+    #[test]
+    fn consistency_same_size() {
+        let entries = make_entries(8);
+        let tree = MerkleTree::build(&entries).unwrap();
+        let proof = tree.consistency_proof(8).unwrap();
+        assert!(proof.path.is_empty());
+        assert_eq!(proof.old_root, proof.new_root);
+        assert!(verify_consistency(&proof));
+    }
+
+    #[test]
+    fn consistency_power_of_two() {
+        let entries = make_entries(8);
+        let tree = MerkleTree::build(&entries).unwrap();
+
+        for old_size in 1..=8 {
+            let proof = tree.consistency_proof(old_size).unwrap();
+            assert_eq!(proof.old_size, old_size);
+            assert_eq!(proof.new_size, 8);
+            assert!(
+                verify_consistency(&proof),
+                "consistency proof failed for old_size={old_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn consistency_odd_sizes() {
+        for n in [3, 5, 7, 9, 11, 13, 15] {
+            let entries = make_entries(n);
+            let tree = MerkleTree::build(&entries).unwrap();
+
+            for m in 1..=n {
+                let proof = tree.consistency_proof(m).unwrap();
+                assert!(
+                    verify_consistency(&proof),
+                    "consistency proof failed for m={m}, n={n}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn consistency_one_to_many() {
+        let entries = make_entries(16);
+        let tree = MerkleTree::build(&entries).unwrap();
+        let proof = tree.consistency_proof(1).unwrap();
+        assert!(verify_consistency(&proof));
+        // Single leaf canonical root is the leaf hash itself
+        assert_eq!(proof.old_root, entries[0].hash());
+    }
+
+    #[test]
+    fn consistency_invalid_old_size() {
+        let entries = make_entries(5);
+        let tree = MerkleTree::build(&entries).unwrap();
+        assert!(tree.consistency_proof(0).is_none());
+        assert!(tree.consistency_proof(6).is_none());
+    }
+
+    #[test]
+    fn consistency_tampered_path_fails() {
+        let entries = make_entries(8);
+        let tree = MerkleTree::build(&entries).unwrap();
+        let mut proof = tree.consistency_proof(3).unwrap();
+        if let Some(h) = proof.path.first_mut() {
+            *h = "tampered".to_owned();
+        }
+        assert!(!verify_consistency(&proof));
+    }
+
+    #[test]
+    fn consistency_wrong_old_size_fails() {
+        let entries = make_entries(8);
+        let tree = MerkleTree::build(&entries).unwrap();
+        let mut proof = tree.consistency_proof(4).unwrap();
+        proof.old_size = 3; // lie about the old size
+        assert!(!verify_consistency(&proof));
+    }
+
+    #[test]
+    fn canonical_root_power_of_two_matches_tree_root() {
+        for n in [1, 2, 4, 8, 16, 32] {
+            let entries = make_entries(n);
+            let tree = MerkleTree::build(&entries).unwrap();
+            let canonical = tree.canonical_root(n).unwrap();
+            assert_eq!(
+                canonical,
+                tree.root(),
+                "canonical root should match tree root for power-of-2 size {n}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_root_bounds() {
+        let entries = make_entries(5);
+        let tree = MerkleTree::build(&entries).unwrap();
+        assert!(tree.canonical_root(0).is_none());
+        assert!(tree.canonical_root(6).is_none());
+        assert!(tree.canonical_root(5).is_some());
+    }
+
+    #[test]
+    fn canonical_root_prefix_stable() {
+        // The canonical root of the first m leaves should be the same
+        // regardless of what comes after
+        let entries_5 = make_entries(5);
+        let entries_8 = {
+            let mut v = entries_5.clone();
+            let prev = v.last().unwrap().hash().to_owned();
+            for i in 5..8 {
+                v.push(AuditEntry::new(
+                    EventSeverity::Info,
+                    "s",
+                    format!("e{i}"),
+                    serde_json::json!({}),
+                    &prev,
+                ));
+            }
+            v
+        };
+
+        let tree_5 = MerkleTree::build(&entries_5).unwrap();
+        let tree_8 = MerkleTree::build(&entries_8).unwrap();
+
+        // canonical_root(5) on tree_8 should equal canonical_root(5) on tree_5
+        assert_eq!(tree_5.canonical_root(5), tree_8.canonical_root(5));
+    }
+
+    #[test]
+    fn consistency_large_tree() {
+        let entries = make_entries(100);
+        let tree = MerkleTree::build(&entries).unwrap();
+
+        // Spot-check several old sizes
+        for m in [1, 10, 33, 50, 64, 99, 100] {
+            let proof = tree.consistency_proof(m).unwrap();
+            assert!(
+                verify_consistency(&proof),
+                "consistency proof failed for m={m}, n=100"
+            );
+        }
+    }
+
+    #[test]
+    fn consistency_serde_roundtrip() {
+        let entries = make_entries(8);
+        let tree = MerkleTree::build(&entries).unwrap();
+        let proof = tree.consistency_proof(3).unwrap();
+
+        let json = serde_json::to_string(&proof).unwrap();
+        let back: ConsistencyProof = serde_json::from_str(&json).unwrap();
+        assert_eq!(proof, back);
+        assert!(verify_consistency(&back));
     }
 }

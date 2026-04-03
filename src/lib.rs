@@ -63,7 +63,7 @@ pub use chain::{AuditChain, ChainArchive};
 pub use entry::{AuditEntry, EventSeverity};
 pub use export::{to_csv, to_jsonl};
 pub use file_store::FileStore;
-pub use merkle::{MerkleProof, MerkleTree, ProofNode, Side};
+pub use merkle::{ConsistencyProof, MerkleProof, MerkleTree, ProofNode, Side};
 pub use query::QueryFilter;
 pub use retention::RetentionPolicy;
 pub use review::{ChainReview, IntegrityStatus};
@@ -99,6 +99,7 @@ mod assert_traits {
         _assert_send_sync::<super::FileStore>();
         _assert_send_sync::<super::MerkleTree>();
         _assert_send_sync::<super::MerkleProof>();
+        _assert_send_sync::<super::ConsistencyProof>();
     }
 
     #[test]
@@ -108,6 +109,7 @@ mod assert_traits {
         _assert_partial_eq::<super::ChainReview>();
         _assert_partial_eq::<super::IntegrityStatus>();
         _assert_partial_eq::<super::MerkleProof>();
+        _assert_partial_eq::<super::ConsistencyProof>();
         _assert_partial_eq::<super::ProofNode>();
         _assert_partial_eq::<super::Side>();
         _assert_partial_eq::<super::RetentionPolicy>();
@@ -121,6 +123,7 @@ mod assert_traits {
         _assert_clone::<super::IntegrityStatus>();
         _assert_clone::<super::MerkleTree>();
         _assert_clone::<super::MerkleProof>();
+        _assert_clone::<super::ConsistencyProof>();
         _assert_clone::<super::ProofNode>();
         _assert_clone::<super::RetentionPolicy>();
         _assert_clone::<super::QueryFilter>();
@@ -134,6 +137,7 @@ mod assert_traits {
         _assert_serde::<super::ChainReview>();
         _assert_serde::<super::IntegrityStatus>();
         _assert_serde::<super::MerkleProof>();
+        _assert_serde::<super::ConsistencyProof>();
         _assert_serde::<super::ProofNode>();
         _assert_serde::<super::Side>();
         _assert_serde::<super::QueryFilter>();
