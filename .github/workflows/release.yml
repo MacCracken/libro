@@ -1,80 +1,113 @@
 name: Release
+
 on:
   push:
-    tags: ["*"]
+    tags: ['*']
+
 permissions:
   contents: write
+
+env:
+  CYRIUS_VERSION: "2.7.1"
+
 jobs:
+  # ── CI Gate (must pass before release) ──
   ci:
     name: CI Gate
     uses: ./.github/workflows/ci.yml
+
+  # ── Build release binary ──
   build:
-    name: Build (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
+    name: Build Release
     needs: [ci]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: linux-amd64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: linux-arm64
-            cross: true
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: macos-arm64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - name: Cross deps (arm64)
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p .cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
-      - run: cargo build --release --target ${{ matrix.target }}
-  publish:
-    name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: [ci, build]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Verify version
+
+      - name: Verify version consistency
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          [ "$FILE_VERSION" = "$TAG_VERSION" ] || { echo "VERSION mismatch: file=$FILE_VERSION tag=$TAG_VERSION"; exit 1; }
-      - name: Strip private dependencies
+          TAG_VERSION="${GITHUB_REF_NAME}"
+          if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Version verified: $TAG_VERSION"
+
+      - name: Install Cyrius toolchain
         run: |
-          sed -i '/^kernel-audit = /d' Cargo.toml
-          sed -i '/^full = /d' Cargo.toml
-          sed -i '/^agnosys = /d' Cargo.toml
-          sed -i '/pub mod kernel_audit;/d' src/lib.rs
-          cargo check --quiet
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "strip private deps for publish"
-      - run: cargo publish
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p build
+          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
+          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
+          chmod +x ./build/cc2 ./build/cyrb
+
+      - name: Build x86_64 binary
+        run: |
+          ./build/cyrb build src/main.cyr build/libro
+          echo "libro: $(wc -c < build/libro) bytes"
+          cp build/libro libro-x86_64
+
+      - name: Run tests
+        run: |
+          OUTPUT=$(./libro-x86_64 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "0 failed"
+          echo "PASS: release binary tests"
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          BODY=$(awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            BODY="No changelog entry for this release."
+          fi
+          echo "$BODY" > /tmp/release-body.md
+
+      - name: Create source archive
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
+
+      - name: Generate checksums
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          sha256sum libro-x86_64 "libro-${TAG}-src.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: |
+            libro-x86_64
+            libro-*-src.tar.gz
+            SHA256SUMS
+          retention-days: 5
+
+  # ── Create GitHub Release ──
   release:
     name: Create GitHub Release
+    needs: [build]
     runs-on: ubuntu-latest
-    needs: [ci, build, publish]
     steps:
       - uses: actions/checkout@v4
-      - uses: softprops/action-gh-release@v2
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          generate_release_notes: true
+          name: release-binaries
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "libro ${{ github.ref_name }}"
+          body_path: /tmp/release-body.md
+          prerelease: ${{ startsWith(github.ref_name, '0.') }}
+          files: |
+            libro-x86_64
+            libro-${{ github.ref_name }}-src.tar.gz
+            SHA256SUMS

@@ -1,89 +1,167 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_call:
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
 env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  CYRIUS_VERSION: "2.7.1"
+
 jobs:
+  # ── Build ──
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cyrius toolchain
+        run: |
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p build
+          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
+          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
+          chmod +x ./build/cc2 ./build/cyrb
+          echo "Cyrius $CYRIUS_VERSION installed"
+
+      - name: Build libro
+        run: |
+          ./build/cyrb build src/main.cyr build/libro
+          echo "binary: $(wc -c < build/libro) bytes"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-x86_64
+          path: build/libro
+          retention-days: 5
+
+  # ── Check & Format ──
   check:
-    name: Check & Lint
+    name: Check & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-features --all-targets -- -D warnings
-      - run: cargo check --all-features
+
+      - name: Install Cyrius toolchain
+        run: |
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p build
+          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
+          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
+          chmod +x ./build/cc2 ./build/cyrb
+
+      - name: Syntax check (entry point)
+        run: |
+          ./build/cyrb check src/main.cyr
+          echo "PASS: src/main.cyr"
+
+  # ── Security ──
   security:
-    name: Security Audit
+    name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit cargo-vet
-      - run: cargo audit
-      - run: cargo vet --locked
-  deny:
-    name: Supply Chain
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          arguments: --all-features
+
+      - name: Scan for dangerous patterns
+        run: |
+          WARN=0
+          # Check for raw execve outside kernel_audit.cyr
+          if grep -rn 'syscall(59' src/ 2>/dev/null | grep -v "# " | grep -v kernel_audit; then
+            echo "WARN: raw execve in libro modules"
+            WARN=1
+          fi
+          # Check for hardcoded sensitive paths
+          if grep -rn '"/etc/shadow"' src/ 2>/dev/null; then
+            echo "WARN: direct shadow file access"
+            WARN=1
+          fi
+          echo "security scan complete (warnings: $WARN)"
+
+  # ── Tests ──
   test:
-    name: Test (${{ matrix.os }})
-    needs: [check]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            features: --all-features
-          - os: macos-latest
-            features: --features full
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test ${{ matrix.features }}
-      - run: cargo test --doc ${{ matrix.features }}
-  msrv:
-    name: MSRV (1.89)
+    name: Test
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.89"
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
-      - run: cargo test --all-features
-  coverage:
-    name: Coverage
+
+      - name: Install Cyrius toolchain
+        run: |
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p build
+          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
+          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
+          chmod +x ./build/cc2 ./build/cyrb
+
+      - name: Run test suite
+        run: |
+          ./build/cyrb build src/main.cyr build/libro
+          OUTPUT=$(./build/libro 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "0 failed"
+          echo "PASS: all tests"
+
+  # ── Benchmarks ──
+  benchmarks:
+    name: Benchmarks
+    needs: [build]
     runs-on: ubuntu-latest
-    needs: [check]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-llvm-cov
-      - run: cargo llvm-cov --all-features --lcov --output-path lcov.info
-      - uses: codecov/codecov-action@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          files: lcov.info
-          fail_ci_if_error: false
+
+      - name: Install Cyrius toolchain
+        run: |
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p build
+          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
+          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
+          chmod +x ./build/cc2 ./build/cyrb
+
+      - name: Run benchmarks
+        run: |
+          ./build/cyrb build benches/libro.bcyr build/libro_bench
+          ./build/libro_bench
+        continue-on-error: true
+
+  # ── Documentation ──
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required docs exist
+        run: |
+          MISSING=0
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE; do
+            if [ -f "$doc" ]; then
+              echo "  OK: $doc"
+            else
+              echo "  MISSING: $doc"
+              MISSING=1
+            fi
+          done
+          exit $MISSING
+
+      - name: Verify version consistency
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "VERSION file: $VERSION"
+          grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in changelog"; exit 1; }
+          echo "Version consistent"
