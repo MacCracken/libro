@@ -31,6 +31,7 @@ fn memstore_is_empty(s) {
 
 fn memstore_append(s, e) {
     vec_push(load64(s), e);
+    sakshi_debug("store: append", 13);
     return 0;
 }
 
@@ -47,9 +48,13 @@ fn memstore_load_all(s) {
 # ================================================================
 
 fn memstore_load_and_verify(s) {
+    sakshi_info("store: load and verify", 22);
     var entries = load64(s);
     var err = verify_chain(entries);
-    if (err != 0) { return err; }
+    if (err != 0) {
+        sakshi_error("store: verification failed", 26);
+        return err;
+    }
     return entries;
 }
 

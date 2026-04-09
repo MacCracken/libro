@@ -40,6 +40,7 @@ fn anchor_hash(a) { return load64(a + 64); }
 var _anch_ptr = 0;
 
 fn anchor_from_tree(tree, chain_head_hash) {
+    sakshi_info("anchor: create", 14);
     var a = fl_alloc(72);
     _anch_ptr = a;
     uuid_v4(a);
@@ -120,6 +121,7 @@ fn anchor_compute_hash(a) {
 # ================================================================
 
 fn anchor_verify_integrity(a) {
+    sakshi_debug("anchor: verify integrity", 24);
     var computed = anchor_compute_hash(a);
     var stored = load64(a + 64);
     return constant_time_eq_str(computed, stored);

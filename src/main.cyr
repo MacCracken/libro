@@ -15,6 +15,7 @@ include "lib/io.cyr"
 include "lib/freelist.cyr"
 include "lib/hashmap.cyr"
 include "lib/json.cyr"
+include "lib/sakshi.cyr"
 
 # ================================================================
 # Libro modules (dependency order)

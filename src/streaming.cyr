@@ -103,6 +103,7 @@ fn stream_subscribe(s, pattern) {
 
 # Publish an audit entry. Delivers to all matching subscriptions.
 fn stream_publish(s, entry) {
+    sakshi_debug("stream: publish", 15);
     var topic = _stream_topic(s, entry);
     var td = str_data(topic);
     var sub = load64(s);

@@ -93,6 +93,7 @@ fn iproof_tree(ip) { return load64(ip + 40); }
 
 # Build unsigned proof from chain
 fn proof_build_unsigned(chain) {
+    sakshi_info("proof: build unsigned", 21);
     var entries = chain_entries(chain);
     var tree = merkle_build(entries);
     if (tree == 0) { return 0; }
@@ -112,6 +113,7 @@ fn proof_build_unsigned(chain) {
 
 # Build signed proof from chain
 fn proof_build_signed(chain, sk) {
+    sakshi_info("proof: build signed", 19);
     var entries = chain_entries(chain);
     var tree = merkle_build(entries);
     if (tree == 0) { return 0; }

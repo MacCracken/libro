@@ -178,9 +178,9 @@ fn sha256_transform(ctx) {
     while (_sha_i < 16) {
         var off = _sha_i * 4;
         var w = ((load8(buf + off) & 0xFF) << 24)
-              | ((load8(buf + off + 1) & 0xFF) << 16)
-              | ((load8(buf + off + 2) & 0xFF) << 8)
-              | (load8(buf + off + 3) & 0xFF);
+        | ((load8(buf + off + 1) & 0xFF) << 16)
+        | ((load8(buf + off + 2) & 0xFF) << 8)
+        | (load8(buf + off + 3) & 0xFF);
         store64(_sha256_W + _sha_i * 8, w & MASK32);
         _sha_i = _sha_i + 1;
     }

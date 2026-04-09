@@ -78,6 +78,7 @@ fn chain_append(c, severity, source, action, details) {
     var prev = _chain_prev_link(_chain_c);
     var e = entry_new(severity, source, action, details, prev);
     vec_push(load64(_chain_c), e);
+    sakshi_debug("chain: append", 13);
     return e;
 }
 
@@ -116,6 +117,7 @@ fn _chain_auto_rotate(c) {
     if (cap == 0) { return 0; }
     var entries = load64(c);
     if (vec_len(entries) >= cap) {
+        sakshi_info("chain: auto-rotate at capacity", 30);
         var arch = chain_rotate(c);
         vec_push(load64(c + 24), arch);
     }
@@ -129,6 +131,7 @@ fn _chain_auto_rotate(c) {
 fn chain_rotate(c) {
     var entries = load64(c);
     var n = vec_len(entries);
+    sakshi_info("chain: rotate", 13);
 
     var head = str_from("");
     if (n > 0) {
@@ -172,6 +175,7 @@ fn chain_from_entries(entries) {
 # ================================================================
 
 fn chain_verify(c) {
+    sakshi_debug("chain: verify", 13);
     var entries = load64(c);
     var n = vec_len(entries);
     if (n == 0) { return 0; }
@@ -270,6 +274,7 @@ fn chain_page(c, offset, limit) {
 # Returns archive pointer, or 0 if nothing archived.
 
 fn chain_apply_retention(c, policy) {
+    sakshi_info("chain: apply retention", 22);
     var entries = load64(c);
     var n = vec_len(entries);
     var split = retention_split_index(policy, entries);

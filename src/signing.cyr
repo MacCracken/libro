@@ -31,6 +31,7 @@ fn sig_algorithm_name(alg) {
 #   +32  zeroized     i64 (1 if key material has been cleared)
 
 fn signing_key_generate() {
+    sakshi_info("signing: key generate", 21);
     var sk = fl_alloc(40);
     var key = alloc(32);
     # Read 32 random bytes from /dev/urandom
@@ -190,6 +191,7 @@ fn entry_sig_algorithm(es) { return load64(es + 32); }
 # ================================================================
 
 fn sign_entry(sk, e) {
+    sakshi_debug("signing: sign entry", 19);
     var ehash = entry_hash(e);
     var sig_raw = sign_bytes(sk, str_data(ehash), str_len(ehash));
     var sig_hex = hex_encode(sig_raw, 32);
@@ -211,10 +213,14 @@ fn sign_entry_with_key_id(sk, e, key_id) {
 # Returns 1 if valid, 0 if invalid.
 
 fn verify_entry_signature(vk, e, es) {
+    sakshi_debug("signing: verify entry", 21);
     # Check entry hash matches
     var ehash = entry_hash(e);
     var sig_ehash = entry_sig_hash(es);
-    if (constant_time_eq_str(ehash, sig_ehash) == 0) { return 0; }
+    if (constant_time_eq_str(ehash, sig_ehash) == 0) {
+        sakshi_warn("signing: hash mismatch", 22);
+        return 0;
+    }
 
     # Decode signature from hex
     var sig_hex = entry_sig_signature(es);

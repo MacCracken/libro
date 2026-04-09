@@ -5,6 +5,7 @@
 # entries: vec of entry pointers
 # Returns: 0 on success, error struct pointer on failure
 fn verify_chain(entries) {
+    sakshi_debug("verify: chain", 13);
     var n = vec_len(entries);
     if (n == 0) { return 0; }
 
@@ -15,6 +16,7 @@ fn verify_chain(entries) {
         # Check self-hash
         var valid = entry_verify(e);
         if (valid == 0) {
+            sakshi_error("verify: hash mismatch", 21);
             var computed = entry_compute_hash(e);
             var stored = entry_hash(e);
             return error_integrity(i, stored, computed);
@@ -26,6 +28,7 @@ fn verify_chain(entries) {
             var prev_h = entry_hash(prev);
             var this_prev = entry_prev_hash(e);
             if (constant_time_eq_str(this_prev, prev_h) == 0) {
+                sakshi_error("verify: linkage broken", 22);
                 return error_integrity(i, prev_h, this_prev);
             }
         }
