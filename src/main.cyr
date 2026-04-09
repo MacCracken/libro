@@ -1,0 +1,18 @@
+# libro — Cyrius port
+# Ported from 8513 lines of Rust
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+
+fn main() {
+    alloc_init();
+    println("libro ready");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
