@@ -1,0 +1,250 @@
+# review.cyr — structured chain review and integrity audit
+# Generates a summary report of chain contents and health.
+
+# ================================================================
+# IntegrityStatus constants
+# ================================================================
+
+enum IntegrityStat {
+    INTEGRITY_VALID = 0;
+    INTEGRITY_EMPTY = 1;
+    INTEGRITY_INVALID = 2;
+}
+
+# IntegrityStatus layout (16 bytes):
+#   +0  status    i64  INTEGRITY_* constant
+#   +8  message   Str pointer (error message for INVALID, 0 otherwise)
+
+fn integrity_valid() {
+    var s = fl_alloc(16);
+    store64(s, INTEGRITY_VALID);
+    store64(s + 8, 0);
+    return s;
+}
+
+fn integrity_empty() {
+    var s = fl_alloc(16);
+    store64(s, INTEGRITY_EMPTY);
+    store64(s + 8, 0);
+    return s;
+}
+
+fn integrity_invalid(msg) {
+    var s = fl_alloc(16);
+    store64(s, INTEGRITY_INVALID);
+    store64(s + 8, msg);
+    return s;
+}
+
+fn integrity_status(s) { return load64(s); }
+fn integrity_message(s) { return load64(s + 8); }
+
+fn integrity_as_str(s) {
+    var st = load64(s);
+    if (st == INTEGRITY_VALID) { return "VALID"; }
+    if (st == INTEGRITY_EMPTY) { return "EMPTY"; }
+    return "INVALID";
+}
+
+# ================================================================
+# ChainReview layout (72 bytes, 9 fields)
+# ================================================================
+#   +0   entry_count      i64
+#   +8   integrity        IntegrityStatus pointer
+#   +16  earliest         Str pointer (0 if empty)
+#   +24  latest           Str pointer (0 if empty)
+#   +32  sources          hashmap pointer (source -> count)
+#   +40  severities       hashmap pointer (severity_str -> count)
+#   +48  agents           hashmap pointer (agent_id -> count)
+#   +56  head_hash        Str pointer (0 if empty)
+#   +64  continued_from   Str pointer (0 if none)
+
+fn review_entry_count(r) { return load64(r); }
+fn review_integrity(r) { return load64(r + 8); }
+fn review_earliest(r) { return load64(r + 16); }
+fn review_latest(r) { return load64(r + 24); }
+fn review_sources(r) { return load64(r + 32); }
+fn review_severities(r) { return load64(r + 40); }
+fn review_agents(r) { return load64(r + 48); }
+fn review_head_hash(r) { return load64(r + 56); }
+fn review_continued_from(r) { return load64(r + 64); }
+
+# ================================================================
+# Generate review from chain
+# ================================================================
+
+var _rev_chain = 0;
+
+fn chain_review(c) {
+    _rev_chain = c;
+    var r = fl_alloc(72);
+    var entries = load64(_rev_chain);
+    var n = vec_len(entries);
+
+    store64(r, n);
+
+    # Determine integrity
+    if (n == 0) {
+        store64(r + 8, integrity_empty());
+    } else {
+        var err = chain_verify(_rev_chain);
+        if (err == 0) {
+            store64(r + 8, integrity_valid());
+        } else {
+            store64(r + 8, integrity_invalid(str_from(error_msg(err))));
+        }
+    }
+
+    # Initialize count maps
+    var sources = map_new();
+    var severities = map_new();
+    var agents = map_new();
+
+    # Iterate entries and count
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(entries, i);
+
+        # Count source
+        var src_cstr = _entry_to_cstr(entry_source(e));
+        var src_count = map_get(sources, src_cstr);
+        map_set(sources, src_cstr, src_count + 1);
+
+        # Count severity
+        var sev_str = severity_as_str(entry_severity(e));
+        var sev_count = map_get(severities, sev_str);
+        map_set(severities, sev_str, sev_count + 1);
+
+        # Count agent
+        var aid = entry_agent_id(e);
+        var aid_cstr = "(none)";
+        if (aid != 0) {
+            aid_cstr = _entry_to_cstr(aid);
+        }
+        var aid_count = map_get(agents, aid_cstr);
+        map_set(agents, aid_cstr, aid_count + 1);
+
+        i = i + 1;
+    }
+
+    store64(r + 32, sources);
+    store64(r + 40, severities);
+    store64(r + 48, agents);
+
+    # Timestamps
+    if (n > 0) {
+        var first = vec_get(entries, 0);
+        store64(r + 16, entry_timestamp(first));
+        var last = vec_get(entries, n - 1);
+        store64(r + 24, entry_timestamp(last));
+        store64(r + 56, entry_hash(last));
+    } else {
+        store64(r + 16, 0);
+        store64(r + 24, 0);
+        store64(r + 56, 0);
+    }
+
+    store64(r + 64, load64(_rev_chain + 8));
+
+    return r;
+}
+
+# ================================================================
+# Print review to stdout
+# ================================================================
+
+fn review_print(r) {
+    println("=== Chain Review ===");
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Entries:    ");
+    str_builder_add_int(sb, review_entry_count(r));
+    var line = str_builder_build(sb);
+    str_println(line);
+
+    sb = str_builder_new();
+    str_builder_add_cstr(sb, "Integrity:  ");
+    str_builder_add_cstr(sb, integrity_as_str(review_integrity(r)));
+    var ist = review_integrity(r);
+    if (integrity_status(ist) == INTEGRITY_INVALID) {
+        str_builder_add_cstr(sb, ": ");
+        str_builder_add(sb, integrity_message(ist));
+    }
+    line = str_builder_build(sb);
+    str_println(line);
+
+    var earliest = review_earliest(r);
+    if (earliest != 0) {
+        sb = str_builder_new();
+        str_builder_add_cstr(sb, "Earliest:   ");
+        str_builder_add(sb, earliest);
+        str_println(str_builder_build(sb));
+    }
+
+    var latest = review_latest(r);
+    if (latest != 0) {
+        sb = str_builder_new();
+        str_builder_add_cstr(sb, "Latest:     ");
+        str_builder_add(sb, latest);
+        str_println(str_builder_build(sb));
+    }
+
+    var head = review_head_hash(r);
+    if (head != 0) {
+        sb = str_builder_new();
+        str_builder_add_cstr(sb, "Head:       ");
+        # Abbreviate to first 16 chars
+        if (str_len(head) > 16) {
+            str_builder_add(sb, str_sub(head, 0, 16));
+            str_builder_add_cstr(sb, "...");
+        } else {
+            str_builder_add(sb, head);
+        }
+        str_println(str_builder_build(sb));
+    }
+
+    var cont = review_continued_from(r);
+    if (cont != 0) {
+        sb = str_builder_new();
+        str_builder_add_cstr(sb, "Continues:  ");
+        if (str_len(cont) > 16) {
+            str_builder_add(sb, str_sub(cont, 0, 16));
+            str_builder_add_cstr(sb, "...");
+        } else {
+            str_builder_add(sb, cont);
+        }
+        str_println(str_builder_build(sb));
+    }
+
+    # Sources
+    println("Sources:");
+    _review_print_map(review_sources(r));
+
+    # Severities
+    println("Severities:");
+    _review_print_map(review_severities(r));
+
+    # Agents
+    println("Agents:");
+    _review_print_map(review_agents(r));
+
+    return 0;
+}
+
+fn _review_print_map(m) {
+    var keys = map_keys(m);
+    var n = vec_len(keys);
+    var i = 0;
+    while (i < n) {
+        var k = vec_get(keys, i);
+        var v = map_get(m, k);
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "  ");
+        str_builder_add_cstr(sb, k);
+        str_builder_add_cstr(sb, ": ");
+        str_builder_add_int(sb, v);
+        str_println(str_builder_build(sb));
+        i = i + 1;
+    }
+    return 0;
+}

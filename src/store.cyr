@@ -1,0 +1,135 @@
+# store.cyr — MemoryStore audit backend
+# In-memory storage with verification and query support.
+# Cyrius has no traits — MemoryStore is the concrete implementation.
+# FileStore / SqliteStore can follow the same function naming pattern.
+
+# ================================================================
+# MemoryStore layout (8 bytes)
+# ================================================================
+#   +0  entries   vec pointer
+
+fn memstore_new() {
+    var s = fl_alloc(8);
+    store64(s, vec_new());
+    return s;
+}
+
+fn memstore_entries(s) { return load64(s); }
+
+fn memstore_len(s) {
+    return vec_len(load64(s));
+}
+
+fn memstore_is_empty(s) {
+    if (memstore_len(s) == 0) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# Append — add entry to store
+# ================================================================
+
+fn memstore_append(s, e) {
+    vec_push(load64(s), e);
+    return 0;
+}
+
+# ================================================================
+# Load all entries
+# ================================================================
+
+fn memstore_load_all(s) {
+    return load64(s);
+}
+
+# ================================================================
+# Load and verify — load all entries, verify chain integrity
+# ================================================================
+
+fn memstore_load_and_verify(s) {
+    var entries = load64(s);
+    var err = verify_chain(entries);
+    if (err != 0) { return err; }
+    return entries;
+}
+
+# ================================================================
+# Streaming verification — O(chunk_size) memory
+# ================================================================
+# Returns total verified count on success, or error pointer on failure.
+
+fn memstore_verify_streamed(s, chunk_size) {
+    if (chunk_size < 1) { chunk_size = 1; }
+    var entries = load64(s);
+    var n = vec_len(entries);
+    var verified = 0;
+    var prev_tail_hash = str_from("");
+    var offset = 0;
+
+    while (offset < n) {
+        # Build chunk
+        var chunk = vec_new();
+        var end = offset + chunk_size;
+        if (end > n) { end = n; }
+        var i = offset;
+        while (i < end) {
+            vec_push(chunk, vec_get(entries, i));
+            i = i + 1;
+        }
+
+        var clen = vec_len(chunk);
+
+        # Check cross-chunk boundary linkage
+        if (offset > 0 && clen > 0) {
+            var first = vec_get(chunk, 0);
+            var fp = entry_prev_hash(first);
+            if (constant_time_eq_str(fp, prev_tail_hash) == 0) {
+                return error_integrity(offset, prev_tail_hash, fp);
+            }
+        }
+
+        # Verify internal integrity
+        var err = verify_chain_offset(chunk, offset);
+        if (err != 0) { return err; }
+
+        # Track tail hash for next chunk
+        if (clen > 0) {
+            var last = vec_get(chunk, clen - 1);
+            prev_tail_hash = entry_hash(last);
+        }
+
+        verified = verified + clen;
+        offset = end;
+    }
+
+    return verified;
+}
+
+# ================================================================
+# Query — apply filter to store
+# ================================================================
+
+fn memstore_query(s, filter) {
+    return query_apply(filter, load64(s));
+}
+
+# ================================================================
+# Pagination — load a page of entries
+# ================================================================
+
+fn memstore_load_page(s, offset, limit) {
+    var entries = load64(s);
+    var n = vec_len(entries);
+    var start = offset;
+    if (start > n) { start = n; }
+    var end = start + limit;
+    if (end > n) { end = n; }
+
+    var result = vec_new();
+    var i = start;
+    while (i < end) {
+        vec_push(result, vec_get(entries, i));
+        i = i + 1;
+    }
+    return result;
+}

@@ -24,6 +24,12 @@ include "src/sha256.cyr"
 include "src/hasher.cyr"
 include "src/entry.cyr"
 include "src/verify.cyr"
+include "src/query.cyr"
+include "src/retention.cyr"
+include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
+include "src/review.cyr"
 
 # ================================================================
 # Tests
@@ -292,6 +298,369 @@ fn test_str_cmp() {
 }
 
 # ================================================================
+# P-2 Tests — Query, Retention, Chain, Store, Export, Review
+# ================================================================
+
+fn test_query_source() {
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"), str_from("login"), det, str_from(""));
+    var e2 = entry_new(SEV_INFO, str_from("audit"), str_from("read"), det, entry_hash(e1));
+
+    var entries = vec_new();
+    vec_push(entries, e1);
+    vec_push(entries, e2);
+
+    var q = query_new();
+    query_source(q, str_from("auth"));
+    var results = query_apply(q, entries);
+    assert(vec_len(results) == 1, "query source filters");
+    assert(str_eq(entry_source(vec_get(results, 0)), str_from("auth")) == 1, "query source match");
+}
+
+fn test_query_severity() {
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_DEBUG, str_from("s"), str_from("a"), det, str_from(""));
+    var e2 = entry_new(SEV_ERROR, str_from("s"), str_from("a"), det, entry_hash(e1));
+    var e3 = entry_new(SEV_CRITICAL, str_from("s"), str_from("a"), det, entry_hash(e2));
+
+    var entries = vec_new();
+    vec_push(entries, e1);
+    vec_push(entries, e2);
+    vec_push(entries, e3);
+
+    var q = query_new();
+    query_min_severity(q, SEV_ERROR);
+    var results = query_apply(q, entries);
+    assert(vec_len(results) == 2, "query min_severity filters");
+}
+
+fn test_query_action() {
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("s"), str_from("login"), det, str_from(""));
+    var e2 = entry_new(SEV_INFO, str_from("s"), str_from("logout"), det, entry_hash(e1));
+
+    var entries = vec_new();
+    vec_push(entries, e1);
+    vec_push(entries, e2);
+
+    var q = query_new();
+    query_action(q, str_from("logout"));
+    var results = query_apply(q, entries);
+    assert(vec_len(results) == 1, "query action filters");
+}
+
+fn test_query_empty_matches_all() {
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
+    var e2 = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, entry_hash(e1));
+
+    var entries = vec_new();
+    vec_push(entries, e1);
+    vec_push(entries, e2);
+
+    var q = query_new();
+    var results = query_apply(q, entries);
+    assert(vec_len(results) == 2, "empty query matches all");
+}
+
+fn test_retention_keep_count() {
+    var det = str_from("{}");
+    var entries = vec_new();
+    var prev = str_from("");
+    var i = 0;
+    while (i < 5) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        vec_push(entries, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+
+    var r = retention_keep_count(3);
+    var split = retention_split_index(r, entries);
+    assert(split == 2, "keep_count(3) splits at 2 for 5 entries");
+}
+
+fn test_retention_keep_count_no_split() {
+    var det = str_from("{}");
+    var entries = vec_new();
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
+    vec_push(entries, e);
+
+    var r = retention_keep_count(10);
+    var split = retention_split_index(r, entries);
+    assert(split == 0, "keep_count no split when under limit");
+}
+
+fn test_chain_append() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act1"), det);
+    assert(chain_len(c) == 1, "chain append 1");
+
+    chain_append(c, SEV_WARNING, str_from("src"), str_from("act2"), det);
+    assert(chain_len(c) == 2, "chain append 2");
+
+    # Verify chain integrity
+    var err = chain_verify(c);
+    assert(err == 0, "chain append verify");
+}
+
+fn test_chain_append_with_agent() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    var e = chain_append_with_agent(c, SEV_INFO, str_from("src"), str_from("act"), det, str_from("agent-1"));
+    assert(chain_len(c) == 1, "chain append_with_agent len");
+    assert(entry_agent_id(e) != 0, "chain append_with_agent has agent");
+    assert(entry_verify(e) == 1, "chain append_with_agent verify");
+}
+
+fn test_chain_rotate() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a1"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a2"), det);
+    var head_before = chain_head_hash(c);
+
+    var arch = chain_rotate(c);
+    assert(chain_len(c) == 0, "chain empty after rotate");
+    assert(vec_len(archive_entries(arch)) == 2, "archive has 2 entries");
+    assert(chain_prev_hash(c) != 0, "prev_chain_hash set after rotate");
+
+    # New append should link to rotated chain
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a3"), det);
+    var first = vec_get(chain_entries(c), 0);
+    assert(str_eq(entry_prev_hash(first), head_before) == 1, "new entry links to rotated head");
+}
+
+fn test_chain_auto_rotate() {
+    var c = chain_with_capacity(3);
+    var det = str_from("{}");
+
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a1"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a2"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a3"), det);
+    assert(chain_len(c) == 3, "chain at capacity");
+
+    # This append should trigger auto-rotate
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a4"), det);
+    assert(chain_len(c) == 1, "chain has 1 after auto-rotate");
+    assert(vec_len(chain_overflow(c)) == 1, "overflow has 1 archive");
+}
+
+fn test_chain_by_source() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    chain_append(c, SEV_INFO, str_from("auth"), str_from("login"), det);
+    chain_append(c, SEV_INFO, str_from("audit"), str_from("read"), det);
+    chain_append(c, SEV_INFO, str_from("auth"), str_from("logout"), det);
+
+    var results = chain_by_source(c, str_from("auth"));
+    assert(vec_len(results) == 2, "chain by_source count");
+}
+
+fn test_chain_by_severity() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_ERROR, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_ERROR, str_from("s"), str_from("a"), det);
+
+    var results = chain_by_severity(c, SEV_ERROR);
+    assert(vec_len(results) == 2, "chain by_severity count");
+}
+
+fn test_chain_page() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 10) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+
+    var page = chain_page(c, 3, 4);
+    assert(vec_len(page) == 4, "chain page size");
+
+    # Past end
+    var page2 = chain_page(c, 8, 5);
+    assert(vec_len(page2) == 2, "chain page clamp end");
+}
+
+fn test_chain_query() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    chain_append(c, SEV_INFO, str_from("auth"), str_from("login"), det);
+    chain_append(c, SEV_ERROR, str_from("auth"), str_from("fail"), det);
+    chain_append(c, SEV_INFO, str_from("audit"), str_from("read"), det);
+
+    var q = query_new();
+    query_source(q, str_from("auth"));
+    query_min_severity(q, SEV_ERROR);
+    var results = chain_query(c, q);
+    assert(vec_len(results) == 1, "chain query combined filters");
+}
+
+fn test_chain_retention() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 5) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+
+    var policy = retention_keep_count(2);
+    var arch = chain_apply_retention(c, policy);
+    assert(arch != 0, "retention produced archive");
+    assert(chain_len(c) == 2, "retention kept 2");
+    assert(vec_len(archive_entries(arch)) == 3, "retention archived 3");
+    assert(chain_prev_hash(c) != 0, "retention set prev_chain_hash");
+}
+
+fn test_memstore_basic() {
+    var s = memstore_new();
+    assert(memstore_is_empty(s) == 1, "memstore empty");
+
+    var det = str_from("{}");
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
+    memstore_append(s, e);
+    assert(memstore_len(s) == 1, "memstore len 1");
+    assert(memstore_is_empty(s) == 0, "memstore not empty");
+}
+
+fn test_memstore_verify() {
+    var s = memstore_new();
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 3) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        memstore_append(s, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+
+    var result = memstore_load_and_verify(s);
+    # result is the entries vec (not an error pointer)
+    assert(vec_len(result) == 3, "memstore verify returns entries");
+}
+
+fn test_memstore_streamed() {
+    var s = memstore_new();
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 10) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        memstore_append(s, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+
+    var count = memstore_verify_streamed(s, 3);
+    assert(count == 10, "memstore streamed verified 10");
+}
+
+fn test_memstore_query() {
+    var s = memstore_new();
+    var det = str_from("{}");
+
+    var e1 = entry_new(SEV_INFO, str_from("auth"), str_from("a"), det, str_from(""));
+    memstore_append(s, e1);
+    var e2 = entry_new(SEV_ERROR, str_from("audit"), str_from("a"), det, entry_hash(e1));
+    memstore_append(s, e2);
+
+    var q = query_new();
+    query_source(q, str_from("audit"));
+    var results = memstore_query(s, q);
+    assert(vec_len(results) == 1, "memstore query filters");
+}
+
+fn test_memstore_page() {
+    var s = memstore_new();
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 5) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        memstore_append(s, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+
+    var page = memstore_load_page(s, 2, 2);
+    assert(vec_len(page) == 2, "memstore page size");
+}
+
+fn test_export_csv_escape() {
+    # Test via building a chain and exporting
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act"), str_from("{}"));
+    assert(chain_len(c) == 1, "export chain has entry");
+    # CSV export to /dev/null just to verify no crash
+    var fd = file_open("/dev/null", 1, 0);
+    export_csv(chain_entries(c), fd);
+    file_close(fd);
+    assert(1 == 1, "csv export no crash");
+}
+
+fn test_export_jsonl() {
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act"), str_from("{}"));
+    var fd = file_open("/dev/null", 1, 0);
+    export_jsonl(chain_entries(c), fd);
+    file_close(fd);
+    assert(1 == 1, "jsonl export no crash");
+}
+
+fn test_review_empty() {
+    var c = chain_new();
+    var r = chain_review(c);
+    assert(review_entry_count(r) == 0, "review empty count");
+    assert(integrity_status(review_integrity(r)) == INTEGRITY_EMPTY, "review empty integrity");
+}
+
+fn test_review_valid() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("auth"), str_from("login"), det);
+    chain_append(c, SEV_ERROR, str_from("audit"), str_from("fail"), det);
+    chain_append(c, SEV_INFO, str_from("auth"), str_from("logout"), det);
+
+    var r = chain_review(c);
+    assert(review_entry_count(r) == 3, "review count");
+    assert(integrity_status(review_integrity(r)) == INTEGRITY_VALID, "review valid integrity");
+    assert(review_earliest(r) != 0, "review has earliest");
+    assert(review_latest(r) != 0, "review has latest");
+    assert(review_head_hash(r) != 0, "review has head_hash");
+
+    # Check source counts
+    var sources = review_sources(r);
+    assert(map_get(sources, "auth") == 2, "review auth source count");
+    assert(map_get(sources, "audit") == 1, "review audit source count");
+}
+
+fn test_review_tampered() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+
+    # Tamper
+    var e1 = vec_get(chain_entries(c), 0);
+    store64(e1 + 24, SEV_CRITICAL);
+
+    var r = chain_review(c);
+    assert(integrity_status(review_integrity(r)) == INTEGRITY_INVALID, "review detects tamper");
+}
+
+# ================================================================
 # Main — run all tests
 # ================================================================
 
@@ -342,6 +711,43 @@ fn main() {
     test_chain_broken_link();
     test_chain_empty();
     test_chain_single();
+
+    test_group("Query");
+    test_query_source();
+    test_query_severity();
+    test_query_action();
+    test_query_empty_matches_all();
+
+    test_group("Retention");
+    test_retention_keep_count();
+    test_retention_keep_count_no_split();
+
+    test_group("AuditChain");
+    test_chain_append();
+    test_chain_append_with_agent();
+    test_chain_rotate();
+    test_chain_auto_rotate();
+    test_chain_by_source();
+    test_chain_by_severity();
+    test_chain_page();
+    test_chain_query();
+    test_chain_retention();
+
+    test_group("MemoryStore");
+    test_memstore_basic();
+    test_memstore_verify();
+    test_memstore_streamed();
+    test_memstore_query();
+    test_memstore_page();
+
+    test_group("Export");
+    test_export_csv_escape();
+    test_export_jsonl();
+
+    test_group("Review");
+    test_review_empty();
+    test_review_valid();
+    test_review_tampered();
 
     return assert_summary();
 }
