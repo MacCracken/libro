@@ -1,67 +1,88 @@
 # Contributing to Libro
 
-Thank you for your interest in contributing to Libro.
+## Prerequisites
+
+- [Cyrius](https://github.com/MacCracken/cyrius) compiler 2.7.2+
+- Linux x86_64 (Cyrius compiles to static ELF)
+- Git
 
 ## Development Workflow
 
-1. Fork and clone the repository
-2. Create a feature branch from `main`
-3. Make your changes
-4. Run `make check` to validate
-5. Open a pull request
+```bash
+# Build
+cyrius build src/main.cyr build/libro
 
-## Prerequisites
+# Run tests (193 tests, must all pass)
+./build/libro
 
-- Rust stable (MSRV 1.89)
-- Components: `rustfmt`, `clippy`
-- Optional: `cargo-audit`, `cargo-deny`, `cargo-tarpaulin`
+# Run benchmarks
+cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
 
-## Makefile Targets
+# Format check
+cyrfmt --check src/*.cyr
 
-| Command | Description |
-|---------|-------------|
-| `make check` | fmt + clippy + test + audit |
-| `make fmt` | Check formatting |
-| `make clippy` | Lint with `-D warnings` |
-| `make test` | Run test suite |
-| `make audit` | Security audit |
-| `make deny` | Supply chain checks |
-| `make bench` | Run benchmarks with history |
-| `make coverage` | Generate coverage report |
-| `make doc` | Build documentation |
-
-## Adding a Module
-
-1. Create `src/module_name.rs` with module doc comment
-2. Add `pub mod module_name;` to `src/lib.rs`
-3. Re-export key types from `lib.rs`
-4. Add tests in the module
-5. Update README module table
-
-If the module requires an external dependency, gate it behind a feature flag.
+# Full audit cycle
+cyrius build src/main.cyr build/libro && ./build/libro
+```
 
 ## Code Style
 
-- `cargo fmt` — mandatory
-- `cargo clippy -- -D warnings` — zero warnings
-- Doc comments on all public items
-- `#[non_exhaustive]` on public enums
-- No `unsafe` code
-- No `println!` — use `tracing` for logging
+- Format with `cyrfmt` before committing
+- No external dependencies — Cyrius stdlib only
+- Use `fl_alloc` for structs (supports individual free), `alloc` for buffers
+- Use globals for values that must survive nested function calls (compiler constraint)
+- Do not use `match` as a variable name (reserved keyword)
+- Use `assert(x == val, "name")` instead of `assert_eq` for values >127
+
+## Adding a Module
+
+1. Create `src/module_name.cyr`
+2. Add `include "src/module_name.cyr"` to `src/main.cyr` (respect dependency order)
+3. Add tests in `src/main.cyr` (test functions + entries in `main()`)
+4. Add benchmarks in `benches/libro.bcyr` if performance-sensitive
+5. Update documentation
 
 ## Testing
 
-- Unit tests colocated in modules (`#[cfg(test)] mod tests`)
-- Integration tests in `src/tests/mod.rs`
-- Feature-gated tests with `#[cfg(feature = "...")]`
-- Tamper detection tests via `corrupt_action`/`corrupt_hash` test helpers
-- Target: 90%+ line coverage
+All tests are inline in `src/main.cyr`. Add test functions following the pattern:
 
-## Commits
+```cyrius
+fn test_my_feature() {
+    # Setup
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act"), str_from("{}"));
 
-- Use conventional-style messages
-- One logical change per commit
+    # Assert
+    assert(chain_len(c) == 1, "my feature works");
+}
+```
+
+Then add to `main()`:
+
+```cyrius
+test_group("My Feature");
+test_my_feature();
+```
+
+## Tracing
+
+Use sakshi for structured logging on key operations:
+
+```cyrius
+sakshi_info("module: operation", 17);   # INFO level
+sakshi_debug("module: detail", 14);     # DEBUG level
+sakshi_error("module: failure", 15);    # ERROR level
+sakshi_warn("module: warning", 15);     # WARN level
+```
+
+## Pull Requests
+
+- One logical change per PR
+- All 193+ tests must pass
+- Benchmarks should not regress without justification
+- Update CHANGELOG.md under `[Unreleased]`
+- Update docs if public API changes
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under AGPL-3.0-only.
+By contributing, you agree that your contributions will be licensed under GPL-3.0-only.

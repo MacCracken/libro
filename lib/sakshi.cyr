@@ -1,6 +1,6 @@
 # sakshi.cyr — tracing and error handling (stderr profile)
 # Single-file distribution. Zero heap allocation. No external dependencies.
-# Version: 0.7.0
+# Version: 0.8.0
 #
 # Minimal global footprint — no ring buffer, no UDP, no span stack.
 # For the full version (spans, ring buffer, UDP): include "lib/sakshi_full.cyr"
@@ -16,36 +16,42 @@
 #         sakshi_output_file(path), sakshi_output_file_close()
 
 # ================================================================
-# Constants (var declarations — avoids enum data section shift, bug #16)
+# Constants (enums — zero global variable slots)
 # ================================================================
 
 # Error categories
-var ERR_CAT_NONE    = 0;
-var ERR_CAT_SYSCALL = 1;
-var ERR_CAT_IO      = 2;
-var ERR_CAT_PARSE   = 3;
-var ERR_CAT_CONFIG  = 4;
-var ERR_CAT_RUNTIME = 5;
-var ERR_CAT_ALLOC   = 6;
-var ERR_CAT_NET     = 7;
-var ERR_CAT_AUTH    = 8;
+enum ErrCat {
+    ERR_CAT_NONE    = 0;
+    ERR_CAT_SYSCALL = 1;
+    ERR_CAT_IO      = 2;
+    ERR_CAT_PARSE   = 3;
+    ERR_CAT_CONFIG  = 4;
+    ERR_CAT_RUNTIME = 5;
+    ERR_CAT_ALLOC   = 6;
+    ERR_CAT_NET     = 7;
+    ERR_CAT_AUTH    = 8;
+}
 
 # Error codes
-var ERR_OK          = 0;
-var ERR_UNKNOWN     = 1;
-var ERR_INVALID     = 2;
-var ERR_NOT_FOUND   = 3;
-var ERR_PERMISSION  = 4;
-var ERR_TIMEOUT     = 5;
-var ERR_OVERFLOW    = 6;
-var ERR_BUSY        = 7;
+enum ErrCode {
+    ERR_OK          = 0;
+    ERR_UNKNOWN     = 1;
+    ERR_INVALID     = 2;
+    ERR_NOT_FOUND   = 3;
+    ERR_PERMISSION  = 4;
+    ERR_TIMEOUT     = 5;
+    ERR_OVERFLOW    = 6;
+    ERR_BUSY        = 7;
+}
 
 # Log levels
-var SK_ERROR = 0;
-var SK_WARN  = 1;
-var SK_INFO  = 2;
-var SK_DEBUG = 3;
-var SK_TRACE = 4;
+enum LogLevel {
+    SK_ERROR = 0;
+    SK_WARN  = 1;
+    SK_INFO  = 2;
+    SK_DEBUG = 3;
+    SK_TRACE = 4;
+}
 
 # ================================================================
 # Global state
@@ -85,8 +91,7 @@ fn _sk_write_int(buf, pos, cap, val) {
     var tlen = _sk_fmt_int(val, &tmp);
     var ti = 0;
     while (ti < tlen && pos < cap) {
-        store8(buf + pos, load8(&tmp + ti));
-        pos = pos + 1; ti = ti + 1;
+        store8(buf + pos, load8(&tmp + ti)); pos = pos + 1; ti = ti + 1;
     }
     return pos;
 }
@@ -110,7 +115,7 @@ fn _sk_write(buf, len) {
 # Set the stderr file descriptor for output
 fn sakshi_set_output_fd(fd) { _sk_stderr_fd = fd; return 0; }
 
-# Open a file for log output
+# Open a file for log output (append mode, tee with stderr)
 fn sakshi_output_file(path) {
     var fd = syscall(2, path, 1089, 0x1A4);
     if (fd < 0) { return fd; }
@@ -119,7 +124,6 @@ fn sakshi_output_file(path) {
     return fd;
 }
 
-# Open a file for log output
 # Close the log output file
 fn sakshi_output_file_close() {
     if (_sk_file_mode == 1) { syscall(3, _sk_file_fd); _sk_file_fd = 0; }
@@ -143,11 +147,14 @@ fn _sk_emit(level, msg, msg_len) {
     if (pos < 256) { store8(&buf + pos, 91); pos = pos + 1; }
     var ls = "?????";
     var ll = 5;
-    if (level == 0) { ls = "ERROR"; ll = 5; }
-    if (level == 1) { ls = "WARN"; ll = 4; }
-    if (level == 2) { ls = "INFO"; ll = 4; }
-    if (level == 3) { ls = "DEBUG"; ll = 5; }
-    if (level == 4) { ls = "TRACE"; ll = 5; }
+    match level {
+        0 => { ls = "ERROR"; ll = 5; }
+        1 => { ls = "WARN"; ll = 4; }
+        2 => { ls = "INFO"; ll = 4; }
+        3 => { ls = "DEBUG"; ll = 5; }
+        4 => { ls = "TRACE"; ll = 5; }
+        _ => {}
+    }
     pos = _sk_write_str(&buf, pos, 256, ls, ll);
     if (pos < 256) { store8(&buf + pos, 93); pos = pos + 1; }
     if (pos < 256) { store8(&buf + pos, 32); pos = pos + 1; }
@@ -165,9 +172,8 @@ fn _sk_emit(level, msg, msg_len) {
 fn sakshi_err_new(code, category) { return ((category & 0xFFFF) << 16) | (code & 0xFFFF); }
 # Create a packed error with context
 fn sakshi_err_with_ctx(code, category, context) {
-    return ((context & 0xFFFFFFFF) << 32)
-    | ((category & 0xFFFF) << 16)
-    | (code & 0xFFFF);
+    return ((context & 0xFFFFFFFF) << 32) |
+    ((category & 0xFFFF) << 16) | (code & 0xFFFF);
 }
 # Extract error code from packed error
 fn sakshi_err_code(err) { return err & 0xFFFF; }

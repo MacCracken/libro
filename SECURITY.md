@@ -2,7 +2,7 @@
 
 ## Scope
 
-Libro is a cryptographic audit chain library. It provides tamper-proof event logging using SHA-256 hash linking, Ed25519 digital signatures, and Merkle tree verification. It is a pure Rust library with no `unsafe` code.
+Libro is a cryptographic audit chain library. It provides tamper-proof event logging using SHA-256 hash linking, HMAC-SHA256 digital signatures, and Merkle tree verification. It is a pure Cyrius library with zero external dependencies.
 
 ## Attack Surface
 
@@ -10,21 +10,23 @@ Libro is a cryptographic audit chain library. It provides tamper-proof event log
 |------|------|------------|
 | Hash computation | Second-preimage via field boundary shifting | Length-prefixed fields (LE u64) before each variable-length input |
 | JSON canonicalization | Non-deterministic key order | Sorted-key canonical JSON writer; hash includes structural delimiters |
-| Entry deserialization | Crafted entries bypass integrity | Fields are private; `Deserialize` produces unverified entries; `verify()` / `load_and_verify()` must be called |
-| File store concurrency | Interleaved writes from multiple processes | Advisory file locking (`flock`) on append and load |
-| SQLite store | SQL injection | All queries use parameterized placeholders (`?N`) |
+| Hash comparison | Timing side-channel | Constant-time comparison via bitwise OR accumulation (no early exit) |
 | CSV export | Field injection via crafted agent_id/source/action | All user-provided fields passed through `csv_escape()` |
 | Merkle tree | Proof forgery | Standard binary Merkle tree with SHA-256; proofs verified against root hash |
-| Ed25519 signatures | Key compromise | Library does not store keys; consumer manages key lifecycle |
-| Streaming (majra) | Unbounded subscriber backlog | Majra's `TypedPubSub` uses bounded broadcast channels (default 256) |
-| Canonical JSON recursion | Stack overflow via deeply nested JSON | Bounded by `serde_json::Value` construction; no user-controlled recursion depth |
+| RFC 9162 consistency | Append-only violation | Full RFC 9162 consistency proof verification algorithm |
+| HMAC-SHA256 signatures | Key compromise | Library does not persist keys; consumer manages key lifecycle |
+| Key material | Memory exposure | `signing_key_zeroize()` overwrites key bytes with zeros |
+| UUID generation | Entropy | 128 bits from `/dev/urandom` with RFC 4122 version/variant bits |
+| DER encoding | Malformed input | Bounds-checked TLV parsing with explicit length validation |
+| Streaming pub/sub | Unbounded subscriber backlog | In-process vec queue; consumers should drain via `stream_recv()` |
+| Kernel audit | Privilege escalation | Read-only access to `/proc/agnos/audit`; write requires AGNOS privileges |
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| 0.21.x | Yes |
-| < 0.21 | No |
+| 1.0.x   | Yes       |
+| < 1.0   | No        |
 
 ## Reporting a Vulnerability
 
@@ -36,9 +38,10 @@ Please report security issues to **security@agnos.dev**.
 
 ## Design Principles
 
-- Zero `unsafe` code
-- All public types are `Send + Sync` where applicable
-- Compile-time thread safety via Rust's type system
-- Parameterized queries for all SQL
-- No network I/O in core library (streaming is opt-in via feature flag)
-- Minimal dependency surface
+- Zero external dependencies — Cyrius stdlib only
+- No `unsafe` equivalent — pure Cyrius with explicit memory operations
+- Constant-time hash comparisons throughout
+- Length-prefixed field hashing prevents second-preimage attacks
+- Canonical JSON with sorted keys for deterministic hashing
+- Structured tracing via sakshi on all key operations
+- Minimal attack surface — no network I/O in core library

@@ -231,3 +231,68 @@ fn fhm_has(m, key) {
     }
     return 0;
 }
+
+# Delete key. Returns 1 if found, 0 if not.
+fn fhm_delete(m, key) {
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var cap = load64(m + 24);
+    var h = _fhm_hash(key);
+    var h2 = _fhm_h2(h);
+    var idx = (h & (cap - 1)) & (0 - 16);
+    var probes = 0;
+    while (probes < cap) {
+        var mask = _fhm_probe16(meta, idx, h2);
+        while (mask != 0) {
+            var si = idx + _fhm_ctz(mask);
+            if (streq(load64(keys + si * 8), key) == 1) {
+                store8(meta + si, 255);
+                store64(m + 32, load64(m + 32) - 1);
+                return 1;
+            }
+            mask = mask & (mask - 1);
+        }
+        var empty = _fhm_empty16(meta, idx);
+        if (empty != 0) { return 0; }
+        idx = (idx + 16) & (cap - 1);
+        probes = probes + 16;
+    }
+    return 0;
+}
+
+# Get all keys as a vec
+fn fhm_keys(m) {
+    var result = vec_new();
+    var meta = load64(m);
+    var keys = load64(m + 8);
+    var cap = load64(m + 24);
+    var i = 0;
+    while (i < cap) {
+        var st = load8(meta + i);
+        if (st != 0) { if (st != 255) { vec_push(result, load64(keys + i * 8)); } }
+        i = i + 1;
+    }
+    return result;
+}
+
+# Get all values as a vec
+fn fhm_values(m) {
+    var result = vec_new();
+    var meta = load64(m);
+    var vals = load64(m + 16);
+    var cap = load64(m + 24);
+    var i = 0;
+    while (i < cap) {
+        var st = load8(meta + i);
+        if (st != 0) { if (st != 255) { vec_push(result, load64(vals + i * 8)); } }
+        i = i + 1;
+    }
+    return result;
+}
+
+# Clear all entries
+fn fhm_clear(m) {
+    memset(load64(m), 0, load64(m + 24));
+    store64(m + 32, 0);
+    return 0;
+}

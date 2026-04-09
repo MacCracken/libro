@@ -37,6 +37,7 @@ include "src/anchoring.cyr"
 include "src/timestamping.cyr"
 include "src/proof.cyr"
 include "src/kernel_audit.cyr"
+include "src/file_store.cyr"
 include "src/streaming.cyr"
 
 # ================================================================
@@ -1094,6 +1095,96 @@ fn test_stream_multiple_entries() {
 }
 
 # ================================================================
+# FileStore tests
+# ================================================================
+
+fn test_filestore_append_load() {
+    var path = str_from("/tmp/libro_test_fs.jsonl");
+    # Clean up from prior runs
+    sys_unlink("/tmp/libro_test_fs.jsonl");
+
+    var fs = filestore_open(path);
+    assert(fs != 0, "filestore open");
+
+    # Append entries
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("src"), str_from("act1"), det, str_from(""));
+    filestore_append(fs, e1);
+    var e2 = entry_new(SEV_WARNING, str_from("src"), str_from("act2"), det, entry_hash(e1));
+    filestore_append(fs, e2);
+
+    # Check file len before loading
+    var flen = filestore_len(fs);
+    assert(flen == 2, "filestore has 2 lines");
+
+    # Load and check count
+    var loaded = filestore_load_all(fs);
+    var lcount = vec_len(loaded);
+    assert(lcount == 2, "filestore loaded 2 entries");
+
+    if (lcount >= 2) {
+        # Verify hashes match
+        var le1 = vec_get(loaded, 0);
+        var le2 = vec_get(loaded, 1);
+        assert(str_eq(entry_hash(le1), entry_hash(e1)) == 1, "filestore hash preserved");
+        assert(entry_severity(le2) == SEV_WARNING, "filestore severity preserved");
+    }
+
+    sys_unlink("/tmp/libro_test_fs.jsonl");
+}
+
+fn test_filestore_verify() {
+    var path = str_from("/tmp/libro_test_fsv.jsonl");
+    sys_unlink("/tmp/libro_test_fsv.jsonl");
+
+    var fs = filestore_open(path);
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 3) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        filestore_append(fs, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+
+    var result = filestore_load_and_verify(fs);
+    assert(vec_len(result) == 3, "filestore verify returns 3 entries");
+
+    sys_unlink("/tmp/libro_test_fsv.jsonl");
+}
+
+fn test_filestore_query() {
+    var path = str_from("/tmp/libro_test_fsq.jsonl");
+    sys_unlink("/tmp/libro_test_fsq.jsonl");
+
+    var fs = filestore_open(path);
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"), str_from("login"), det, str_from(""));
+    filestore_append(fs, e1);
+    var e2 = entry_new(SEV_ERROR, str_from("audit"), str_from("fail"), det, entry_hash(e1));
+    filestore_append(fs, e2);
+
+    var q = query_new();
+    query_source(q, str_from("audit"));
+    var results = filestore_query(fs, q);
+    assert(vec_len(results) == 1, "filestore query filters");
+
+    sys_unlink("/tmp/libro_test_fsq.jsonl");
+}
+
+fn test_filestore_empty() {
+    var path = str_from("/tmp/libro_test_fse.jsonl");
+    sys_unlink("/tmp/libro_test_fse.jsonl");
+
+    var fs = filestore_open(path);
+    assert(filestore_is_empty(fs) == 1, "filestore empty");
+    assert(filestore_len(fs) == 0, "filestore len 0");
+
+    sys_unlink("/tmp/libro_test_fse.jsonl");
+}
+
+# ================================================================
 # Main — run all tests
 # ================================================================
 
@@ -1225,6 +1316,12 @@ fn main() {
     test_stream_no_match();
     test_stream_custom_prefix();
     test_stream_multiple_entries();
+
+    test_group("FileStore");
+    test_filestore_append_load();
+    test_filestore_verify();
+    test_filestore_query();
+    test_filestore_empty();
 
     return assert_summary();
 }

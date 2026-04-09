@@ -6,8 +6,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: SemVer 2.0.0
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) (ported from Rust v0.92.0)
+- **Version**: 1.0.0 (2026-04-09)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 2.7.2+
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -25,43 +25,39 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 # Compile
 cyrius build src/main.cyr build/libro
 
-# Run tests
-cyrius test
+# Run tests (193 tests)
+./build/libro
 
-# Run benchmarks (with history tracking)
-cyrius bench
+# Run benchmarks (15 benchmarks)
+cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
 
-# Full audit: self-host, test, fmt, lint, vet, deny, bench
-cyrius audit
-
-# Policy enforcement
-cyrius deny src/main.cyr
+# Format check
+cyrfmt --check src/*.cyr
 ```
 
 ### Development Loop (continuous)
 
 1. Work phase — new features, roadmap items, bug fixes
 2. Compile check: `cyrius build src/main.cyr build/libro`
-3. Test: `cyrius test` — all suites must pass
-4. Lint + format: `cyrius fmt --check`, `cyrius lint`
-5. Policy check: `cyrius deny src/main.cyr`
-6. Benchmark additions for new code
-7. Run benchmarks: `cyrius bench` (tracks history automatically)
-8. Audit phase — review performance, memory, security, correctness
-9. Deeper tests/benchmarks from audit observations
-10. Run benchmarks again — prove the wins
-11. If audit heavy → return to step 8
-12. Full audit: `cyrius audit` — self-host, test, fmt, lint, vet, deny, bench
-13. Documentation — update CHANGELOG, roadmap, docs
-14. Version check — VERSION and cyrius.toml in sync (`scripts/version-bump.sh`)
-15. Return to step 1
+3. Test: `./build/libro` — all 193 tests must pass
+4. Format: `cyrfmt --check src/*.cyr`
+5. Benchmark additions for new code
+6. Run benchmarks: `cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench`
+7. Audit phase — review performance, memory, security, correctness
+8. Deeper tests/benchmarks from audit observations
+9. Run benchmarks again — prove the wins
+10. If audit heavy → return to step 7
+11. Documentation — update CHANGELOG, roadmap, docs
+12. Version check — VERSION and cyrius.toml in sync (`scripts/version-bump.sh`)
+13. Return to step 1
 
 ### Key Principles
 
 - **Never skip benchmarks.** Numbers don't lie.
-- **Tests + benchmarks are the way.** Target 80%+ coverage.
+- **Tests + benchmarks are the way.** 193 tests, 15 benchmarks.
 - **Own the stack.** Zero external dependencies — Cyrius stdlib only.
 - **No magic.** Every operation is measurable, auditable, traceable.
+- **Sakshi tracing.** All key operations instrumented via sakshi (stderr profile).
 - **Globals for cross-call state.** Cyrius single-pass compiler clobbers locals across function calls — use globals when values must survive nested calls.
 - **Raw bytes for CR LF.** Cyrius does not support `\r` escape — use `store8(buf, 13); store8(buf+1, 10)` for network protocols.
 - **`fl_alloc` for structs, `alloc` for hashmaps.** Freelist supports individual free; bump allocator for long-lived collections.
@@ -72,14 +68,13 @@ cyrius deny src/main.cyr
 ## Project Structure
 
 ```
-src/main.cyr           Entry point + core tests
-src/*.cyr              Library modules
-tests/*.tcyr           Test suites
-benches/*.bcyr         Benchmarks
-fuzz/*.fcyr            Fuzz harnesses
-examples/              Usage examples
-lib/                   Vendored Cyrius stdlib (28 modules)
+src/main.cyr           Entry point + 193 inline tests
+src/*.cyr              Library modules (18 files)
+benches/libro.bcyr     15 benchmarks
+lib/                   Vendored Cyrius stdlib
 build/                 Compiled binaries (gitignored)
+scripts/               version-bump.sh
+docs/                  Architecture, guides, compliance, ADRs
 ```
 
 ## Documentation Structure
@@ -91,10 +86,14 @@ Root files (required):
 docs/ (required):
   architecture/overview.md — module map, data flow, consumers
   development/roadmap.md — completed, backlog, future
+  guides/quickstart.md — getting started
+  guides/testing.md — test and benchmark guide
+  guides/integration.md — consumer patterns
 
-docs/ (when earned):
-  guides/ — usage guides, integration patterns
-  development/ — semver, threat model
+docs/ (reference):
+  development/threat-model.md, dependency-watch.md
+  compliance/standards-mapping.md
+  adr/ — architecture decision records
 ```
 
 ## DO NOT

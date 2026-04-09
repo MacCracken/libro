@@ -18,6 +18,7 @@ include "lib/hashmap.cyr"
 include "lib/json.cyr"
 include "lib/fnptr.cyr"
 include "lib/bench.cyr"
+include "lib/sakshi.cyr"
 
 # ================================================================
 # Libro modules
