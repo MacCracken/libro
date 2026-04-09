@@ -1,0 +1,114 @@
+# hasher.cyr — ChainHasher, hex encoding, constant-time comparison
+# Wraps SHA-256 with the libro hashing interface.
+
+var HASH_ALGORITHM = "sha256";
+
+# ================================================================
+# ChainHasher — wraps a SHA-256 context
+# ================================================================
+# Layout (16 bytes):
+#   +0  ctx        SHA-256 context pointer
+#   +8  algorithm  C-string pointer
+
+fn hasher_new() {
+    var h = fl_alloc(16);
+    store64(h, sha256_init());
+    store64(h + 8, HASH_ALGORITHM);
+    return h;
+}
+
+fn hasher_update(h, data, len) {
+    sha256_update(load64(h), data, len);
+    return 0;
+}
+
+fn hasher_finalize_hex(h) {
+    var digest = alloc(32);
+    sha256_finalize(load64(h), digest);
+    var result = hex_encode(digest, 32);
+    return result;
+}
+
+# ================================================================
+# Hex encoding / decoding
+# ================================================================
+
+fn _hex_nibble(c) {
+    if (c >= 48) { if (c <= 57) { return c - 48; } }
+    if (c >= 97) { if (c <= 102) { return c - 87; } }
+    if (c >= 65) { if (c <= 70) { return c - 55; } }
+    return 0;
+}
+
+fn hex_encode(bytes, len) {
+    var out = alloc(len * 2 + 1);
+    var i = 0;
+    while (i < len) {
+        var b = load8(bytes + i) & 0xFF;
+        var hi = (b >> 4) & 0xF;
+        var lo = b & 0xF;
+        if (hi < 10) { store8(out + i * 2, 48 + hi); }
+        else { store8(out + i * 2, 87 + hi); }
+        if (lo < 10) { store8(out + i * 2 + 1, 48 + lo); }
+        else { store8(out + i * 2 + 1, 87 + lo); }
+        i = i + 1;
+    }
+    store8(out + len * 2, 0);
+    return str_new(out, len * 2);
+}
+
+fn hex_decode(hex_str) {
+    var hlen = str_len(hex_str);
+    var hdata = str_data(hex_str);
+    var blen = hlen / 2;
+    var out = alloc(blen);
+    var i = 0;
+    while (i < blen) {
+        var hi = _hex_nibble(load8(hdata + i * 2));
+        var lo = _hex_nibble(load8(hdata + i * 2 + 1));
+        store8(out + i, (hi << 4) | lo);
+        i = i + 1;
+    }
+    return out;
+}
+
+# ================================================================
+# Length-prefixed field hashing
+# ================================================================
+# Feeds 8-byte little-endian u64 length, then the raw data.
+# On x86_64, store64 is natively LE — matches Rust to_le_bytes().
+
+var _hf_lebuf = 0;
+
+fn hash_field(h, data, len) {
+    if (_hf_lebuf == 0) {
+        _hf_lebuf = alloc(8);
+    }
+    store64(_hf_lebuf, len);
+    hasher_update(h, _hf_lebuf, 8);
+    if (len > 0) {
+        hasher_update(h, data, len);
+    }
+    return 0;
+}
+
+# ================================================================
+# Constant-time comparison
+# ================================================================
+# Bitwise OR accumulation — no early exit on mismatch.
+
+fn constant_time_eq(a, a_len, b, b_len) {
+    if (a_len != b_len) { return 0; }
+    var diff = 0;
+    var i = 0;
+    while (i < a_len) {
+        diff = diff | (load8(a + i) ^ load8(b + i));
+        i = i + 1;
+    }
+    if (diff == 0) { return 1; }
+    return 0;
+}
+
+fn constant_time_eq_str(a, b) {
+    return constant_time_eq(str_data(a), str_len(a), str_data(b), str_len(b));
+}
