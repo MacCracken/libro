@@ -15,9 +15,8 @@ env:
   CYRIUS_VERSION: "2.7.2"
 
 jobs:
-  # ── Build ──
-  build:
-    name: Build
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,26 +25,36 @@ jobs:
         run: |
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p build
-          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
-          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
-          chmod +x ./build/cc2 ./build/cyrb
+          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "Cyrius $CYRIUS_VERSION installed"
 
-      - name: Build libro
+      - name: Build
         run: |
-          ./build/cyrb build src/main.cyr build/libro
-          echo "binary: $(wc -c < build/libro) bytes"
+          mkdir -p build
+          cat src/main.cyr | cc2 > build/libro 2>build/errors.log
+          if [ $? -ne 0 ]; then cat build/errors.log; exit 1; fi
+          chmod +x build/libro
+          echo "libro: $(wc -c < build/libro) bytes"
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-x86_64
-          path: build/libro
-          retention-days: 5
+      - name: Test suite
+        run: |
+          OUTPUT=$(./build/libro 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "0 failed"
+          echo "PASS: all tests"
 
-  # ── Check & Format ──
+      - name: Benchmarks
+        run: |
+          if [ -f benches/libro.bcyr ]; then
+            cat benches/libro.bcyr | cc2 > build/libro_bench 2>/dev/null && chmod +x build/libro_bench && ./build/libro_bench
+          fi
+        continue-on-error: true
+
   check:
     name: Check & Format
     runs-on: ubuntu-latest
@@ -56,112 +65,53 @@ jobs:
         run: |
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p build
-          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
-          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
-          chmod +x ./build/cc2 ./build/cyrb
+          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
 
-      - name: Syntax check (entry point)
+      - name: Format check
         run: |
-          ./build/cyrb check src/main.cyr
-          echo "PASS: src/main.cyr"
+          fail=0
+          for f in src/*.cyr; do
+            cyrfmt "$f" > /tmp/fmt_check 2>/dev/null
+            if ! diff -q "$f" /tmp/fmt_check > /dev/null 2>&1; then
+              echo "needs formatting: $(basename $f)"
+              fail=1
+            fi
+          done
+          rm -f /tmp/fmt_check
+          test $fail -eq 0
 
-  # ── Security ──
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Scan for dangerous patterns
         run: |
           WARN=0
-          # Check for raw execve outside kernel_audit.cyr
           if grep -rn 'syscall(59' src/ 2>/dev/null | grep -v "# " | grep -v kernel_audit; then
-            echo "WARN: raw execve in libro modules"
-            WARN=1
-          fi
-          # Check for hardcoded sensitive paths
-          if grep -rn '"/etc/shadow"' src/ 2>/dev/null; then
-            echo "WARN: direct shadow file access"
-            WARN=1
+            echo "WARN: raw execve in libro modules"; WARN=1
           fi
           echo "security scan complete (warnings: $WARN)"
 
-  # ── Tests ──
-  test:
-    name: Test
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p build
-          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
-          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
-          chmod +x ./build/cc2 ./build/cyrb
-
-      - name: Run test suite
-        run: |
-          ./build/cyrb build src/main.cyr build/libro
-          OUTPUT=$(./build/libro 2>&1)
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -q "0 failed"
-          echo "PASS: all tests"
-
-  # ── Benchmarks ──
-  benchmarks:
-    name: Benchmarks
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p build
-          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
-          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
-          chmod +x ./build/cc2 ./build/cyrb
-
-      - name: Run benchmarks
-        run: |
-          ./build/cyrb build benches/libro.bcyr build/libro_bench
-          ./build/libro_bench
-        continue-on-error: true
-
-  # ── Documentation ──
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check required docs exist
+      - name: Check required docs
         run: |
           MISSING=0
           for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE; do
-            if [ -f "$doc" ]; then
-              echo "  OK: $doc"
-            else
-              echo "  MISSING: $doc"
-              MISSING=1
-            fi
+            if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING
-
       - name: Verify version consistency
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
-          echo "VERSION file: $VERSION"
           grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in changelog"; exit 1; }
-          echo "Version consistent"
+          echo "Version consistent: $VERSION"

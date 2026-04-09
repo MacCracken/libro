@@ -11,12 +11,10 @@ env:
   CYRIUS_VERSION: "2.7.2"
 
 jobs:
-  # ── CI Gate (must pass before release) ──
   ci:
     name: CI Gate
     uses: ./.github/workflows/ci.yml
 
-  # ── Build release binary ──
   build:
     name: Build Release
     needs: [ci]
@@ -24,90 +22,68 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify version consistency
+      - name: Verify version
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG_VERSION="${GITHUB_REF_NAME}"
-          if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
-            echo "ERROR: VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
-            exit 1
-          fi
-          echo "Version verified: $TAG_VERSION"
+          TAG="${GITHUB_REF_NAME}"
+          [ "$FILE_VERSION" = "$TAG" ] || { echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
 
       - name: Install Cyrius toolchain
         run: |
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+
+      - name: Build
+        run: |
           mkdir -p build
-          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
-          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
-          chmod +x ./build/cc2 ./build/cyrb
-
-      - name: Build x86_64 binary
-        run: |
-          ./build/cyrb build src/main.cyr build/libro
+          cat src/main.cyr | cc2 > build/libro 2>/dev/null
+          chmod +x build/libro
           echo "libro: $(wc -c < build/libro) bytes"
-          cp build/libro libro-x86_64
 
-      - name: Run tests
+      - name: Test
         run: |
-          OUTPUT=$(./libro-x86_64 2>&1)
+          OUTPUT=$(./build/libro 2>&1)
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "0 failed"
-          echo "PASS: release binary tests"
 
-      - name: Extract changelog
-        id: changelog
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          BODY=$(awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
-          if [ -z "$BODY" ]; then
-            BODY="No changelog entry for this release."
-          fi
-          echo "$BODY" > /tmp/release-body.md
+      - name: Clean toolchain artifacts
+        run: rm -f cyrius-*.tar.gz
 
-      - name: Create source archive
+      - name: Archive
         run: |
           TAG="${GITHUB_REF_NAME}"
           git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
+          sha256sum libro-*.tar.gz > SHA256SUMS
 
-      - name: Generate checksums
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          sha256sum libro-x86_64 "libro-${TAG}-src.tar.gz" > SHA256SUMS
-          cat SHA256SUMS
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: release-binaries
+          name: release-artifacts
           path: |
-            libro-x86_64
-            libro-*-src.tar.gz
+            libro-*.tar.gz
             SHA256SUMS
-          retention-days: 5
 
-  # ── Create GitHub Release ──
   release:
     name: Create GitHub Release
     needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: release-binaries
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+          name: release-artifacts
+      - name: Changelog
+        run: awk "/^## \\[${GITHUB_REF_NAME}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/body.md
+      - uses: softprops/action-gh-release@v2
         with:
           name: "libro ${{ github.ref_name }}"
-          body_path: /tmp/release-body.md
+          body_path: /tmp/body.md
           prerelease: ${{ startsWith(github.ref_name, '0.') }}
           files: |
-            libro-x86_64
-            libro-${{ github.ref_name }}-src.tar.gz
+            libro-*.tar.gz
             SHA256SUMS
