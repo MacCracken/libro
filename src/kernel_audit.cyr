@@ -1,0 +1,50 @@
+# kernel_audit.cyr — Linux kernel audit integration
+# Reads AGNOS kernel audit events from /proc/agnos/audit.
+
+var AGNOS_AUDIT_PATH = "/proc/agnos/audit";
+
+# ================================================================
+# Check if AGNOS audit interface is available
+# ================================================================
+
+fn kernel_audit_available() {
+    return file_exists(AGNOS_AUDIT_PATH);
+}
+
+# ================================================================
+# Classify kernel result codes to severity
+# ================================================================
+
+fn classify_kernel_result(result) {
+    if (result == 0) { return SEV_INFO; }
+    if (result > 0) { return SEV_WARNING; }
+    if (result == 0 - 13) { return SEV_SECURITY; }
+    return SEV_ERROR;
+}
+
+# ================================================================
+# Log to kernel audit interface
+# ================================================================
+
+fn log_syscall(action, data, result) {
+    if (kernel_audit_available() == 0) {
+        return error_new(ERR_IO, "AGNOS audit not available");
+    }
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, action);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, data);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_int(sb, result);
+    str_builder_add_cstr(sb, "\n");
+    var line = str_builder_build(sb);
+
+    var fd = file_open(AGNOS_AUDIT_PATH, 1, 0);
+    if (fd < 0) {
+        return error_new(ERR_IO, "failed to open audit interface");
+    }
+    file_write(fd, str_data(line), str_len(line));
+    file_close(fd);
+    return 0;
+}

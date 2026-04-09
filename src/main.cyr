@@ -30,6 +30,13 @@ include "src/chain.cyr"
 include "src/store.cyr"
 include "src/export.cyr"
 include "src/review.cyr"
+include "src/merkle.cyr"
+include "src/signing.cyr"
+include "src/anchoring.cyr"
+include "src/timestamping.cyr"
+include "src/proof.cyr"
+include "src/kernel_audit.cyr"
+include "src/streaming.cyr"
 
 # ================================================================
 # Tests
@@ -661,6 +668,431 @@ fn test_review_tampered() {
 }
 
 # ================================================================
+# P-3 Tests — Merkle, Signing, Anchoring, Timestamping, Proof
+# ================================================================
+
+fn test_merkle_build() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a1"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a2"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a3"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a4"), det);
+
+    var tree = merkle_build(chain_entries(c));
+    assert(tree != 0, "merkle build succeeds");
+    assert(merkle_tree_leaf_count(tree) == 4, "merkle leaf count");
+    assert(str_len(merkle_tree_root(tree)) == 64, "merkle root is 64-char hex");
+}
+
+fn test_merkle_single() {
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var tree = merkle_build(chain_entries(c));
+    assert(tree != 0, "merkle single build");
+    assert(merkle_tree_leaf_count(tree) == 1, "merkle single leaf");
+}
+
+fn test_merkle_inclusion_proof() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 8) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+
+    var tree = merkle_build(chain_entries(c));
+    i = 0;
+    while (i < 8) {
+        var mp = merkle_proof(tree, i);
+        assert(mp != 0, "merkle proof exists");
+        assert(merkle_verify_proof(mp) == 1, "merkle proof verifies");
+        i = i + 1;
+    }
+}
+
+fn test_merkle_proof_out_of_bounds() {
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var tree = merkle_build(chain_entries(c));
+    var mp = merkle_proof(tree, 5);
+    assert(mp == 0, "merkle proof out of bounds returns null");
+}
+
+fn test_merkle_odd_leaf_count() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 5) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+    var tree = merkle_build(chain_entries(c));
+    assert(tree != 0, "merkle odd build");
+
+    i = 0;
+    while (i < 5) {
+        var mp = merkle_proof(tree, i);
+        assert(merkle_verify_proof(mp) == 1, "merkle odd proof verifies");
+        i = i + 1;
+    }
+}
+
+fn test_merkle_consistency() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 4) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+    var tree4 = merkle_build(chain_entries(c));
+
+    # Add more entries
+    while (i < 8) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+    var tree8 = merkle_build(chain_entries(c));
+
+    var cp = merkle_consistency_proof(tree8, 4);
+    assert(cp != 0, "consistency proof exists");
+    assert(merkle_verify_consistency(cp) == 1, "consistency proof verifies");
+}
+
+fn test_merkle_consistency_same_size() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 4) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+    var tree = merkle_build(chain_entries(c));
+    var cp = merkle_consistency_proof(tree, 4);
+    assert(cp != 0, "consistency same size proof");
+    assert(merkle_verify_consistency(cp) == 1, "consistency same size verifies");
+}
+
+fn test_signing_roundtrip() {
+    var sk = signing_key_generate();
+    assert(sk != 0, "signing key generated");
+
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig = sign_entry(sk, e);
+    assert(sig != 0, "entry signed");
+    assert(str_len(entry_sig_signature(sig)) == 64, "signature is 64-char hex");
+
+    # Verify with the signing key's verifying key
+    var vk = verifying_key_from_signing(sk);
+    assert(verify_entry_signature(vk, e, sig) == 1, "signature verifies");
+}
+
+fn test_signing_tamper_rejected() {
+    var sk = signing_key_generate();
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig = sign_entry(sk, e);
+
+    # Use a different key to verify — should fail
+    var sk2 = signing_key_generate();
+    var vk2 = verifying_key_from_signing(sk2);
+    assert(verify_entry_signature(vk2, e, sig) == 0, "tampered entry rejected");
+}
+
+fn test_signing_key_id() {
+    var sk = signing_key_generate();
+    signing_key_set_key_id(sk, str_from("key-v2"));
+
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig = sign_entry_with_key_id(sk, e, str_from("rotation-1"));
+    assert(entry_sig_key_id(sig) != 0, "sig has key_id");
+}
+
+fn test_signing_zeroize() {
+    var sk = signing_key_generate();
+    var key_ptr = signing_key_bytes(sk);
+    signing_key_zeroize(sk);
+    # Check first byte is zero after zeroize
+    assert((load8(key_ptr) & 0xFF) == 0, "key zeroized");
+}
+
+fn test_anchor_create() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+
+    var tree = merkle_build(chain_entries(c));
+    var a = anchor_new(tree, c);
+    assert(a != 0, "anchor created");
+    assert(str_len(anchor_hash(a)) == 64, "anchor hash is 64-char hex");
+    assert(anchor_entry_count(a) == 2, "anchor entry count");
+}
+
+fn test_anchor_verify() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+
+    var tree = merkle_build(chain_entries(c));
+    var a = anchor_new(tree, c);
+
+    assert(anchor_verify_integrity(a) == 1, "anchor integrity valid");
+    assert(anchor_verify_against(a, tree, c) == ANCHOR_VALID, "anchor verify against");
+}
+
+fn test_anchor_chaining() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a1"), det);
+
+    var tree1 = merkle_build(chain_entries(c));
+    var a1 = anchor_new(tree1, c);
+
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a2"), det);
+    var tree2 = merkle_build(chain_entries(c));
+    var a2 = anchor_new(tree2, c);
+    anchor_with_prev(a2, a1);
+
+    assert(anchor_prev_hash(a2) != 0, "anchor has prev_hash");
+    assert(anchor_verify_integrity(a2) == 1, "chained anchor integrity valid");
+}
+
+fn test_anchor_mismatch() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+
+    var tree = merkle_build(chain_entries(c));
+    var a = anchor_new(tree, c);
+
+    # Add another entry — tree no longer matches anchor
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    var tree2 = merkle_build(chain_entries(c));
+    assert(anchor_verify_against_tree(a, tree2) != ANCHOR_VALID, "anchor detects tree change");
+}
+
+fn test_ts_request_der() {
+    var hash = str_from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    var req = ts_request_new(hash);
+    var der = ts_request_to_der(req);
+    assert(str_len(der) > 0, "DER encoding produces output");
+    # DER should start with SEQUENCE tag (0x30)
+    assert((load8(str_data(der)) & 0xFF) == 0x30, "DER starts with SEQUENCE");
+}
+
+fn test_ts_request_with_nonce() {
+    var hash = str_from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    var req = ts_request_new(hash);
+    ts_request_set_nonce(req);
+    assert(ts_request_nonce(req) != 0, "nonce set");
+    assert(str_len(ts_request_nonce(req)) == 32, "nonce is 32-char hex");
+}
+
+fn test_ts_status() {
+    assert(ts_status_is_granted(TS_GRANTED) == 1, "granted is granted");
+    assert(ts_status_is_granted(TS_GRANTED_WITH_MODS) == 1, "granted_with_mods is granted");
+    assert(ts_status_is_granted(TS_REJECTION) == 0, "rejection is not granted");
+}
+
+fn test_kernel_classify() {
+    assert(classify_kernel_result(0) == SEV_INFO, "result 0 = info");
+    assert(classify_kernel_result(1) == SEV_WARNING, "result 1 = warning");
+    assert(classify_kernel_result(0 - 1) == SEV_ERROR, "result -1 = error");
+    assert(classify_kernel_result(0 - 13) == SEV_SECURITY, "result -13 = security");
+}
+
+fn test_proof_unsigned() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a1"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a2"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a3"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a4"), det);
+
+    var ip = proof_build_unsigned(c);
+    assert(ip != 0, "unsigned proof built");
+
+    proof_with_all_inclusions(ip);
+    assert(vec_len(iproof_inclusions(ip)) == 4, "proof has 4 inclusions");
+
+    var pv = proof_verify_unsigned(ip);
+    assert(pv_tree_head_valid(pv) == 1, "proof tree head valid");
+    assert(pv_entries_valid(pv) == 1, "proof entries valid");
+    assert(pv_tree_matches(pv) == 1, "proof tree matches");
+    assert(pv_inclusions_valid(pv) == 1, "proof inclusions valid");
+    assert(pv_is_valid(pv) == 1, "proof overall valid");
+}
+
+fn test_proof_signed() {
+    var sk = signing_key_generate();
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+
+    var ip = proof_build_signed(c, sk);
+    assert(ip != 0, "signed proof built");
+
+    var vk = verifying_key_from_signing(sk);
+    var pv = proof_verify_signed(ip, vk);
+    assert(pv_tree_head_valid(pv) == 1, "signed proof tree head valid");
+    assert(pv_entries_valid(pv) == 1, "signed proof entries valid");
+    assert(pv_tree_matches(pv) == 1, "signed proof tree matches");
+    assert(pv_is_valid(pv) == 1, "signed proof valid");
+}
+
+fn test_proof_with_consistency() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 8) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i = i + 1;
+    }
+
+    var ip = proof_build_unsigned(c);
+    proof_with_consistency(ip, 4);
+
+    var cp = iproof_consistency(ip);
+    assert(cp != 0, "proof has consistency proof");
+
+    var pv = proof_verify_unsigned(ip);
+    assert(pv_consistency_valid(pv) == 1, "consistency valid in proof");
+    assert(pv_is_valid(pv) == 1, "proof with consistency valid");
+}
+
+fn test_proof_with_anchor() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+
+    var ip = proof_build_unsigned(c);
+    var tree = iproof_tree(ip);
+    var anchor = anchor_new(tree, c);
+    proof_with_anchor(ip, anchor);
+
+    var pv = proof_verify_unsigned(ip);
+    assert(pv_anchor_valid(pv) == 1, "proof anchor valid");
+    assert(pv_is_valid(pv) == 1, "proof with anchor valid");
+}
+
+fn test_receipt_create() {
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var tree = merkle_build(chain_entries(c));
+    var a = anchor_new(tree, c);
+    var r = receipt_new(a, str_from("test-backend"), str_from("{}"));
+    assert(r != 0, "receipt created");
+    assert(str_eq(receipt_backend(r), str_from("test-backend")) == 1, "receipt backend");
+}
+
+# ================================================================
+# Streaming tests
+# ================================================================
+
+fn test_stream_publish_subscribe() {
+    var s = stream_new();
+    var rx = stream_subscribe(s, "libro/#");
+
+    # Create an entry and publish
+    var e = entry_new(SEV_INFO, str_from("daimon"), str_from("agent.start"), str_from("{}"), str_from(""));
+    stream_publish(s, e);
+
+    assert_eq(stream_published(s), 1, "stream 1 published");
+    assert_eq(stream_pending(rx), 1, "stream 1 pending");
+    var got = stream_recv(rx);
+    assert_eq(got, e, "stream recv matches");
+    assert_eq(stream_pending(rx), 0, "stream 0 after recv");
+    return 0;
+}
+
+fn test_stream_filtered_by_source() {
+    var s = stream_new();
+    var rx_daimon = stream_subscribe(s, "libro/daimon/#");
+    var rx_aegis = stream_subscribe(s, "libro/aegis/#");
+
+    var e1 = entry_new(SEV_INFO, str_from("daimon"), str_from("start"), str_from("{}"), str_from(""));
+    var e2 = entry_new(SEV_SECURITY, str_from("aegis"), str_from("alert"), str_from("{}"), str_from(""));
+    stream_publish(s, e1);
+    stream_publish(s, e2);
+
+    assert_eq(stream_pending(rx_daimon), 1, "daimon got 1");
+    assert_eq(stream_pending(rx_aegis), 1, "aegis got 1");
+    var d = stream_recv(rx_daimon);
+    assert_eq(d, e1, "daimon entry");
+    var a = stream_recv(rx_aegis);
+    assert_eq(a, e2, "aegis entry");
+    return 0;
+}
+
+fn test_stream_action_wildcard() {
+    var s = stream_new();
+    var rx = stream_subscribe(s, "libro/*/alert");
+
+    var e1 = entry_new(SEV_INFO, str_from("daimon"), str_from("start"), str_from("{}"), str_from(""));
+    var e2 = entry_new(SEV_SECURITY, str_from("aegis"), str_from("alert"), str_from("{}"), str_from(""));
+    stream_publish(s, e1);
+    stream_publish(s, e2);
+
+    # Only the alert should be delivered
+    assert_eq(stream_pending(rx), 1, "wildcard got 1");
+    var got = stream_recv(rx);
+    assert_eq(got, e2, "wildcard is alert");
+    return 0;
+}
+
+fn test_stream_no_match() {
+    var s = stream_new();
+    var rx = stream_subscribe(s, "libro/aegis/#");
+
+    var e = entry_new(SEV_INFO, str_from("daimon"), str_from("start"), str_from("{}"), str_from(""));
+    stream_publish(s, e);
+
+    assert_eq(stream_pending(rx), 0, "no match 0 pending");
+    return 0;
+}
+
+fn test_stream_custom_prefix() {
+    var s = stream_with_prefix("audit/prod");
+    var rx = stream_subscribe(s, "audit/prod/#");
+
+    var e = entry_new(SEV_INFO, str_from("daimon"), str_from("start"), str_from("{}"), str_from(""));
+    stream_publish(s, e);
+
+    assert_eq(stream_pending(rx), 1, "custom prefix delivered");
+    return 0;
+}
+
+fn test_stream_multiple_entries() {
+    var s = stream_new();
+    var rx = stream_subscribe(s, "libro/#");
+
+    var i = 0;
+    while (i < 5) {
+        var e = entry_new(SEV_INFO, str_from("src"), str_from("evt"), str_from("{}"), str_from(""));
+        stream_publish(s, e);
+        i = i + 1;
+    }
+
+    assert_eq(stream_published(s), 5, "5 published");
+    assert_eq(stream_pending(rx), 5, "5 pending");
+    return 0;
+}
+
+# ================================================================
 # Main — run all tests
 # ================================================================
 
@@ -748,6 +1180,50 @@ fn main() {
     test_review_empty();
     test_review_valid();
     test_review_tampered();
+
+    test_group("Merkle tree");
+    test_merkle_build();
+    test_merkle_single();
+    test_merkle_inclusion_proof();
+    test_merkle_proof_out_of_bounds();
+    test_merkle_odd_leaf_count();
+    test_merkle_consistency();
+    test_merkle_consistency_same_size();
+
+    test_group("Signing");
+    test_signing_roundtrip();
+    test_signing_tamper_rejected();
+    test_signing_key_id();
+    test_signing_zeroize();
+
+    test_group("Anchoring");
+    test_anchor_create();
+    test_anchor_verify();
+    test_anchor_chaining();
+    test_anchor_mismatch();
+
+    test_group("Timestamping");
+    test_ts_request_der();
+    test_ts_request_with_nonce();
+    test_ts_status();
+
+    test_group("Kernel audit");
+    test_kernel_classify();
+
+    test_group("Integrity proof");
+    test_proof_unsigned();
+    test_proof_signed();
+    test_proof_with_consistency();
+    test_proof_with_anchor();
+    test_receipt_create();
+
+    test_group("Streaming");
+    test_stream_publish_subscribe();
+    test_stream_filtered_by_source();
+    test_stream_action_wildcard();
+    test_stream_no_match();
+    test_stream_custom_prefix();
+    test_stream_multiple_entries();
 
     return assert_summary();
 }

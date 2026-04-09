@@ -1,0 +1,172 @@
+# anchoring.cyr — Merkle root anchoring and witness receipts
+# Self-hashing anchor chain for tamper-proof witness attestations.
+
+# ================================================================
+# AnchorVerification constants
+# ================================================================
+
+enum AnchorVerify {
+    ANCHOR_VALID = 0;
+    ANCHOR_ROOT_MISMATCH = 1;
+    ANCHOR_COUNT_MISMATCH = 2;
+    ANCHOR_HEAD_MISMATCH = 3;
+}
+
+# ================================================================
+# WitnessAnchor layout (72 bytes)
+# ================================================================
+#   +0   id[16]            UUID v4 raw bytes
+#   +16  merkle_root       Str pointer
+#   +24  entry_count       i64
+#   +32  chain_head        Str pointer
+#   +40  hash_algorithm    Str pointer
+#   +48  created_at        Str pointer (RFC 3339)
+#   +56  prev_anchor_hash  Str pointer (0 = none)
+#   +64  hash              Str pointer (self-hash)
+
+fn anchor_id(a) { return a; }
+fn anchor_merkle_root(a) { return load64(a + 16); }
+fn anchor_entry_count(a) { return load64(a + 24); }
+fn anchor_chain_head(a) { return load64(a + 32); }
+fn anchor_hash_alg(a) { return load64(a + 40); }
+fn anchor_created_at(a) { return load64(a + 48); }
+fn anchor_prev_hash(a) { return load64(a + 56); }
+fn anchor_hash(a) { return load64(a + 64); }
+
+# ================================================================
+# Anchor construction
+# ================================================================
+
+var _anch_ptr = 0;
+
+fn anchor_from_tree(tree, chain_head_hash) {
+    var a = fl_alloc(72);
+    _anch_ptr = a;
+    uuid_v4(a);
+    store64(_anch_ptr + 16, merkle_tree_root(tree));
+    store64(_anch_ptr + 24, merkle_tree_leaf_count(tree));
+    store64(_anch_ptr + 32, chain_head_hash);
+    store64(_anch_ptr + 40, str_from(HASH_ALGORITHM));
+    store64(_anch_ptr + 48, timestamp_rfc3339(get_epoch_secs()));
+    store64(_anch_ptr + 56, 0);
+    var h = anchor_compute_hash(_anch_ptr);
+    store64(_anch_ptr + 64, h);
+    return _anch_ptr;
+}
+
+fn anchor_new(tree, chain) {
+    var hh = chain_head_hash(chain);
+    if (hh == 0) { hh = str_from(""); }
+    return anchor_from_tree(tree, hh);
+}
+
+fn anchor_with_prev(a, prev_anchor) {
+    store64(a + 56, anchor_hash(prev_anchor));
+    var h = anchor_compute_hash(a);
+    store64(a + 64, h);
+    return a;
+}
+
+# ================================================================
+# Anchor self-hash — deterministic, length-prefixed
+# ================================================================
+# Order: id(16 raw) → merkle_root → entry_count(8 LE) →
+#         chain_head → hash_algorithm → created_at → prev_anchor_hash
+
+var _ach_hasher = 0;
+var _ach_anchor = 0;
+
+fn anchor_compute_hash(a) {
+    _ach_anchor = a;
+    _ach_hasher = hasher_new();
+
+    # 1. UUID (16 raw bytes)
+    hasher_update(_ach_hasher, _ach_anchor, 16);
+
+    # 2. merkle_root (length-prefixed)
+    var mr = load64(_ach_anchor + 16);
+    hash_field(_ach_hasher, str_data(mr), str_len(mr));
+
+    # 3. entry_count as 8-byte LE
+    if (_hf_lebuf == 0) { _hf_lebuf = alloc(8); }
+    store64(_hf_lebuf, load64(_ach_anchor + 24));
+    hasher_update(_ach_hasher, _hf_lebuf, 8);
+
+    # 4. chain_head (length-prefixed)
+    var ch = load64(_ach_anchor + 32);
+    hash_field(_ach_hasher, str_data(ch), str_len(ch));
+
+    # 5. hash_algorithm (length-prefixed)
+    var ha = load64(_ach_anchor + 40);
+    hash_field(_ach_hasher, str_data(ha), str_len(ha));
+
+    # 6. created_at (length-prefixed)
+    var ca = load64(_ach_anchor + 48);
+    hash_field(_ach_hasher, str_data(ca), str_len(ca));
+
+    # 7. prev_anchor_hash (length-prefixed, empty if none)
+    var pah = load64(_ach_anchor + 56);
+    if (pah == 0) {
+        hash_field(_ach_hasher, "", 0);
+    } else {
+        hash_field(_ach_hasher, str_data(pah), str_len(pah));
+    }
+
+    return hasher_finalize_hex(_ach_hasher);
+}
+
+# ================================================================
+# Anchor verification
+# ================================================================
+
+fn anchor_verify_integrity(a) {
+    var computed = anchor_compute_hash(a);
+    var stored = load64(a + 64);
+    return constant_time_eq_str(computed, stored);
+}
+
+fn anchor_verify_against_tree(a, tree) {
+    var expected_count = load64(a + 24);
+    var actual_count = merkle_tree_leaf_count(tree);
+    if (expected_count != actual_count) { return ANCHOR_COUNT_MISMATCH; }
+
+    var expected_root = load64(a + 16);
+    var actual_root = merkle_tree_root(tree);
+    if (constant_time_eq_str(expected_root, actual_root) == 0) {
+        return ANCHOR_ROOT_MISMATCH;
+    }
+
+    return ANCHOR_VALID;
+}
+
+fn anchor_verify_against(a, tree, chain) {
+    var expected_head = load64(a + 32);
+    var actual_head = chain_head_hash(chain);
+    if (actual_head == 0) { actual_head = str_from(""); }
+    if (constant_time_eq_str(expected_head, actual_head) == 0) {
+        return ANCHOR_HEAD_MISMATCH;
+    }
+    return anchor_verify_against_tree(a, tree);
+}
+
+# ================================================================
+# WitnessReceipt layout (40 bytes)
+# ================================================================
+#   +0   anchor_id[16]   UUID raw bytes
+#   +16  backend         Str pointer
+#   +24  received_at     Str pointer (RFC 3339)
+#   +32  receipt_data    Str pointer (JSON)
+
+fn receipt_new(anchor, backend, receipt_data) {
+    var r = fl_alloc(40);
+    memcpy(r, anchor, 16);
+    store64(r + 16, backend);
+    store64(r + 24, timestamp_rfc3339(get_epoch_secs()));
+    store64(r + 32, receipt_data);
+    return r;
+}
+
+fn receipt_anchor_id(r) { return r; }
+fn receipt_backend(r) { return load64(r + 16); }
+fn receipt_received_at(r) { return load64(r + 24); }
+fn receipt_data(r) { return load64(r + 32); }

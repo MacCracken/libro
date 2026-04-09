@@ -1,0 +1,392 @@
+# merkle.cyr — Merkle tree, inclusion proofs, RFC 9162 consistency proofs
+# Binary hash tree built from audit entry hashes.
+
+# ================================================================
+# Side enum
+# ================================================================
+
+enum MerkleSide {
+    SIDE_LEFT = 0;
+    SIDE_RIGHT = 1;
+}
+
+# ================================================================
+# ProofNode layout (16 bytes)
+# ================================================================
+#   +0  hash   Str pointer
+#   +8  side   i64 (SIDE_LEFT or SIDE_RIGHT)
+
+fn proof_node_new(hash, side) {
+    var pn = fl_alloc(16);
+    store64(pn, hash);
+    store64(pn + 8, side);
+    return pn;
+}
+
+fn proof_node_hash(pn) { return load64(pn); }
+fn proof_node_side(pn) { return load64(pn + 8); }
+
+# ================================================================
+# MerkleProof layout (32 bytes)
+# ================================================================
+#   +0   index      i64
+#   +8   leaf_hash  Str pointer
+#   +16  path       vec of ProofNode pointers
+#   +24  root       Str pointer
+
+fn merkle_proof_new(index, leaf_hash, path, root) {
+    var mp = fl_alloc(32);
+    store64(mp, index);
+    store64(mp + 8, leaf_hash);
+    store64(mp + 16, path);
+    store64(mp + 24, root);
+    return mp;
+}
+
+fn merkle_proof_index(mp) { return load64(mp); }
+fn merkle_proof_leaf(mp) { return load64(mp + 8); }
+fn merkle_proof_path(mp) { return load64(mp + 16); }
+fn merkle_proof_root(mp) { return load64(mp + 24); }
+
+# ================================================================
+# ConsistencyProof layout (40 bytes)
+# ================================================================
+#   +0   old_size   i64
+#   +8   new_size   i64
+#   +16  old_root   Str pointer
+#   +24  new_root   Str pointer
+#   +32  path       vec of Str (hash strings)
+
+fn consistency_proof_new(old_size, new_size, old_root, new_root, path) {
+    var cp = fl_alloc(40);
+    store64(cp, old_size);
+    store64(cp + 8, new_size);
+    store64(cp + 16, old_root);
+    store64(cp + 24, new_root);
+    store64(cp + 32, path);
+    return cp;
+}
+
+fn consistency_old_size(cp) { return load64(cp); }
+fn consistency_new_size(cp) { return load64(cp + 8); }
+fn consistency_old_root(cp) { return load64(cp + 16); }
+fn consistency_new_root(cp) { return load64(cp + 24); }
+fn consistency_path(cp) { return load64(cp + 32); }
+
+# ================================================================
+# MerkleTree layout (16 bytes)
+# ================================================================
+#   +0  nodes       vec of Str (all nodes, leaves first, level by level)
+#   +8  leaf_count  i64
+
+fn merkle_tree_nodes(t) { return load64(t); }
+fn merkle_tree_leaf_count(t) { return load64(t + 8); }
+
+fn merkle_tree_root(t) {
+    var nodes = load64(t);
+    var n = vec_len(nodes);
+    if (n == 0) { return str_from(""); }
+    return vec_get(nodes, n - 1);
+}
+
+# ================================================================
+# Hash pair — parent hash from two children
+# ================================================================
+
+fn _merkle_hash_pair(left, right) {
+    var h = hasher_new();
+    hasher_update(h, str_data(left), str_len(left));
+    hasher_update(h, str_data(right), str_len(right));
+    return hasher_finalize_hex(h);
+}
+
+# ================================================================
+# Build tree from entries — O(n) time
+# ================================================================
+
+fn merkle_build(entries) {
+    var n = vec_len(entries);
+    if (n == 0) { return 0; }
+
+    var nodes = vec_new();
+
+    # Extract leaf hashes
+    var leaves = vec_new();
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(entries, i);
+        vec_push(leaves, entry_hash(e));
+        i = i + 1;
+    }
+
+    # Build levels bottom-up
+    var current = leaves;
+    while (vec_len(current) > 1) {
+        # Add current level to nodes
+        var cl = vec_len(current);
+        i = 0;
+        while (i < cl) {
+            vec_push(nodes, vec_get(current, i));
+            i = i + 1;
+        }
+
+        # Compute next level
+        var next = vec_new();
+        i = 0;
+        while (i < cl) {
+            var left = vec_get(current, i);
+            var right = left;
+            if (i + 1 < cl) {
+                right = vec_get(current, i + 1);
+            }
+            vec_push(next, _merkle_hash_pair(left, right));
+            i = i + 2;
+        }
+        current = next;
+    }
+
+    # Add root
+    vec_push(nodes, vec_get(current, 0));
+
+    var t = fl_alloc(16);
+    store64(t, nodes);
+    store64(t + 8, n);
+    return t;
+}
+
+# ================================================================
+# Inclusion proof — O(log n)
+# ================================================================
+
+fn merkle_proof(tree, index) {
+    var leaf_count = load64(tree + 8);
+    if (index >= leaf_count) { return 0; }
+
+    var nodes = load64(tree);
+    var path = vec_new();
+    var level_start = 0;
+    var level_size = leaf_count;
+    var idx = index;
+
+    while (level_size > 1) {
+        var sibling_idx = idx;
+        if ((idx & 1) == 0) {
+            sibling_idx = idx + 1;
+        } else {
+            sibling_idx = idx - 1;
+        }
+
+        var sibling_hash = 0;
+        if (sibling_idx < level_size) {
+            sibling_hash = vec_get(nodes, level_start + sibling_idx);
+        } else {
+            sibling_hash = vec_get(nodes, level_start + idx);
+        }
+
+        var side = SIDE_RIGHT;
+        if ((idx & 1) != 0) {
+            side = SIDE_LEFT;
+        }
+
+        vec_push(path, proof_node_new(sibling_hash, side));
+
+        level_start = level_start + level_size;
+        level_size = (level_size + 1) / 2;
+        idx = idx / 2;
+    }
+
+    var leaf_hash = vec_get(nodes, index);
+    var root = merkle_tree_root(tree);
+    return merkle_proof_new(index, leaf_hash, path, root);
+}
+
+# ================================================================
+# Verify inclusion proof — O(log n)
+# ================================================================
+
+fn merkle_verify_proof(mp) {
+    var current = merkle_proof_leaf(mp);
+    var path = merkle_proof_path(mp);
+    var n = vec_len(path);
+    var i = 0;
+    while (i < n) {
+        var node = vec_get(path, i);
+        var nh = proof_node_hash(node);
+        var ns = proof_node_side(node);
+        if (ns == SIDE_LEFT) {
+            current = _merkle_hash_pair(nh, current);
+        } else {
+            current = _merkle_hash_pair(current, nh);
+        }
+        i = i + 1;
+    }
+    return constant_time_eq_str(current, merkle_proof_root(mp));
+}
+
+# ================================================================
+# Largest power of 2 less than n
+# ================================================================
+
+fn _largest_pow2_lt(n) {
+    var k = 1;
+    while (k < n) {
+        k = k * 2;
+    }
+    k = k / 2;
+    if (k == n) { k = k / 2; }
+    if (k == 0) { k = 1; }
+    return k;
+}
+
+# ================================================================
+# Canonical subtree hash — RFC 9162 no-duplication root
+# ================================================================
+
+var _csh_nodes = 0;
+
+fn _canonical_subtree_hash(nodes_vec, start, count) {
+    if (count == 1) {
+        return vec_get(nodes_vec, start);
+    }
+    var k = _largest_pow2_lt(count);
+    var left = _canonical_subtree_hash(nodes_vec, start, k);
+    var right = _canonical_subtree_hash(nodes_vec, start + k, count - k);
+    return _merkle_hash_pair(left, right);
+}
+
+# Canonical root from leaf nodes only (RFC 9162 §2.1.2)
+fn merkle_canonical_root(tree, size) {
+    if (size == 0) { return 0; }
+    var lc = load64(tree + 8);
+    if (size > lc) { return 0; }
+    var nodes = load64(tree);
+    # We need just the leaf nodes (first leaf_count entries in nodes vec)
+    return _canonical_subtree_hash(nodes, 0, size);
+}
+
+# ================================================================
+# Consistency proof — RFC 9162 append-only proof
+# ================================================================
+
+var _sp_path = 0;
+var _sp_nodes = 0;
+
+fn merkle_consistency_proof(tree, old_size) {
+    var leaf_count = load64(tree + 8);
+    if (old_size == 0 || old_size > leaf_count) { return 0; }
+
+    var nodes = load64(tree);
+    var old_root = _canonical_subtree_hash(nodes, 0, old_size);
+    var new_root = _canonical_subtree_hash(nodes, 0, leaf_count);
+
+    if (old_size == leaf_count) {
+        return consistency_proof_new(old_size, leaf_count, old_root, new_root, vec_new());
+    }
+
+    _sp_path = vec_new();
+    _sp_nodes = nodes;
+    _subproof(old_size, 0, leaf_count, 1);
+
+    return consistency_proof_new(old_size, leaf_count, old_root, new_root, _sp_path);
+}
+
+# RFC 9162 SUBPROOF recursive algorithm
+fn _subproof(m, start, n, is_complete) {
+    if (m == n) {
+        if (is_complete == 0) {
+            vec_push(_sp_path, _canonical_subtree_hash(_sp_nodes, start, n));
+        }
+        return 0;
+    }
+    if (n == 1) {
+        if (is_complete == 0) {
+            vec_push(_sp_path, vec_get(_sp_nodes, start));
+        }
+        return 0;
+    }
+    var k = _largest_pow2_lt(n);
+    if (m <= k) {
+        _subproof(m, start, k, is_complete);
+        vec_push(_sp_path, _canonical_subtree_hash(_sp_nodes, start + k, n - k));
+    } else {
+        _subproof(m - k, start + k, n - k, 0);
+        vec_push(_sp_path, _canonical_subtree_hash(_sp_nodes, start, k));
+    }
+    return 0;
+}
+
+# ================================================================
+# Verify consistency proof — RFC 9162 §2.1.4.2
+# ================================================================
+
+fn _is_power_of_2(n) {
+    if (n <= 0) { return 0; }
+    if ((n & (n - 1)) == 0) { return 1; }
+    return 0;
+}
+
+fn merkle_verify_consistency(cp) {
+    var old_size = load64(cp);
+    var new_size = load64(cp + 8);
+    var old_root = load64(cp + 16);
+    var new_root = load64(cp + 24);
+    var path = load64(cp + 32);
+
+    if (old_size == 0 || old_size > new_size) { return 0; }
+
+    if (old_size == new_size) {
+        if (vec_len(path) != 0) { return 0; }
+        return constant_time_eq_str(old_root, new_root);
+    }
+
+    # Build working path — prepend old_root if old_size is power of 2
+    var working = vec_new();
+    if (_is_power_of_2(old_size) == 1) {
+        vec_push(working, old_root);
+    }
+    var pi = 0;
+    while (pi < vec_len(path)) {
+        vec_push(working, vec_get(path, pi));
+        pi = pi + 1;
+    }
+
+    if (vec_len(working) == 0) { return 0; }
+
+    var fn_val = old_size - 1;
+    var sn_val = new_size - 1;
+
+    # Right-shift both while LSB of fn is set
+    while ((fn_val & 1) == 1) {
+        fn_val = fn_val >> 1;
+        sn_val = sn_val >> 1;
+    }
+
+    var fr = vec_get(working, 0);
+    var sr = vec_get(working, 0);
+
+    var wi = 1;
+    while (wi < vec_len(working)) {
+        var c = vec_get(working, wi);
+        if (sn_val == 0) { return 0; }
+
+        if (((fn_val & 1) == 1) || fn_val == sn_val) {
+            fr = _merkle_hash_pair(c, fr);
+            sr = _merkle_hash_pair(c, sr);
+            while (fn_val != 0 && ((fn_val & 1) == 0)) {
+                fn_val = fn_val >> 1;
+                sn_val = sn_val >> 1;
+            }
+        } else {
+            sr = _merkle_hash_pair(sr, c);
+        }
+
+        fn_val = fn_val >> 1;
+        sn_val = sn_val >> 1;
+        wi = wi + 1;
+    }
+
+    if (sn_val != 0) { return 0; }
+    if (constant_time_eq_str(fr, old_root) == 0) { return 0; }
+    if (constant_time_eq_str(sr, new_root) == 0) { return 0; }
+    return 1;
+}

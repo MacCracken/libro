@@ -1,0 +1,246 @@
+# libro.bcyr — libro benchmarks
+# Chain operations, Merkle trees, signing, export, verification.
+#
+# Run: cyrius bench benches/libro.bcyr
+#   or: cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
+
+# ================================================================
+# Standard library
+# ================================================================
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/freelist.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/fnptr.cyr"
+include "lib/bench.cyr"
+
+# ================================================================
+# Libro modules
+# ================================================================
+include "src/error.cyr"
+include "src/sha256.cyr"
+include "src/hasher.cyr"
+include "src/entry.cyr"
+include "src/verify.cyr"
+include "src/query.cyr"
+include "src/retention.cyr"
+include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
+include "src/review.cyr"
+include "src/merkle.cyr"
+include "src/signing.cyr"
+include "src/anchoring.cyr"
+include "src/timestamping.cyr"
+include "src/proof.cyr"
+include "src/kernel_audit.cyr"
+include "src/streaming.cyr"
+
+# ================================================================
+# Benchmark state (globals for fn-pointer callbacks)
+# ================================================================
+
+var _b_chain = 0;
+var _b_det = 0;
+var _b_entries = 0;
+var _b_tree = 0;
+var _b_sk = 0;
+var _b_vk = 0;
+var _b_sig = 0;
+var _b_proof_ip = 0;
+var _b_dev_null = 0;
+
+# ================================================================
+# Benchmark functions
+# ================================================================
+
+fn bench_chain_append(ignored) {
+    var c = chain_new();
+    var i = 0;
+    while (i < 100) {
+        chain_append(c, SEV_INFO, str_from("bench-src"), str_from("bench-act"), _b_det);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn bench_chain_verify(ignored) {
+    verify_chain(_b_entries);
+    return 0;
+}
+
+fn bench_entry_hash(ignored) {
+    var e = vec_get(_b_entries, 0);
+    entry_compute_hash(e);
+    return 0;
+}
+
+fn bench_merkle_build(ignored) {
+    merkle_build(_b_entries);
+    return 0;
+}
+
+fn bench_merkle_proof(ignored) {
+    merkle_proof(_b_tree, 0);
+    return 0;
+}
+
+fn bench_merkle_verify(ignored) {
+    var mp = merkle_proof(_b_tree, 0);
+    merkle_verify_proof(mp);
+    return 0;
+}
+
+fn bench_merkle_consistency(ignored) {
+    merkle_consistency_proof(_b_tree, 50);
+    return 0;
+}
+
+fn bench_sign_entry(ignored) {
+    var e = vec_get(_b_entries, 0);
+    sign_entry(_b_sk, e);
+    return 0;
+}
+
+fn bench_verify_sig(ignored) {
+    var e = vec_get(_b_entries, 0);
+    verify_entry_signature(_b_vk, e, _b_sig);
+    return 0;
+}
+
+fn bench_query_filter(ignored) {
+    var q = query_new();
+    query_source(q, str_from("bench-src"));
+    query_min_severity(q, SEV_WARNING);
+    query_apply(q, _b_entries);
+    return 0;
+}
+
+fn bench_export_jsonl(ignored) {
+    export_jsonl(_b_entries, _b_dev_null);
+    return 0;
+}
+
+fn bench_export_csv(ignored) {
+    export_csv(_b_entries, _b_dev_null);
+    return 0;
+}
+
+fn bench_chain_review(ignored) {
+    chain_review(_b_chain);
+    return 0;
+}
+
+fn bench_sha256_64b(ignored) {
+    var msg = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!!";
+    var digest = alloc(32);
+    sha256(msg, 64, digest);
+    return 0;
+}
+
+fn bench_proof_unsigned(ignored) {
+    proof_build_unsigned(_b_chain);
+    return 0;
+}
+
+# ================================================================
+# Main — setup and run
+# ================================================================
+
+fn main() {
+    alloc_init();
+    fl_init();
+
+    println("=== libro benchmarks ===");
+
+    # Setup: build a 100-entry chain for benchmarking
+    _b_det = str_from("{}");
+    _b_chain = chain_new();
+    var i = 0;
+    while (i < 100) {
+        chain_append(_b_chain, SEV_INFO, str_from("bench-src"), str_from("bench-act"), _b_det);
+        i = i + 1;
+    }
+    _b_entries = chain_entries(_b_chain);
+    _b_tree = merkle_build(_b_entries);
+    _b_sk = signing_key_generate();
+    _b_vk = verifying_key_from_signing(_b_sk);
+    _b_sig = sign_entry(_b_sk, vec_get(_b_entries, 0));
+    _b_dev_null = file_open("/dev/null", 1, 0);
+
+    var benches = vec_new();
+
+    var b1 = bench_new("sha256_64b");
+    bench_run(b1, &bench_sha256_64b, 10000);
+    vec_push(benches, b1);
+
+    var b2 = bench_new("entry_hash");
+    bench_run(b2, &bench_entry_hash, 1000);
+    vec_push(benches, b2);
+
+    var b3 = bench_new("chain_append_100");
+    bench_run(b3, &bench_chain_append, 10);
+    vec_push(benches, b3);
+
+    var b4 = bench_new("chain_verify_100");
+    bench_run(b4, &bench_chain_verify, 100);
+    vec_push(benches, b4);
+
+    var b5 = bench_new("merkle_build_100");
+    bench_run(b5, &bench_merkle_build, 100);
+    vec_push(benches, b5);
+
+    var b6 = bench_new("merkle_proof");
+    bench_run(b6, &bench_merkle_proof, 1000);
+    vec_push(benches, b6);
+
+    var b7 = bench_new("merkle_verify");
+    bench_run(b7, &bench_merkle_verify, 1000);
+    vec_push(benches, b7);
+
+    var b8 = bench_new("merkle_consistency");
+    bench_run(b8, &bench_merkle_consistency, 100);
+    vec_push(benches, b8);
+
+    var b9 = bench_new("sign_entry");
+    bench_run(b9, &bench_sign_entry, 1000);
+    vec_push(benches, b9);
+
+    var b10 = bench_new("verify_sig");
+    bench_run(b10, &bench_verify_sig, 1000);
+    vec_push(benches, b10);
+
+    var b11 = bench_new("query_filter_100");
+    bench_run(b11, &bench_query_filter, 1000);
+    vec_push(benches, b11);
+
+    var b12 = bench_new("export_jsonl_100");
+    bench_run(b12, &bench_export_jsonl, 100);
+    vec_push(benches, b12);
+
+    var b13 = bench_new("export_csv_100");
+    bench_run(b13, &bench_export_csv, 100);
+    vec_push(benches, b13);
+
+    var b14 = bench_new("chain_review_100");
+    bench_run(b14, &bench_chain_review, 100);
+    vec_push(benches, b14);
+
+    var b15 = bench_new("proof_unsigned_100");
+    bench_run(b15, &bench_proof_unsigned, 10);
+    vec_push(benches, b15);
+
+    println("");
+    bench_report_all(benches);
+
+    file_close(_b_dev_null);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

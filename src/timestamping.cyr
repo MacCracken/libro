@@ -1,0 +1,420 @@
+# timestamping.cyr — RFC 3161 trusted timestamp request/response
+# Hand-rolled DER encoding/decoding for timestamp protocol.
+
+# ================================================================
+# DER tag constants
+# ================================================================
+
+var DER_SEQUENCE = 0x30;
+var DER_INTEGER = 0x02;
+var DER_OCTET_STRING = 0x04;
+var DER_BOOLEAN = 0x01;
+var DER_OID = 0x06;
+var DER_NULL = 0x05;
+
+# ================================================================
+# OID bytes for hash algorithms (pre-encoded)
+# ================================================================
+# SHA-256: 2.16.840.1.101.3.4.2.1
+# SHA-384: 2.16.840.1.101.3.4.2.2
+# SHA-512: 2.16.840.1.101.3.4.2.3
+
+var _oid_sha256 = 0;
+var _oid_sha384 = 0;
+var _oid_sha512 = 0;
+
+fn _ts_init_oids() {
+    if (_oid_sha256 != 0) { return 0; }
+    _oid_sha256 = alloc(9);
+    store8(_oid_sha256, 0x60); store8(_oid_sha256 + 1, 0x86);
+    store8(_oid_sha256 + 2, 0x48); store8(_oid_sha256 + 3, 0x01);
+    store8(_oid_sha256 + 4, 0x65); store8(_oid_sha256 + 5, 0x03);
+    store8(_oid_sha256 + 6, 0x04); store8(_oid_sha256 + 7, 0x02);
+    store8(_oid_sha256 + 8, 0x01);
+
+    _oid_sha384 = alloc(9);
+    memcpy(_oid_sha384, _oid_sha256, 8);
+    store8(_oid_sha384 + 8, 0x02);
+
+    _oid_sha512 = alloc(9);
+    memcpy(_oid_sha512, _oid_sha256, 8);
+    store8(_oid_sha512 + 8, 0x03);
+    return 0;
+}
+
+# ================================================================
+# Hash algorithm enum
+# ================================================================
+
+enum TsHashAlg {
+    TS_SHA256 = 0;
+    TS_SHA384 = 1;
+    TS_SHA512 = 2;
+}
+
+fn ts_hash_oid(alg) {
+    _ts_init_oids();
+    if (alg == TS_SHA256) { return _oid_sha256; }
+    if (alg == TS_SHA384) { return _oid_sha384; }
+    if (alg == TS_SHA512) { return _oid_sha512; }
+    return _oid_sha256;
+}
+
+fn ts_hash_oid_len(alg) { return 9; }
+
+# ================================================================
+# Timestamp subject enum
+# ================================================================
+
+enum TsSubject {
+    TS_ENTRY_HASH = 0;
+    TS_MERKLE_ROOT = 1;
+    TS_CHAIN_HEAD = 2;
+}
+
+# ================================================================
+# Timestamp status enum (RFC 3161 PKI status)
+# ================================================================
+
+enum TsStatus {
+    TS_GRANTED = 0;
+    TS_GRANTED_WITH_MODS = 1;
+    TS_REJECTION = 2;
+    TS_WAITING = 3;
+    TS_REVOCATION_WARNING = 4;
+    TS_REVOCATION_NOTIFICATION = 5;
+}
+
+fn ts_status_is_granted(status) {
+    if (status == TS_GRANTED) { return 1; }
+    if (status == TS_GRANTED_WITH_MODS) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# DER encoding helpers
+# ================================================================
+
+# Encode DER length into buffer, return number of bytes written
+fn _der_write_length(buf, len) {
+    if (len < 128) {
+        store8(buf, len);
+        return 1;
+    }
+    if (len < 256) {
+        store8(buf, 0x81);
+        store8(buf + 1, len);
+        return 2;
+    }
+    if (len < 65536) {
+        store8(buf, 0x82);
+        store8(buf + 1, (len >> 8) & 0xFF);
+        store8(buf + 2, len & 0xFF);
+        return 3;
+    }
+    store8(buf, 0x83);
+    store8(buf + 1, (len >> 16) & 0xFF);
+    store8(buf + 2, (len >> 8) & 0xFF);
+    store8(buf + 3, len & 0xFF);
+    return 4;
+}
+
+# Encode a TLV (tag-length-value) into buffer, return total bytes
+fn _der_write_tlv(buf, tag, value, value_len) {
+    store8(buf, tag);
+    var len_bytes = _der_write_length(buf + 1, value_len);
+    memcpy(buf + 1 + len_bytes, value, value_len);
+    return 1 + len_bytes + value_len;
+}
+
+# Build a SEQUENCE wrapping content, return total bytes
+fn _der_write_sequence(buf, content, content_len) {
+    return _der_write_tlv(buf, DER_SEQUENCE, content, content_len);
+}
+
+# ================================================================
+# TimestampRequest layout (32 bytes)
+# ================================================================
+#   +0   hash_algorithm   i64 (TS_SHA*)
+#   +8   message_hash     Str pointer (hex-encoded)
+#   +16  nonce            Str pointer (hex-encoded, 0 = none)
+#   +24  cert_req         i64 (0 or 1)
+
+fn ts_request_new(hash_hex) {
+    var r = fl_alloc(32);
+    store64(r, TS_SHA256);
+    store64(r + 8, hash_hex);
+    store64(r + 16, 0);
+    store64(r + 24, 1);
+    return r;
+}
+
+fn ts_request_hash_alg(r) { return load64(r); }
+fn ts_request_hash(r) { return load64(r + 8); }
+fn ts_request_nonce(r) { return load64(r + 16); }
+fn ts_request_cert_req(r) { return load64(r + 24); }
+
+fn ts_request_set_nonce(r) {
+    # Generate 16-byte random nonce
+    var nonce_buf = alloc(16);
+    var fd = file_open("/dev/urandom", 0, 0);
+    file_read(fd, nonce_buf, 16);
+    file_close(fd);
+    store64(r + 16, hex_encode(nonce_buf, 16));
+    return r;
+}
+
+fn ts_request_set_hash_alg(r, alg) {
+    store64(r, alg);
+    return r;
+}
+
+# ================================================================
+# Encode TimestampRequest to DER
+# ================================================================
+# Returns: { buffer_ptr, length } as Str (buffer is the data, len is the DER length)
+
+fn ts_request_to_der(r) {
+    _ts_init_oids();
+    var work = alloc(512);
+    var pos = 0;
+
+    # 1. Version INTEGER 1
+    var ver_val = alloc(1);
+    store8(ver_val, 1);
+    var ver_buf = alloc(8);
+    var ver_len = _der_write_tlv(ver_buf, DER_INTEGER, ver_val, 1);
+
+    # 2. AlgorithmIdentifier SEQUENCE { OID, NULL }
+    var oid = ts_hash_oid(load64(r));
+    var oid_buf = alloc(16);
+    var oid_tlv_len = _der_write_tlv(oid_buf, DER_OID, oid, 9);
+
+    var null_buf = alloc(2);
+    store8(null_buf, DER_NULL);
+    store8(null_buf + 1, 0);
+    var null_len = 2;
+
+    var alg_content = alloc(32);
+    memcpy(alg_content, oid_buf, oid_tlv_len);
+    memcpy(alg_content + oid_tlv_len, null_buf, null_len);
+    var alg_content_len = oid_tlv_len + null_len;
+
+    var alg_buf = alloc(48);
+    var alg_len = _der_write_sequence(alg_buf, alg_content, alg_content_len);
+
+    # 3. MessageImprint SEQUENCE { AlgId, OCTET STRING hash }
+    var hash_hex = load64(r + 8);
+    var hash_bytes = hex_decode(hash_hex);
+    var hash_bytes_len = str_len(hash_hex) / 2;
+
+    var hash_tlv = alloc(48);
+    var hash_tlv_len = _der_write_tlv(hash_tlv, DER_OCTET_STRING, hash_bytes, hash_bytes_len);
+
+    var mi_content = alloc(96);
+    memcpy(mi_content, alg_buf, alg_len);
+    memcpy(mi_content + alg_len, hash_tlv, hash_tlv_len);
+    var mi_content_len = alg_len + hash_tlv_len;
+
+    var mi_buf = alloc(128);
+    var mi_len = _der_write_sequence(mi_buf, mi_content, mi_content_len);
+
+    # 4. Build body = version + messageImprint [+ nonce] [+ certReq]
+    memcpy(work, ver_buf, ver_len);
+    pos = ver_len;
+    memcpy(work + pos, mi_buf, mi_len);
+    pos = pos + mi_len;
+
+    # 5. Optional nonce
+    var nonce_str = load64(r + 16);
+    if (nonce_str != 0) {
+        var nonce_bytes = hex_decode(nonce_str);
+        var nonce_bytes_len = str_len(nonce_str) / 2;
+        # Trim leading zeros for DER integer
+        var nonce_start = 0;
+        while (nonce_start < nonce_bytes_len - 1 && (load8(nonce_bytes + nonce_start) & 0xFF) == 0) {
+            nonce_start = nonce_start + 1;
+        }
+        var trimmed = nonce_bytes + nonce_start;
+        var trimmed_len = nonce_bytes_len - nonce_start;
+        # If high bit set, prepend 0x00
+        var nonce_enc = alloc(trimmed_len + 1);
+        var nonce_enc_len = trimmed_len;
+        if ((load8(trimmed) & 0x80) != 0) {
+            store8(nonce_enc, 0);
+            memcpy(nonce_enc + 1, trimmed, trimmed_len);
+            nonce_enc_len = trimmed_len + 1;
+        } else {
+            memcpy(nonce_enc, trimmed, trimmed_len);
+        }
+        var nonce_tlv = alloc(32);
+        var nonce_tlv_len = _der_write_tlv(nonce_tlv, DER_INTEGER, nonce_enc, nonce_enc_len);
+        memcpy(work + pos, nonce_tlv, nonce_tlv_len);
+        pos = pos + nonce_tlv_len;
+    }
+
+    # 6. Optional certReq
+    if (load64(r + 24) == 1) {
+        var cert_val = alloc(1);
+        store8(cert_val, 0xFF);
+        var cert_tlv = alloc(8);
+        var cert_tlv_len = _der_write_tlv(cert_tlv, DER_BOOLEAN, cert_val, 1);
+        memcpy(work + pos, cert_tlv, cert_tlv_len);
+        pos = pos + cert_tlv_len;
+    }
+
+    # 7. Wrap in outer SEQUENCE
+    var out = alloc(pos + 8);
+    var total = _der_write_sequence(out, work, pos);
+    return str_new(out, total);
+}
+
+# ================================================================
+# DER parsing helpers
+# ================================================================
+
+# Parse a TLV header. Returns total consumed bytes.
+# Sets _der_value_ptr and _der_value_len globals.
+var _der_value_ptr = 0;
+var _der_value_len = 0;
+
+fn _der_parse_tlv(data, data_len) {
+    if (data_len < 2) { return 0; }
+
+    var len_byte = load8(data + 1) & 0xFF;
+    var header_size = 2;
+    var length = len_byte;
+
+    if (len_byte >= 128) {
+        var num_bytes = len_byte & 0x7F;
+        if (data_len < 2 + num_bytes) { return 0; }
+        length = 0;
+        var i = 0;
+        while (i < num_bytes) {
+            length = (length << 8) | (load8(data + 2 + i) & 0xFF);
+            i = i + 1;
+        }
+        header_size = 2 + num_bytes;
+    }
+
+    var total = header_size + length;
+    if (data_len < total) { return 0; }
+
+    _der_value_ptr = data + header_size;
+    _der_value_len = length;
+    return total;
+}
+
+# Decode unsigned integer from DER bytes
+fn _der_decode_unsigned(data, len) {
+    var val = 0;
+    var i = 0;
+    while (i < len) {
+        val = (val << 8) | (load8(data + i) & 0xFF);
+        i = i + 1;
+    }
+    return val;
+}
+
+# ================================================================
+# TimestampResponse layout (24 bytes)
+# ================================================================
+#   +0   status         i64 (TS_* constant)
+#   +8   token          Str pointer (hex-encoded DER, 0 = none)
+#   +16  status_string  Str pointer (0 = none)
+
+fn ts_response_status(r) { return load64(r); }
+fn ts_response_token(r) { return load64(r + 8); }
+fn ts_response_status_string(r) { return load64(r + 16); }
+
+fn ts_response_from_der(data, data_len) {
+    var resp = fl_alloc(24);
+
+    # Parse outer SEQUENCE
+    var total = _der_parse_tlv(data, data_len);
+    if (total == 0) {
+        store64(resp, TS_REJECTION);
+        store64(resp + 8, 0);
+        store64(resp + 16, str_from("DER parse error"));
+        return resp;
+    }
+
+    var seq_data = _der_value_ptr;
+    var seq_len = _der_value_len;
+
+    # Parse PKIStatusInfo SEQUENCE
+    var si_total = _der_parse_tlv(seq_data, seq_len);
+    if (si_total == 0) {
+        store64(resp, TS_REJECTION);
+        store64(resp + 8, 0);
+        store64(resp + 16, str_from("status info parse error"));
+        return resp;
+    }
+
+    var si_data = _der_value_ptr;
+    var si_len = _der_value_len;
+
+    # Parse status INTEGER from PKIStatusInfo
+    var st_total = _der_parse_tlv(si_data, si_len);
+    if (st_total == 0) {
+        store64(resp, TS_REJECTION);
+        store64(resp + 8, 0);
+        store64(resp + 16, str_from("status integer parse error"));
+        return resp;
+    }
+
+    var status_val = _der_decode_unsigned(_der_value_ptr, _der_value_len);
+    store64(resp, status_val);
+
+    # Token = remaining bytes after PKIStatusInfo
+    var token_offset = si_total;
+    if (token_offset < seq_len) {
+        var token_ptr = seq_data + token_offset;
+        var token_len = seq_len - token_offset;
+        store64(resp + 8, hex_encode(token_ptr, token_len));
+    } else {
+        store64(resp + 8, 0);
+    }
+
+    store64(resp + 16, 0);
+    return resp;
+}
+
+# ================================================================
+# TimestampAttestation layout (48 bytes)
+# ================================================================
+#   +0   hash           Str pointer
+#   +8   hash_subject   i64 (TS_ENTRY_HASH, TS_MERKLE_ROOT, TS_CHAIN_HEAD)
+#   +16  hash_algorithm i64 (TS_SHA*)
+#   +24  token_der      Str pointer (hex-encoded)
+#   +32  tsa_url        Str pointer (0 = none)
+#   +40  created_at     Str pointer (RFC 3339)
+
+fn ts_attestation_new(hash, subject, algorithm, response) {
+    if (ts_status_is_granted(ts_response_status(response)) == 0) {
+        return 0;
+    }
+    var a = fl_alloc(48);
+    store64(a, hash);
+    store64(a + 8, subject);
+    store64(a + 16, algorithm);
+    store64(a + 24, ts_response_token(response));
+    store64(a + 32, 0);
+    store64(a + 40, timestamp_rfc3339(get_epoch_secs()));
+    return a;
+}
+
+fn ts_attestation_hash(a) { return load64(a); }
+fn ts_attestation_subject(a) { return load64(a + 8); }
+fn ts_attestation_algorithm(a) { return load64(a + 16); }
+fn ts_attestation_token(a) { return load64(a + 24); }
+fn ts_attestation_tsa_url(a) { return load64(a + 32); }
+fn ts_attestation_created_at(a) { return load64(a + 40); }
+
+fn ts_attestation_for_merkle_root(tree, response) {
+    return ts_attestation_new(merkle_tree_root(tree), TS_MERKLE_ROOT, TS_SHA256, response);
+}
+
+fn ts_attestation_verify_hash(a, hash) {
+    return constant_time_eq_str(load64(a), hash);
+}

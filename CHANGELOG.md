@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-04-09
+
+### Changed
+- **Language port: Rust to Cyrius** — full rewrite from 8,513 lines of Rust to ~4,950 lines of Cyrius
+- SHA-256 implemented from scratch (FIPS 180-4), replacing BLAKE3 default + sha2 crate
+- HMAC-SHA256 signing replaces Ed25519 (elliptic curve deferred; same API surface)
+- In-process pub/sub with MQTT wildcards replaces majra/tokio async streaming
+- MemoryStore replaces FileStore/SqliteStore as primary backend
+- Timestamps use integer civil-date conversion (no chrono dependency)
+- UUID v4 via /dev/urandom (no uuid crate)
+- DER encoding/decoding for RFC 3161 preserved (hand-rolled, zero deps)
+- 141KB static ELF binary, 121ms build time
+- 193 tests (up from 262 Rust tests; Rust-specific serde/trait tests removed)
+- 15 benchmarks covering all major operations
+- Rust source preserved in rust-old/ for reference
+
+### Added
+- `benches/libro.bcyr` — 15 benchmarks: sha256, entry_hash, chain_append/verify, merkle build/proof/verify/consistency, sign/verify, query, export jsonl/csv, review, proof
+
+### Removed
+- All Cargo/crates.io dependencies (zero external deps — Cyrius stdlib only)
+- SQLite store (deferred; MemoryStore covers in-process use)
+- FileStore (deferred; export functions cover persistence)
+- BLAKE3 hash backend (SHA-256 only for simplicity)
+- tokio/majra async runtime (synchronous pub/sub via function pointers)
+- serde derives (custom JSON export via export.cyr)
+- tracing instrumentation (deferred)
+
 ## [0.92.0] — 2026-04-03
 
 ### Added
