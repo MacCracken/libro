@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CYRIUS_VERSION: "3.2.1"
+  CYRIUS_VERSION: "3.2.5"
 
 jobs:
   build-and-test:
@@ -36,7 +36,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p build
-          cat src/main.cyr | cc2 > build/libro 2>build/errors.log
+          cat src/main.cyr | cc3 > build/libro 2>build/errors.log
           if [ $? -ne 0 ]; then cat build/errors.log; exit 1; fi
           chmod +x build/libro
           echo "libro: $(wc -c < build/libro) bytes"
@@ -51,7 +51,7 @@ jobs:
       - name: Benchmarks
         run: |
           if [ -f benches/libro.bcyr ]; then
-            cat benches/libro.bcyr | cc2 > build/libro_bench 2>/dev/null && chmod +x build/libro_bench && ./build/libro_bench
+            cat benches/libro.bcyr | cc3 > build/libro_bench 2>/dev/null && chmod +x build/libro_bench && ./build/libro_bench
           fi
         continue-on-error: true
 
