@@ -19,12 +19,14 @@ include "lib/json.cyr"
 include "lib/fnptr.cyr"
 include "lib/bench.cyr"
 include "lib/sakshi.cyr"
+include "lib/bigint.cyr"
+include "lib/chrono.cyr"
+include "lib/sigil.cyr"
 
 # ================================================================
 # Libro modules
 # ================================================================
 include "src/error.cyr"
-include "src/sha256.cyr"
 include "src/hasher.cyr"
 include "src/entry.cyr"
 include "src/verify.cyr"
@@ -156,6 +158,7 @@ fn bench_proof_unsigned(ignored) {
 fn main() {
     alloc_init();
     fl_init();
+    ed25519_init();
 
     println("=== libro benchmarks ===");
 

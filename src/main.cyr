@@ -16,12 +16,18 @@ include "lib/freelist.cyr"
 include "lib/hashmap.cyr"
 include "lib/json.cyr"
 include "lib/sakshi.cyr"
+include "lib/bigint.cyr"
+include "lib/chrono.cyr"
+
+# ================================================================
+# Sigil — crypto primitives (SHA-256, Ed25519, HMAC, hex, ct)
+# ================================================================
+include "lib/sigil.cyr"
 
 # ================================================================
 # Libro modules (dependency order)
 # ================================================================
 include "src/error.cyr"
-include "src/sha256.cyr"
 include "src/hasher.cyr"
 include "src/entry.cyr"
 include "src/verify.cyr"
@@ -47,7 +53,7 @@ include "src/streaming.cyr"
 fn test_sha256_empty() {
     var digest = alloc(32);
     sha256("", 0, digest);
-    var hex = hex_encode(digest, 32);
+    var hex = hex_encode_str(digest, 32);
     var expected = str_from("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     assert(str_eq(hex, expected) == 1, "sha256 empty string");
 }
@@ -55,7 +61,7 @@ fn test_sha256_empty() {
 fn test_sha256_abc() {
     var digest = alloc(32);
     sha256("abc", 3, digest);
-    var hex = hex_encode(digest, 32);
+    var hex = hex_encode_str(digest, 32);
     var expected = str_from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     assert(str_eq(hex, expected) == 1, "sha256 abc");
 }
@@ -64,7 +70,7 @@ fn test_sha256_448bit() {
     var msg = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
     var digest = alloc(32);
     sha256(msg, 56, digest);
-    var hex = hex_encode(digest, 32);
+    var hex = hex_encode_str(digest, 32);
     var expected = str_from("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
     assert(str_eq(hex, expected) == 1, "sha256 448-bit NIST");
 }
@@ -75,7 +81,7 @@ fn test_sha256_multiblock() {
     var msg = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
     var digest = alloc(32);
     sha256(msg, 112, digest);
-    var hex = hex_encode(digest, 32);
+    var hex = hex_encode_str(digest, 32);
     var expected = str_from("cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
     assert(str_eq(hex, expected) == 1, "sha256 896-bit NIST");
 }
@@ -87,7 +93,7 @@ fn test_sha256_incremental() {
     sha256_update(ctx, "bc", 2);
     var digest = alloc(32);
     sha256_finalize(ctx, digest);
-    var hex = hex_encode(digest, 32);
+    var hex = hex_encode_str(digest, 32);
     var expected = str_from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     assert(str_eq(hex, expected) == 1, "sha256 incremental");
     fl_free(ctx);
@@ -99,10 +105,10 @@ fn test_hex_roundtrip() {
     store8(data + 1, 0xAD);
     store8(data + 2, 0xBE);
     store8(data + 3, 0xEF);
-    var hex = hex_encode(data, 4);
+    var hex = hex_encode_str(data, 4);
     assert(str_eq(hex, str_from("deadbeef")) == 1, "hex encode");
 
-    var decoded = hex_decode(hex);
+    var decoded = hex_decode_str(hex);
     assert((load8(decoded) & 0xFF) == 0xDE, "hex decode byte 0");
     assert((load8(decoded + 1) & 0xFF) == 0xAD, "hex decode byte 1");
     assert((load8(decoded + 2) & 0xFF) == 0xBE, "hex decode byte 2");
@@ -113,15 +119,15 @@ fn test_hex_encode_zeros() {
     var data = alloc(2);
     store8(data, 0x00);
     store8(data + 1, 0x0F);
-    var hex = hex_encode(data, 2);
+    var hex = hex_encode_str(data, 2);
     assert(str_eq(hex, str_from("000f")) == 1, "hex encode zeros");
 }
 
-fn test_constant_time_eq() {
-    assert(constant_time_eq("abc", 3, "abc", 3) == 1, "ct_eq equal");
-    assert(constant_time_eq("abc", 3, "abd", 3) == 0, "ct_eq differ");
-    assert(constant_time_eq("abc", 3, "ab", 2) == 0, "ct_eq length mismatch");
-    assert(constant_time_eq("", 0, "", 0) == 1, "ct_eq empty");
+fn test_ct_eq() {
+    assert(ct_eq("abc", 3, "abc", 3) == 1, "ct_eq equal");
+    assert(ct_eq("abc", 3, "abd", 3) == 0, "ct_eq differ");
+    assert(ct_eq("abc", 3, "ab", 2) == 0, "ct_eq length mismatch");
+    assert(ct_eq("", 0, "", 0) == 1, "ct_eq empty");
 }
 
 fn test_constant_time_eq_str() {
@@ -787,7 +793,7 @@ fn test_signing_roundtrip() {
 
     var sig = sign_entry(sk, e);
     assert(sig != 0, "entry signed");
-    assert(str_len(entry_sig_signature(sig)) == 64, "signature is 64-char hex");
+    assert(str_len(entry_sig_signature(sig)) == 128, "signature is 128-char hex");
 
     # Verify with the signing key's verifying key
     var vk = verifying_key_from_signing(sk);
@@ -1191,6 +1197,7 @@ fn test_filestore_empty() {
 fn main() {
     alloc_init();
     fl_init();
+    ed25519_init();
 
     test_group("SHA-256");
     test_sha256_empty();
@@ -1204,7 +1211,7 @@ fn main() {
     test_hex_encode_zeros();
 
     test_group("Constant-time comparison");
-    test_constant_time_eq();
+    test_ct_eq();
     test_constant_time_eq_str();
 
     test_group("Severity");

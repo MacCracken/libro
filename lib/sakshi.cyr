@@ -1,6 +1,6 @@
 # sakshi.cyr — tracing and error handling (stderr profile)
 # Single-file distribution. Zero heap allocation. No external dependencies.
-# Version: 0.8.0
+# Version: 0.9.0
 #
 # Minimal global footprint — no ring buffer, no UDP, no span stack.
 # For the full version (spans, ring buffer, UDP): include "lib/sakshi_full.cyr"
@@ -103,6 +103,42 @@ fn _sk_write_str(buf, pos, cap, s, slen) {
 }
 
 # ================================================================
+# Level-to-string helper
+# ================================================================
+
+fn _sk_level_str(level, out_str, out_len) {
+    match level {
+        0 => { store64(out_str, "ERROR"); store64(out_len, 5); }
+        1 => { store64(out_str, "WARN");  store64(out_len, 4); }
+        2 => { store64(out_str, "INFO");  store64(out_len, 4); }
+        3 => { store64(out_str, "DEBUG"); store64(out_len, 5); }
+        4 => { store64(out_str, "TRACE"); store64(out_len, 5); }
+        _ => { store64(out_str, "?????"); store64(out_len, 5); }
+    }
+    return 0;
+}
+
+# ================================================================
+# Text formatter
+# ================================================================
+
+fn _sk_fmt_line(buf, cap, level_str, level_len, msg, msg_len) {
+    var pos: i64 = 0;
+    var ts = _sk_now_ns();
+    if (pos < cap) { store8(buf + pos, 91); pos = pos + 1; }
+    pos = _sk_write_int(buf, pos, cap, ts);
+    if (pos < cap) { store8(buf + pos, 93); pos = pos + 1; }
+    if (pos < cap) { store8(buf + pos, 32); pos = pos + 1; }
+    if (pos < cap) { store8(buf + pos, 91); pos = pos + 1; }
+    pos = _sk_write_str(buf, pos, cap, level_str, level_len);
+    if (pos < cap) { store8(buf + pos, 93); pos = pos + 1; }
+    if (pos < cap) { store8(buf + pos, 32); pos = pos + 1; }
+    pos = _sk_write_str(buf, pos, cap, msg, msg_len);
+    if (pos < cap) { store8(buf + pos, 10); pos = pos + 1; }
+    return pos;
+}
+
+# ================================================================
 # Output
 # ================================================================
 
@@ -138,29 +174,11 @@ fn sakshi_output_file_close() {
 fn _sk_emit(level, msg, msg_len) {
     if (level > _sk_log_level) { return 0; }
     var buf[256];
-    var pos: i64 = 0;
-    var ts = _sk_now_ns();
-    if (pos < 256) { store8(&buf + pos, 91); pos = pos + 1; }
-    pos = _sk_write_int(&buf, pos, 256, ts);
-    if (pos < 256) { store8(&buf + pos, 93); pos = pos + 1; }
-    if (pos < 256) { store8(&buf + pos, 32); pos = pos + 1; }
-    if (pos < 256) { store8(&buf + pos, 91); pos = pos + 1; }
-    var ls = "?????";
-    var ll = 5;
-    match level {
-        0 => { ls = "ERROR"; ll = 5; }
-        1 => { ls = "WARN"; ll = 4; }
-        2 => { ls = "INFO"; ll = 4; }
-        3 => { ls = "DEBUG"; ll = 5; }
-        4 => { ls = "TRACE"; ll = 5; }
-        _ => {}
-    }
-    pos = _sk_write_str(&buf, pos, 256, ls, ll);
-    if (pos < 256) { store8(&buf + pos, 93); pos = pos + 1; }
-    if (pos < 256) { store8(&buf + pos, 32); pos = pos + 1; }
-    pos = _sk_write_str(&buf, pos, 256, msg, msg_len);
-    if (pos < 256) { store8(&buf + pos, 10); pos = pos + 1; }
-    _sk_write(&buf, pos);
+    var ls: i64 = 0;
+    var ll: i64 = 0;
+    _sk_level_str(level, &ls, &ll);
+    var len = _sk_fmt_line(&buf, 256, ls, ll, msg, msg_len);
+    _sk_write(&buf, len);
     return 0;
 }
 

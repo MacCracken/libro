@@ -83,19 +83,19 @@ fn uuid_v4(buf) {
 # Format UUID as 8-4-4-4-12 hex string (36 chars)
 fn uuid_format(buf) {
     var sb = str_builder_new();
-    var hex = hex_encode(buf, 4);
+    var hex = hex_encode_str(buf, 4);
     str_builder_add(sb, hex);
     str_builder_add_cstr(sb, "-");
-    hex = hex_encode(buf + 4, 2);
+    hex = hex_encode_str(buf + 4, 2);
     str_builder_add(sb, hex);
     str_builder_add_cstr(sb, "-");
-    hex = hex_encode(buf + 6, 2);
+    hex = hex_encode_str(buf + 6, 2);
     str_builder_add(sb, hex);
     str_builder_add_cstr(sb, "-");
-    hex = hex_encode(buf + 8, 2);
+    hex = hex_encode_str(buf + 8, 2);
     str_builder_add(sb, hex);
     str_builder_add_cstr(sb, "-");
-    hex = hex_encode(buf + 10, 6);
+    hex = hex_encode_str(buf + 10, 6);
     str_builder_add(sb, hex);
     return str_builder_build(sb);
 }

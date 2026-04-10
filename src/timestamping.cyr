@@ -160,7 +160,7 @@ fn ts_request_set_nonce(r) {
     var fd = file_open("/dev/urandom", 0, 0);
     file_read(fd, nonce_buf, 16);
     file_close(fd);
-    store64(r + 16, hex_encode(nonce_buf, 16));
+    store64(r + 16, hex_encode_str(nonce_buf, 16));
     return r;
 }
 
@@ -205,7 +205,7 @@ fn ts_request_to_der(r) {
 
     # 3. MessageImprint SEQUENCE { AlgId, OCTET STRING hash }
     var hash_hex = load64(r + 8);
-    var hash_bytes = hex_decode(hash_hex);
+    var hash_bytes = hex_decode_str(hash_hex);
     var hash_bytes_len = str_len(hash_hex) / 2;
 
     var hash_tlv = alloc(48);
@@ -228,7 +228,7 @@ fn ts_request_to_der(r) {
     # 5. Optional nonce
     var nonce_str = load64(r + 16);
     if (nonce_str != 0) {
-        var nonce_bytes = hex_decode(nonce_str);
+        var nonce_bytes = hex_decode_str(nonce_str);
         var nonce_bytes_len = str_len(nonce_str) / 2;
         # Trim leading zeros for DER integer
         var nonce_start = 0;
@@ -371,7 +371,7 @@ fn ts_response_from_der(data, data_len) {
     if (token_offset < seq_len) {
         var token_ptr = seq_data + token_offset;
         var token_len = seq_len - token_offset;
-        store64(resp + 8, hex_encode(token_ptr, token_len));
+        store64(resp + 8, hex_encode_str(token_ptr, token_len));
     } else {
         store64(resp + 8, 0);
     }
