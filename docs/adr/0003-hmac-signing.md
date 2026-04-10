@@ -17,4 +17,4 @@ Use HMAC-SHA256 (keyed hash) as the signing primitive. Maintain the same API sur
 - **Same security guarantees** for single-party verification (the signer verifies their own chain)
 - **Not suitable** for third-party verification without key disclosure
 - **API-compatible** — upgrading to Ed25519 changes only the internal crypto, not the function signatures
-- **Planned upgrade** in v1.1 when Cyrius gains elliptic curve support or FFI to a validated library
+- **Planned upgrade:** blocked on sigil converting to Cyrius. Sigil will provide Ed25519 (and eventually ML-DSA) as the ecosystem crypto primitive source. Do NOT attempt Ed25519 in libro — wait for sigil. See roadmap.

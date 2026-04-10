@@ -17,5 +17,5 @@ Ship v1.0 with MemoryStore as the sole backend. Provide export functions (JSON L
 - **Persistence via export** — consumers can write chains to disk using `export_jsonl()` or `export_csv()` at checkpoints
 - **No concurrent access** — single process owns the chain (no flock needed)
 - **Streaming verification** still works — `memstore_verify_streamed()` provides O(chunk_size) memory verification
-- **FileStore planned** for v1.1 — straightforward JSON Lines append using `file_write()`
-- **SqliteStore** requires Cyrius FFI or native SQL support — deferred to v1.2+
+- **FileStore** shipped in v1.0.1 — JSON Lines append with flock locking
+- **SQL storage** blocked on patra + sigil integration. Patra bundles its own SHA-256 which conflicts with libro's. Once both use sigil's SHA-256, patra can be included as the SQL backend. Do NOT include patra.cyr directly until then. See roadmap.
