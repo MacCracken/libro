@@ -187,32 +187,32 @@ fn filestore_query(s, filter) {
 # Details is stored as an escaped string value, not a nested object.
 fn _filestore_entry_json(sb, e) {
     str_builder_add_cstr(sb, "{\"id\":\"");
-    str_builder_add(sb, uuid_format(entry_id(e)));
-    str_builder_add_cstr(sb, "\",\"timestamp\":\"");
-    str_builder_add(sb, entry_timestamp(e));
-    str_builder_add_cstr(sb, "\",\"severity\":\"");
-    str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
-    str_builder_add_cstr(sb, "\",\"source\":\"");
-    str_builder_add(sb, entry_source(e));
-    str_builder_add_cstr(sb, "\",\"action\":\"");
-    str_builder_add(sb, entry_action(e));
-    str_builder_add_cstr(sb, "\",\"details\":\"");
-    # Escape details JSON as a string value (avoids nested object parse issues)
-    _sb_json_escape(sb, entry_details(e));
-    str_builder_add_cstr(sb, "\",\"agent_id\":\"");
-    var aid = entry_agent_id(e);
-    if (aid == 0) {
-        str_builder_add_cstr(sb, "");
-    } else {
-        str_builder_add(sb, aid);
-    }
-    str_builder_add_cstr(sb, "\",\"prev_hash\":\"");
-    str_builder_add(sb, entry_prev_hash(e));
-    str_builder_add_cstr(sb, "\",\"hash\":\"");
-    str_builder_add(sb, entry_hash(e));
-    str_builder_add_cstr(sb, "\",\"hash_algorithm\":\"");
-    str_builder_add(sb, entry_hash_algorithm(e));
-    str_builder_add_cstr(sb, "\"}");
+        str_builder_add(sb, uuid_format(entry_id(e)));
+        str_builder_add_cstr(sb, "\",\"timestamp\":\"");
+        str_builder_add(sb, entry_timestamp(e));
+        str_builder_add_cstr(sb, "\",\"severity\":\"");
+        str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
+        str_builder_add_cstr(sb, "\",\"source\":\"");
+        str_builder_add(sb, entry_source(e));
+        str_builder_add_cstr(sb, "\",\"action\":\"");
+        str_builder_add(sb, entry_action(e));
+        str_builder_add_cstr(sb, "\",\"details\":\"");
+        # Escape details JSON as a string value (avoids nested object parse issues)
+        _sb_json_escape(sb, entry_details(e));
+        str_builder_add_cstr(sb, "\",\"agent_id\":\"");
+        var aid = entry_agent_id(e);
+        if (aid == 0) {
+            str_builder_add_cstr(sb, "");
+        } else {
+            str_builder_add(sb, aid);
+        }
+        str_builder_add_cstr(sb, "\",\"prev_hash\":\"");
+        str_builder_add(sb, entry_prev_hash(e));
+        str_builder_add_cstr(sb, "\",\"hash\":\"");
+        str_builder_add(sb, entry_hash(e));
+        str_builder_add_cstr(sb, "\",\"hash_algorithm\":\"");
+        str_builder_add(sb, entry_hash_algorithm(e));
+        str_builder_add_cstr(sb, "\"}");
     return 0;
 }
 
