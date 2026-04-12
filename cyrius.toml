@@ -1,5 +1,5 @@
 name = "libro"
-version = "1.0.2"
+version = "1.0.3"
 license = "GPL-3.0-only"
 cyrius-version = "3.4.20"
 entry = "src/main.cyr"

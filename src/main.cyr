@@ -1567,6 +1567,7 @@ fn main() {
     alloc_init();
     fl_init();
     ed25519_init();
+    patra_init();
 
     test_group("SHA-256");
     test_sha256_empty();
@@ -1705,15 +1706,16 @@ fn main() {
     # investigation. Tracked in cyrius docs/development/issues/libro-unblock.md.
     # Ship the 202 non-patra tests first, reland once isolated.
     #
-    # test_group("PatraStore");
+    alloc_reset(); fl_init(); patra_init();
+    test_group("PatraStore");
     # patra_init();
-    # test_patrastore_open_close();
+    test_patrastore_open_close();
     # test_patrastore_append_load();
-    # test_patrastore_verify();
-    # test_patrastore_query();
-    # test_patrastore_by_source();
-    # test_patrastore_transaction();
-    # test_patrastore_persistence();
+    test_patrastore_verify();
+    test_patrastore_query();
+    test_patrastore_by_source();
+    test_patrastore_transaction();
+    test_patrastore_persistence();
     #
     # test_group("Gap coverage");
     # test_retention_keep_duration();

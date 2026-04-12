@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [1.0.3] - 2026-04-12
+
+### Fixed
+- **PatraStore tests ungated (6 of 7)**: `open_close`, `verify`, `query`,
+  `by_source`, `transaction`, and `persistence` tests now run as part of the
+  full suite. Heap is reset (`alloc_reset(); fl_init(); patra_init()`) before
+  PatraStore to isolate from prior test allocations.
+- `patra_init()` moved to startup (after `ed25519_init()`) so SQL state is
+  initialized before any heap activity.
+
+### Known issue
+- `test_patrastore_append_load` remains gated — crashes in `str_builder_add`
+  during INSERT SQL construction after the full test suite. Works in isolation.
+  Suspected str_builder or patra interaction bug, not a compiler issue.
+
+### Changed
+- Cyrius toolchain pinned to v3.6.8
+
 
 ## [1.0.2] - 2026-04-11
 
