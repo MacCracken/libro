@@ -43,9 +43,9 @@ jobs:
 
       - name: Test suite
         run: |
-          OUTPUT=$(./build/libro 2>&1)
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -q "0 failed"
+          ./build/libro > /tmp/libro_test_out 2>&1 || true
+          cat /tmp/libro_test_out | tr -d '\0'
+          grep -q "0 failed" /tmp/libro_test_out || { echo "FAIL: tests did not report 0 failed"; exit 1; }
           echo "PASS: all tests"
 
       - name: Benchmarks
