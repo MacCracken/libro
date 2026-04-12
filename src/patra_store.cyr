@@ -173,16 +173,16 @@ fn _patrastore_row_to_entry(rs, row) {
     _filestore_parse_uuid(e, str_from(id_str));
 
     store64(e + 16, str_from(
-        patra_result_get_str(rs, row, 1)));
+    patra_result_get_str(rs, row, 1)));
 
     store64(e + 24, _parse_severity(str_from(
-        patra_result_get_str(rs, row, 2))));
+    patra_result_get_str(rs, row, 2))));
 
     store64(e + 32, str_from(
-        patra_result_get_str(rs, row, 3)));
+    patra_result_get_str(rs, row, 3)));
 
     store64(e + 40, str_from(
-        patra_result_get_str(rs, row, 4)));
+    patra_result_get_str(rs, row, 4)));
 
     var det = patra_result_get_str(rs, row, 5);
     if (strlen(det) > 0) {
@@ -199,10 +199,10 @@ fn _patrastore_row_to_entry(rs, row) {
     }
 
     store64(e + 64, str_from(
-        patra_result_get_str(rs, row, 7)));
+    patra_result_get_str(rs, row, 7)));
 
     store64(e + 72, str_from(
-        patra_result_get_str(rs, row, 8)));
+    patra_result_get_str(rs, row, 8)));
 
     var ha = patra_result_get_str(rs, row, 9);
     if (strlen(ha) > 0) {
@@ -265,7 +265,7 @@ fn patrastore_by_source(s, source) {
     var db = load64(s);
     _ps_sb = str_builder_new();
     str_builder_add_cstr(_ps_sb,
-        "SELECT * FROM audit_entries WHERE src = '");
+    "SELECT * FROM audit_entries WHERE src = '");
     str_builder_add(_ps_sb, source);
     str_builder_add_cstr(_ps_sb, "'");
     var sql = str_builder_build(_ps_sb);
