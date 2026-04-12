@@ -1,0 +1,34 @@
+# patra_crash_repro.cyr — documents runtime crash condition
+#
+# When libro's full src/main.cyr (240 tests, ~1,780 lines of test code)
+# includes both lib/sigil.cyr and lib/patra.cyr, the binary compiles
+# (348KB on cc3 3.4.8) but crashes at runtime with SIGSEGV during
+# patra operations.
+#
+# Proven:
+#   1. sigil + patra + libro modules + minimal main = WORKS (303KB)
+#   2. sigil + patra + libro modules + 50 stub test fns = WORKS (303KB)
+#   3. sigil + libro modules + 240 real tests (no patra) = WORKS (266KB)
+#   4. sigil + patra + libro modules + 240 real tests = CRASHES (348KB)
+#
+# The crash is a runtime SIGSEGV, not a compile error.
+# It occurs during patra_open() or patra_exec() calls.
+# The binary compiles cleanly with no warnings.
+#
+# Root cause: unknown. Likely cc3 codegen issue with binaries
+# exceeding ~340KB or ~250 functions. Possibly:
+#   - Code section overflow / bad jump targets
+#   - Data section collision with heap
+#   - Global variable address miscalculation at scale
+#
+# To reproduce:
+#   1. In src/main.cyr, uncomment:
+#      include "lib/patra.cyr"
+#      include "src/patra_store.cyr"
+#      test_group("PatraStore") and all test_patrastore_* calls
+#   2. Build: cat src/main.cyr | cc3 > build/libro
+#   3. Run:  ./build/libro  # crashes at PatraStore test group
+#
+# Filed for: Cyrius compiler investigation
+# Blocked:   libro PatraStore in main test suite
+# See also:  tests/patra_standalone.cyr (proves patra code is correct)

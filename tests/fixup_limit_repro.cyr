@@ -1,0 +1,89 @@
+# fixup_limit_repro.cyr — reproduces cc3 fixup table crash
+# cc3 segfaults when compiling sigil + patra + libro (~13K lines)
+#
+# Expected: compiles and runs, prints "OK"
+# Actual:   cc3 exits with SIGSEGV (exit 139), produces 0-byte output
+#
+# Root cause: fixup table limit (~8192 forward references) exceeded
+# when all three libraries are included in a single compilation unit.
+#
+# To reproduce:
+#   cat tests/fixup_limit_repro.cyr | cc3 > /tmp/fixup_test 2>&1
+#   echo $?  # expected: 0, actual: 139
+#
+# Note: minimal repro (85 lines user code) compiles on 3.4.2.
+#       Full libro main.cyr (1,781 lines + 240 tests) crashes.
+#       Total with libs: ~14,500 lines = over fixup limit.
+#
+# Filed for: Cyrius 3.4.4
+# Blocked:   libro PatraStore in main test suite
+
+# --- stdlib ---
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/freelist.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/sakshi.cyr"
+include "lib/bigint.cyr"
+include "lib/chrono.cyr"
+
+# --- sigil (4,259 lines) ---
+include "lib/sigil.cyr"
+
+# --- patra (3,013 lines) ---
+include "lib/patra.cyr"
+
+# --- libro modules (~6,000 lines) ---
+include "src/error.cyr"
+include "src/hasher.cyr"
+include "src/entry.cyr"
+include "src/verify.cyr"
+include "src/query.cyr"
+include "src/retention.cyr"
+include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
+include "src/review.cyr"
+include "src/merkle.cyr"
+include "src/signing.cyr"
+include "src/anchoring.cyr"
+include "src/timestamping.cyr"
+include "src/proof.cyr"
+include "src/kernel_audit.cyr"
+include "src/file_store.cyr"
+include "src/patra_store.cyr"
+include "src/streaming.cyr"
+
+fn main() {
+    alloc_init();
+    fl_init();
+    ed25519_init();
+    patra_init();
+
+    # Minimal smoke test
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("test"),
+        str_from("fixup"), str_from("{}"));
+    var err = chain_verify(c);
+
+    sys_unlink("/tmp/fixup_test.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/fixup_test.patra"));
+    var e = vec_get(chain_entries(c), 0);
+    patrastore_append(ps, e);
+    assert(patrastore_len(ps) == 1, "patra works");
+    patrastore_close(ps);
+    sys_unlink("/tmp/fixup_test.patra");
+    sys_unlink("/tmp/fixup_test.patra.wal");
+
+    println("OK — sigil + patra + libro compiled");
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,132 @@
+# patra_standalone.cyr — proves PatraStore works in isolation
+# This compiles and runs correctly. Compare with patra_crash_repro.cyr
+# which crashes when the full libro+sigil stack is loaded first.
+#
+# To run:
+#   cat tests/patra_standalone.cyr | cc3 > /tmp/patra_standalone
+#   chmod +x /tmp/patra_standalone
+#   /tmp/patra_standalone  # exits 0, prints "ALL PASS"
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/freelist.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/sakshi.cyr"
+include "lib/bigint.cyr"
+include "lib/chrono.cyr"
+include "lib/sigil.cyr"
+include "lib/patra.cyr"
+
+include "src/error.cyr"
+include "src/hasher.cyr"
+include "src/entry.cyr"
+include "src/verify.cyr"
+include "src/query.cyr"
+include "src/retention.cyr"
+include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
+include "src/review.cyr"
+include "src/merkle.cyr"
+include "src/signing.cyr"
+include "src/anchoring.cyr"
+include "src/timestamping.cyr"
+include "src/proof.cyr"
+include "src/kernel_audit.cyr"
+include "src/file_store.cyr"
+include "src/patra_store.cyr"
+
+fn main() {
+    alloc_init();
+    fl_init();
+    ed25519_init();
+    patra_init();
+
+    println("=== patra standalone test ===");
+
+    # Test 1: open/close
+    sys_unlink("/tmp/ps_standalone.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/ps_standalone.patra"));
+    assert(ps != 0, "open");
+    assert(patrastore_is_empty(ps) == 1, "empty");
+    patrastore_close(ps);
+    println("  open/close: PASS");
+
+    # Test 2: append + load
+    sys_unlink("/tmp/ps_standalone2.patra");
+    ps = patrastore_open(str_from(
+        "/tmp/ps_standalone2.patra"));
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"),
+        str_from("login"), det, str_from(""));
+    patrastore_append(ps, e1);
+    var e2 = entry_new(SEV_WARNING, str_from("audit"),
+        str_from("read"), det, entry_hash(e1));
+    patrastore_append(ps, e2);
+    assert(patrastore_len(ps) == 2, "len 2");
+    var loaded = patrastore_load_all(ps);
+    assert(vec_len(loaded) == 2, "loaded 2");
+    var le1 = vec_get(loaded, 0);
+    assert(str_eq(entry_hash(le1),
+        entry_hash(e1)) == 1, "hash match");
+    patrastore_close(ps);
+    println("  append/load: PASS");
+
+    # Test 3: verify
+    sys_unlink("/tmp/ps_standalone3.patra");
+    ps = patrastore_open(str_from(
+        "/tmp/ps_standalone3.patra"));
+    var prev = str_from("");
+    var i = 0;
+    while (i < 3) {
+        var e = entry_new(SEV_INFO, str_from("s"),
+            str_from("a"), det, prev);
+        patrastore_append(ps, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    var result = patrastore_load_and_verify(ps);
+    assert(vec_len(result) == 3, "verify 3");
+    patrastore_close(ps);
+    println("  verify: PASS");
+
+    # Test 4: persistence
+    sys_unlink("/tmp/ps_standalone4.patra");
+    var path = str_from("/tmp/ps_standalone4.patra");
+    ps = patrastore_open(path);
+    var e = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, str_from(""));
+    patrastore_append(ps, e);
+    var saved = entry_hash(e);
+    patrastore_close(ps);
+    var ps2 = patrastore_open(path);
+    assert(patrastore_len(ps2) == 1, "persisted");
+    loaded = patrastore_load_all(ps2);
+    assert(str_eq(entry_hash(vec_get(loaded, 0)),
+        saved) == 1, "hash survives");
+    patrastore_close(ps2);
+    println("  persistence: PASS");
+
+    # Cleanup
+    sys_unlink("/tmp/ps_standalone.patra");
+    sys_unlink("/tmp/ps_standalone.patra.wal");
+    sys_unlink("/tmp/ps_standalone2.patra");
+    sys_unlink("/tmp/ps_standalone2.patra.wal");
+    sys_unlink("/tmp/ps_standalone3.patra");
+    sys_unlink("/tmp/ps_standalone3.patra.wal");
+    sys_unlink("/tmp/ps_standalone4.patra");
+    sys_unlink("/tmp/ps_standalone4.patra.wal");
+
+    println("");
+    println("ALL PASS");
+    return assert_summary();
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

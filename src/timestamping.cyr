@@ -232,8 +232,13 @@ fn ts_request_to_der(r) {
         var nonce_bytes_len = str_len(nonce_str) / 2;
         # Trim leading zeros for DER integer
         var nonce_start = 0;
-        while (nonce_start < nonce_bytes_len - 1 && (load8(nonce_bytes + nonce_start) & 0xFF) == 0) {
-            nonce_start = nonce_start + 1;
+        var ns_max = nonce_bytes_len - 1;
+        while (nonce_start < ns_max) {
+            var nb = load8(nonce_bytes + nonce_start);
+            if ((nb & 0xFF) != 0) { nonce_start = ns_max; }
+            if ((nb & 0xFF) == 0) {
+                nonce_start = nonce_start + 1;
+            }
         }
         var trimmed = nonce_bytes + nonce_start;
         var trimmed_len = nonce_bytes_len - nonce_start;

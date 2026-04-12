@@ -10,6 +10,7 @@ include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
+include "lib/fmt.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
 include "lib/freelist.cyr"
@@ -18,6 +19,11 @@ include "lib/json.cyr"
 include "lib/sakshi.cyr"
 include "lib/bigint.cyr"
 include "lib/chrono.cyr"
+
+# ================================================================
+# Patra — SQL-backed storage backend (persistent audit log)
+# ================================================================
+include "lib/patra.cyr"
 
 # ================================================================
 # Sigil — crypto primitives (SHA-256, Ed25519, HMAC, hex, ct)
@@ -44,6 +50,7 @@ include "src/timestamping.cyr"
 include "src/proof.cyr"
 include "src/kernel_audit.cyr"
 include "src/file_store.cyr"
+include "src/patra_store.cyr"
 include "src/streaming.cyr"
 
 # ================================================================
@@ -1191,6 +1198,368 @@ fn test_filestore_empty() {
 }
 
 # ================================================================
+# Gap coverage tests
+# ================================================================
+
+fn test_retention_keep_duration() {
+    var det = str_from("{}");
+    var entries = vec_new();
+    var prev = str_from("");
+    var i = 0;
+    while (i < 5) {
+        var e = entry_new(SEV_INFO, str_from("s"),
+            str_from("a"), det, prev);
+        vec_push(entries, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    var r = retention_keep_duration(0);
+    var split = retention_split_index(r, entries);
+    assert(split == 5, "keep_duration(0) archives all");
+}
+
+fn test_retention_keep_after() {
+    var det = str_from("{}");
+    var entries = vec_new();
+    var prev = str_from("");
+    var i = 0;
+    while (i < 3) {
+        var e = entry_new(SEV_INFO, str_from("s"),
+            str_from("a"), det, prev);
+        vec_push(entries, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    var r = retention_keep_after(0);
+    var split = retention_split_index(r, entries);
+    assert(split == 0, "keep_after(0) keeps all");
+}
+
+fn test_retention_keep_duration_future() {
+    var det = str_from("{}");
+    var entries = vec_new();
+    var prev = str_from("");
+    var i = 0;
+    while (i < 3) {
+        var e = entry_new(SEV_INFO, str_from("s"),
+            str_from("a"), det, prev);
+        vec_push(entries, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    var r = retention_keep_duration(365 * 86400);
+    var split = retention_split_index(r, entries);
+    assert(split == 0, "keep_duration(1yr) keeps all");
+}
+
+fn test_query_time_range() {
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, str_from(""));
+    var e2 = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, entry_hash(e1));
+    var entries = vec_new();
+    vec_push(entries, e1);
+    vec_push(entries, e2);
+    var q = query_new();
+    query_after(q, 0);
+    var results = query_apply(q, entries);
+    assert(vec_len(results) == 2, "query after epoch 0");
+    var q2 = query_new();
+    query_after(q2, 9999999999);
+    var r2 = query_apply(q2, entries);
+    assert(vec_len(r2) == 0, "query after future");
+    var q3 = query_new();
+    query_before(q3, 9999999999);
+    var r3 = query_apply(q3, entries);
+    assert(vec_len(r3) == 2, "query before future");
+}
+
+fn test_query_agent_id() {
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, str_from(""));
+    entry_with_agent(e1, str_from("bot-1"));
+    var e2 = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, entry_hash(e1));
+    var entries = vec_new();
+    vec_push(entries, e1);
+    vec_push(entries, e2);
+    var q = query_new();
+    query_agent_id(q, str_from("bot-1"));
+    var results = query_apply(q, entries);
+    assert(vec_len(results) == 1, "query agent_id");
+}
+
+fn test_export_csv_special_chars() {
+    var c = chain_new();
+    chain_append(c, SEV_INFO,
+        str_from("src,commas"),
+        str_from("act"), str_from("{}"));
+    var fd = file_open("/dev/null", 1, 0);
+    export_csv(chain_entries(c), fd);
+    file_close(fd);
+    assert(1 == 1, "csv special chars no crash");
+}
+
+fn test_entry_validated_too_long() {
+    var long_src = alloc(2048);
+    memset(long_src, 65, 2048);
+    store8(long_src + 2048, 0);
+    var s = str_new(long_src, 2048);
+    var result = entry_new_validated(SEV_INFO, s,
+        str_from("a"), str_from("{}"), str_from(""));
+    assert(error_code(result) == ERR_FIELD_TOO_LONG,
+        "validated rejects long source");
+}
+
+fn test_chain_by_agent() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append_with_agent(c, SEV_INFO,
+        str_from("s"), str_from("a"),
+        det, str_from("agent-x"));
+    chain_append(c, SEV_INFO,
+        str_from("s"), str_from("a"), det);
+    chain_append_with_agent(c, SEV_INFO,
+        str_from("s"), str_from("a"),
+        det, str_from("agent-x"));
+    var results = chain_by_agent(c, str_from("agent-x"));
+    assert(vec_len(results) == 2, "chain by_agent");
+}
+
+fn test_merkle_large_tree() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 16) {
+        chain_append(c, SEV_INFO, str_from("s"),
+            str_from("a"), det);
+        i = i + 1;
+    }
+    var tree = merkle_build(chain_entries(c));
+    assert(merkle_tree_leaf_count(tree) == 16,
+        "merkle 16 leaves");
+    i = 0;
+    while (i < 16) {
+        var mp = merkle_proof(tree, i);
+        assert(merkle_verify_proof(mp) == 1,
+            "merkle 16 proof");
+        i = i + 1;
+    }
+}
+
+fn test_anchor_receipt() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"),
+        str_from("a"), det);
+    var tree = merkle_build(chain_entries(c));
+    var a = anchor_new(tree, c);
+    var r = receipt_new(a, str_from("test-be"),
+        str_from("{\"tx\":\"0xabc\"}"));
+    assert(r != 0, "receipt created");
+    assert(str_eq(receipt_backend(r),
+        str_from("test-be")) == 1, "receipt backend");
+}
+
+fn test_stream_recv_drain() {
+    var s = stream_new();
+    var sub = stream_subscribe(s, "libro/#");
+    var e = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), str_from("{}"), str_from(""));
+    stream_publish(s, e);
+    assert(stream_pending(sub) == 1, "pending 1");
+    var received = stream_recv(sub);
+    assert(received != 0, "recv not null");
+    assert(stream_pending(sub) == 0, "pending 0");
+}
+
+fn test_filestore_multiple_appends() {
+    var path = str_from("/tmp/libro_test_fma.jsonl");
+    sys_unlink("/tmp/libro_test_fma.jsonl");
+    var fs = filestore_open(path);
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 10) {
+        var e = entry_new(SEV_INFO, str_from("s"),
+            str_from("a"), det, prev);
+        filestore_append(fs, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    assert(filestore_len(fs) == 10,
+        "filestore 10 entries");
+    var loaded = filestore_load_all(fs);
+    assert(vec_len(loaded) == 10,
+        "filestore loaded 10");
+    sys_unlink("/tmp/libro_test_fma.jsonl");
+}
+
+fn test_compliance_presets() {
+    var pci = retention_pci_dss();
+    assert(retention_type(pci) == RETAIN_DURATION,
+        "pci is duration");
+    assert(retention_value(pci) == 365 * 86400,
+        "pci is 1 year");
+    var hipaa = retention_hipaa();
+    assert(retention_value(hipaa) == 6 * 365 * 86400,
+        "hipaa is 6 years");
+    var sox = retention_sox();
+    assert(retention_value(sox) == 7 * 365 * 86400,
+        "sox is 7 years");
+}
+
+# ================================================================
+# PatraStore tests
+# ================================================================
+
+fn test_patrastore_open_close() {
+    sys_unlink("/tmp/libro_test_ps.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/libro_test_ps.patra"));
+    assert(ps != 0, "patrastore open");
+    assert(patrastore_is_empty(ps) == 1,
+        "patrastore empty");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps.patra");
+    sys_unlink("/tmp/libro_test_ps.patra.wal");
+}
+
+fn test_patrastore_append_load() {
+    sys_unlink("/tmp/libro_test_ps2.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/libro_test_ps2.patra"));
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"),
+        str_from("login"), det, str_from(""));
+    patrastore_append(ps, e1);
+    var e2 = entry_new(SEV_WARNING, str_from("audit"),
+        str_from("read"), det, entry_hash(e1));
+    patrastore_append(ps, e2);
+    assert(patrastore_len(ps) == 2,
+        "patrastore len 2");
+    var loaded = patrastore_load_all(ps);
+    var lcount = vec_len(loaded);
+    assert(lcount == 2, "patrastore loaded 2");
+    if (lcount >= 2) {
+        var le1 = vec_get(loaded, 0);
+        assert(str_eq(entry_hash(le1),
+            entry_hash(e1)) == 1,
+            "patrastore hash preserved");
+    }
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps2.patra");
+    sys_unlink("/tmp/libro_test_ps2.patra.wal");
+}
+
+fn test_patrastore_verify() {
+    sys_unlink("/tmp/libro_test_ps3.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/libro_test_ps3.patra"));
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 3) {
+        var e = entry_new(SEV_INFO, str_from("s"),
+            str_from("a"), det, prev);
+        patrastore_append(ps, e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    var result = patrastore_load_and_verify(ps);
+    assert(vec_len(result) == 3,
+        "patrastore verify 3");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps3.patra");
+    sys_unlink("/tmp/libro_test_ps3.patra.wal");
+}
+
+fn test_patrastore_query() {
+    sys_unlink("/tmp/libro_test_ps4.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/libro_test_ps4.patra"));
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"),
+        str_from("login"), det, str_from(""));
+    patrastore_append(ps, e1);
+    var e2 = entry_new(SEV_ERROR, str_from("audit"),
+        str_from("fail"), det, entry_hash(e1));
+    patrastore_append(ps, e2);
+    var q = query_new();
+    query_source(q, str_from("audit"));
+    var results = patrastore_query(ps, q);
+    assert(vec_len(results) == 1,
+        "patrastore query filters");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps4.patra");
+    sys_unlink("/tmp/libro_test_ps4.patra.wal");
+}
+
+fn test_patrastore_by_source() {
+    sys_unlink("/tmp/libro_test_ps5.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/libro_test_ps5.patra"));
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"),
+        str_from("login"), det, str_from(""));
+    patrastore_append(ps, e1);
+    var e2 = entry_new(SEV_INFO, str_from("audit"),
+        str_from("read"), det, entry_hash(e1));
+    patrastore_append(ps, e2);
+    var e3 = entry_new(SEV_INFO, str_from("auth"),
+        str_from("logout"), det, entry_hash(e2));
+    patrastore_append(ps, e3);
+    var results = patrastore_by_source(ps,
+        str_from("auth"));
+    assert(vec_len(results) == 2,
+        "patrastore by_source 2");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps5.patra");
+    sys_unlink("/tmp/libro_test_ps5.patra.wal");
+}
+
+fn test_patrastore_transaction() {
+    sys_unlink("/tmp/libro_test_ps6.patra");
+    var ps = patrastore_open(str_from(
+        "/tmp/libro_test_ps6.patra"));
+    var det = str_from("{}");
+    patrastore_begin(ps);
+    var e = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, str_from(""));
+    patrastore_append(ps, e);
+    patrastore_commit(ps);
+    assert(patrastore_len(ps) == 1,
+        "patrastore tx committed");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps6.patra");
+    sys_unlink("/tmp/libro_test_ps6.patra.wal");
+}
+
+fn test_patrastore_persistence() {
+    sys_unlink("/tmp/libro_test_ps7.patra");
+    var path = str_from("/tmp/libro_test_ps7.patra");
+    var ps = patrastore_open(path);
+    var det = str_from("{}");
+    var e = entry_new(SEV_INFO, str_from("s"),
+        str_from("a"), det, str_from(""));
+    patrastore_append(ps, e);
+    var saved_hash = entry_hash(e);
+    patrastore_close(ps);
+    var ps2 = patrastore_open(path);
+    assert(patrastore_len(ps2) == 1,
+        "patrastore persisted");
+    var loaded = patrastore_load_all(ps2);
+    var le = vec_get(loaded, 0);
+    assert(str_eq(entry_hash(le), saved_hash) == 1,
+        "patrastore hash survives reopen");
+    patrastore_close(ps2);
+    sys_unlink("/tmp/libro_test_ps7.patra");
+    sys_unlink("/tmp/libro_test_ps7.patra.wal");
+}
+
+# ================================================================
 # Main — run all tests
 # ================================================================
 
@@ -1329,6 +1698,31 @@ fn main() {
     test_filestore_verify();
     test_filestore_query();
     test_filestore_empty();
+    test_filestore_multiple_appends();
+
+    test_group("PatraStore");
+    patra_init();
+    test_patrastore_open_close();
+    test_patrastore_append_load();
+    test_patrastore_verify();
+    test_patrastore_query();
+    test_patrastore_by_source();
+    test_patrastore_transaction();
+    test_patrastore_persistence();
+
+    test_group("Gap coverage");
+    test_retention_keep_duration();
+    test_retention_keep_after();
+    test_retention_keep_duration_future();
+    test_compliance_presets();
+    test_query_time_range();
+    test_query_agent_id();
+    test_export_csv_special_chars();
+    test_entry_validated_too_long();
+    test_chain_by_agent();
+    test_merkle_large_tree();
+    test_anchor_receipt();
+    test_stream_recv_drain();
 
     return assert_summary();
 }

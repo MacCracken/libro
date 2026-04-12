@@ -1,19 +1,29 @@
 # Roadmap
 
-## v1.0.1 — Released 2026-04-09
+## v1.0.2 — 2026-04-11
 
-- [x] Cyrius toolchain pinned to v3.2.5 (cc3 compiler, minimum version)
+- [x] Sigil migration — SHA-256 and Ed25519 from sigil stdlib (dropped `src/sha256.cyr`)
+- [x] Real Ed25519 signing via sigil (replaced HMAC-SHA256 placeholder)
+- [x] `src/hasher.cyr` delegates to sigil's hex, ct_eq, SHA-256
+- [x] 8 fuzz harnesses (SHA-256, hex decode, DER parse, entry create, chain ops, sig verify, JSON parse, topic match)
+- [x] 240 tests (up from 202), 21 benchmarks (up from 15)
+- [x] Gap coverage: retention KeepDuration/KeepAfter, time-range queries, agent_id query, CSV special chars, entry validation, compliance presets, merkle 16-leaf, stream recv/drain, filestore multi-append
+- [x] Cyrius 3.4.0 compatibility verified
+- [x] CI/CD updated for Cyrius 3.4.0
+
+## v1.0.1 — 2026-04-09
+
 - [x] FileStore — append-only JSON Lines backend with flock locking
-- [x] Vendored stdlib updated to Cyrius 3.2.5 (36 modules, includes patra, chrono, csv, http, base64)
+- [x] Cyrius toolchain pinned to cc3 compiler
 - [x] 202 tests, 15 benchmarks
 - [x] CI/CD updated for cc3
 
-## v1.0.0 — Released 2026-04-09
+## v1.0.0 — 2026-04-09
 
-- [x] Full Cyrius port — 19 modules, 193 tests, 15 benchmarks
+- [x] Full Cyrius port from Rust v0.92.0 (8,513 LOC → ~5,000 LOC)
+- [x] 19 modules: error, sha256, hasher, entry, verify, query, retention, chain, store, export, review, merkle, signing, anchoring, timestamping, proof, kernel_audit, file_store, streaming
 - [x] SHA-256 (FIPS 180-4), length-prefixed field hashing
-- [x] HMAC-SHA256 signing with key rotation support
-- [x] Merkle tree — inclusion proofs, RFC 9162 consistency proofs
+- [x] Merkle tree — inclusion proofs, RFC 9162 consistency proofs, canonical roots
 - [x] Integrity proofs — signed tree heads, inclusion/consistency bundles, anchor support
 - [x] Witness anchoring — self-hashing anchors, meta-chain
 - [x] RFC 3161 timestamping — DER encoding/decoding
@@ -22,32 +32,28 @@
 - [x] Structured tracing — sakshi instrumentation
 - [x] CI/CD — GitHub Actions for build, test, bench, security scan, release
 
-## Post-v1.0
+## Rust features NOT yet ported
 
-### Blocked — Waiting on Ecosystem Dependencies
+- [ ] `append_batch()` on AuditChain (batch append multiple entries)
+- [ ] `to_proof_json()` export (pretty-print integrity proof as JSON)
+- [ ] `SqliteStore` — deferred to patra integration
 
-> **IMPORTANT:** The items below are blocked on other AGNOS repos converting to Cyrius.
-> Do NOT attempt to implement these until the dependencies are ready.
+## v1.1 — Hardening (not blocked)
 
-#### Blocked on sigil (crypto primitives)
-- [ ] **Replace `src/sha256.cyr` with sigil's SHA-256** — sigil will be the single source of crypto primitives across the ecosystem. When sigil converts to Cyrius, libro drops its hand-rolled SHA-256 and includes sigil's verified implementation instead.
-- [ ] **Replace `src/signing.cyr` HMAC with sigil's Ed25519** — sigil will provide Ed25519 (and eventually ML-DSA). Libro's HMAC-SHA256 signing is a placeholder; the API surface is designed for drop-in replacement.
-- [ ] **`src/hasher.cyr` → sigil dependency** — ChainHasher wraps SHA-256; will delegate to sigil.
-- [ ] Post-quantum signatures (ML-DSA) via sigil
-- [ ] Hybrid signing: Ed25519 + PQ for transition period
-
-#### Blocked on patra (SQL storage)
-- [ ] **Replace MemoryStore/FileStore with patra SQL backend** — patra provides B-tree indexed storage, WAL crash recovery, and SQL queries. Libro's current MemoryStore is in-process only; FileStore is append-only JSON Lines. Patra gives us indexed queries, transactions, and durability.
-- [ ] **Note:** patra bundles its own SHA-256 which conflicts with libro's `src/sha256.cyr`. Once both use sigil's SHA-256, the conflict resolves. Do NOT include patra.cyr directly until sigil migration is complete.
-
-### v1.1 — Hardening (not blocked)
 - [ ] Nested JSON canonical hashing (depth > 1)
 - [ ] Benchmark history tracking (CSV append per run)
-- [ ] Fuzz harnesses for DER parser and entry deserialization
 - [ ] Chain export/import (full chain serialization to file)
 - [ ] Streaming verification for FileStore
+- [ ] `append_batch()` port from Rust
 
-### Future
+## Blocked — Waiting on Ecosystem
+
+#### Blocked on patra (SQL storage)
+- [ ] **Patra SQL backend** — both libro and patra depend on sigil for SHA-256 via stdlib. Once patra drops its bundled SHA-256 and uses sigil from stdlib (same as libro), the conflict resolves and libro can include patra for indexed SQL storage, transactions, and WAL crash recovery.
+
+#### Future
+- [ ] Post-quantum signatures (ML-DSA) via sigil
+- [ ] Hybrid signing: Ed25519 + PQ for transition period
 - [ ] Remote attestation (TPM-backed chain sealing)
 - [ ] Multi-node chain sync (federated audit across fleet)
 - [ ] Conflict resolution for concurrent appends

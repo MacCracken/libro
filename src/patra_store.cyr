@@ -1,0 +1,301 @@
+# patra_store.cyr — SQL-backed audit store via patra
+# Indexed storage with transactions, WAL crash recovery,
+# and SQL queries. Persistent alternative to MemoryStore.
+
+# ================================================================
+# PatraStore layout (16 bytes)
+# ================================================================
+#   +0  db       patra database handle
+#   +8  inited   i64 (1 if table created)
+
+fn patrastore_open(path) {
+    sakshi_info("patrastore: open", 16);
+    var s = fl_alloc(16);
+    var db = patra_open(_entry_to_cstr(path));
+    if (db == 0) {
+        sakshi_error("patrastore: open failed", 23);
+        return 0;
+    }
+    store64(s, db);
+    store64(s + 8, 0);
+    _patrastore_ensure_table(s);
+    return s;
+}
+
+fn patrastore_close(s) {
+    if (s == 0) { return 0; }
+    patra_close(load64(s));
+    fl_free(s);
+    return 0;
+}
+
+fn _patrastore_db(s) { return load64(s); }
+
+# ================================================================
+# Schema
+# ================================================================
+
+var _ps_create_sql = "CREATE TABLE audit_entries (id STR, ts STR, sev STR, src STR, act STR, det STR, aid STR, phash STR, hash STR, halg STR)";
+
+fn _patrastore_ensure_table(s) {
+    if (load64(s + 8) == 1) { return 0; }
+    var db = load64(s);
+    var r = patra_exec(db, _ps_create_sql);
+    if (r == PATRA_OK || r == PATRA_ERR_EXISTS) {
+        store64(s + 8, 1);
+    }
+    return 0;
+}
+
+# ================================================================
+# Append — build INSERT SQL and execute
+# ================================================================
+
+var _ps_sb = 0;
+
+fn _ps_add_field(val) {
+    str_builder_add_cstr(_ps_sb, "'");
+    str_builder_add(_ps_sb, val);
+    str_builder_add_cstr(_ps_sb, "'");
+    return 0;
+}
+
+fn _ps_add_cfield(val) {
+    str_builder_add_cstr(_ps_sb, "'");
+    str_builder_add_cstr(_ps_sb, val);
+    str_builder_add_cstr(_ps_sb, "'");
+    return 0;
+}
+
+fn _ps_comma() {
+    str_builder_add_cstr(_ps_sb, ", ");
+    return 0;
+}
+
+# Globals to capture entry fields before building SQL
+var _ps_id = 0;
+var _ps_ts = 0;
+var _ps_sev = 0;
+var _ps_src = 0;
+var _ps_act = 0;
+var _ps_det = 0;
+var _ps_aid2 = 0;
+var _ps_ph = 0;
+var _ps_hash = 0;
+var _ps_halg = 0;
+var _ps_db = 0;
+
+fn patrastore_append(s, e) {
+    sakshi_debug("patrastore: append", 18);
+    _ps_db = load64(s);
+
+    # Capture all fields to globals first
+    _ps_id = uuid_format(entry_id(e));
+    _ps_ts = entry_timestamp(e);
+    _ps_sev = severity_as_str(entry_severity(e));
+    _ps_src = entry_source(e);
+    _ps_act = entry_action(e);
+    _ps_det = entry_details(e);
+    var aid = entry_agent_id(e);
+    if (aid != 0) { _ps_aid2 = aid; }
+    if (aid == 0) { _ps_aid2 = str_from(""); }
+    _ps_ph = entry_prev_hash(e);
+    _ps_hash = entry_hash(e);
+    _ps_halg = entry_hash_algorithm(e);
+
+    # Build SQL with no function calls
+    _ps_sb = str_builder_new();
+    str_builder_add_cstr(_ps_sb, "INSERT INTO audit_entries VALUES ('");
+    str_builder_add(_ps_sb, _ps_id);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_ts);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add_cstr(_ps_sb, _ps_sev);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_src);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_act);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_det);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_aid2);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_ph);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_hash);
+    str_builder_add_cstr(_ps_sb, "', '");
+    str_builder_add(_ps_sb, _ps_halg);
+    str_builder_add_cstr(_ps_sb, "')");
+
+    var sql = str_builder_build(_ps_sb);
+    var cstr = _entry_to_cstr(sql);
+    var r = patra_exec(_ps_db, cstr);
+    if (r != PATRA_OK) {
+        sakshi_error("patrastore: insert failed", 25);
+    }
+    return r;
+}
+
+# ================================================================
+# Load all
+# ================================================================
+
+var _ps_select = "SELECT * FROM audit_entries";
+
+fn patrastore_load_all(s) {
+    sakshi_info("patrastore: load all", 20);
+    var db = load64(s);
+    var rs = patra_query(db, _ps_select);
+    if (rs == 0) { return vec_new(); }
+
+    var entries = vec_new();
+    var n = patra_result_count(rs);
+    var i = 0;
+    while (i < n) {
+        var e = _patrastore_row_to_entry(rs, i);
+        if (e != 0) {
+            vec_push(entries, e);
+        }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return entries;
+}
+
+# ================================================================
+# Row → AuditEntry
+# ================================================================
+
+fn _patrastore_row_to_entry(rs, row) {
+    var e = fl_alloc(88);
+
+    var id_str = patra_result_get_str(rs, row, 0);
+    _filestore_parse_uuid(e, str_from(id_str));
+
+    store64(e + 16, str_from(
+        patra_result_get_str(rs, row, 1)));
+
+    store64(e + 24, _parse_severity(str_from(
+        patra_result_get_str(rs, row, 2))));
+
+    store64(e + 32, str_from(
+        patra_result_get_str(rs, row, 3)));
+
+    store64(e + 40, str_from(
+        patra_result_get_str(rs, row, 4)));
+
+    var det = patra_result_get_str(rs, row, 5);
+    if (strlen(det) > 0) {
+        store64(e + 48, str_from(det));
+    } else {
+        store64(e + 48, str_from("{}"));
+    }
+
+    var aid = patra_result_get_str(rs, row, 6);
+    if (strlen(aid) > 0) {
+        store64(e + 56, str_from(aid));
+    } else {
+        store64(e + 56, 0);
+    }
+
+    store64(e + 64, str_from(
+        patra_result_get_str(rs, row, 7)));
+
+    store64(e + 72, str_from(
+        patra_result_get_str(rs, row, 8)));
+
+    var ha = patra_result_get_str(rs, row, 9);
+    if (strlen(ha) > 0) {
+        store64(e + 80, str_from(ha));
+    } else {
+        store64(e + 80, str_from(HASH_ALGORITHM));
+    }
+
+    return e;
+}
+
+# ================================================================
+# Len
+# ================================================================
+
+var _ps_count = "SELECT COUNT(*) FROM audit_entries";
+
+fn patrastore_len(s) {
+    var db = load64(s);
+    var rs = patra_query(db, _ps_count);
+    if (rs == 0) { return 0; }
+    var n = patra_result_get_int(rs, 0, 0);
+    patra_result_free(rs);
+    return n;
+}
+
+fn patrastore_is_empty(s) {
+    if (patrastore_len(s) == 0) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# Load and verify
+# ================================================================
+
+fn patrastore_load_and_verify(s) {
+    var entries = patrastore_load_all(s);
+    var err = verify_chain(entries);
+    if (err != 0) {
+        sakshi_error("patrastore: verify failed", 25);
+        return err;
+    }
+    return entries;
+}
+
+# ================================================================
+# Query
+# ================================================================
+
+fn patrastore_query(s, filter) {
+    var entries = patrastore_load_all(s);
+    return query_apply(filter, entries);
+}
+
+# ================================================================
+# Query by source (indexed)
+# ================================================================
+
+fn patrastore_by_source(s, source) {
+    var db = load64(s);
+    _ps_sb = str_builder_new();
+    str_builder_add_cstr(_ps_sb,
+        "SELECT * FROM audit_entries WHERE src = '");
+    str_builder_add(_ps_sb, source);
+    str_builder_add_cstr(_ps_sb, "'");
+    var sql = str_builder_build(_ps_sb);
+    var rs = patra_query(db, _entry_to_cstr(sql));
+    if (rs == 0) { return vec_new(); }
+
+    var entries = vec_new();
+    var n = patra_result_count(rs);
+    var i = 0;
+    while (i < n) {
+        var e = _patrastore_row_to_entry(rs, i);
+        if (e != 0) { vec_push(entries, e); }
+        i = i + 1;
+    }
+    patra_result_free(rs);
+    return entries;
+}
+
+# ================================================================
+# Transactions
+# ================================================================
+
+fn patrastore_begin(s) {
+    return patra_begin(load64(s));
+}
+
+fn patrastore_commit(s) {
+    return patra_commit(load64(s));
+}
+
+fn patrastore_rollback(s) {
+    return patra_rollback(load64(s));
+}
