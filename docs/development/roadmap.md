@@ -1,5 +1,15 @@
 # Roadmap
 
+## v1.1.0 — 2026-04-19
+
+- [x] P(-1) scaffold-hardening pass (clean build, lint, bench baseline, audit)
+- [x] Cyrius 5.4.2 toolchain pin (cc5)
+- [x] Patra bundle refresh — v0.14.0 → v1.1.1 (api-compatible)
+- [x] **Fixed use-after-free in `_patrastore_row_to_entry`** — root cause of the long-standing cumulative-state crash in `test_patrastore_append_load`. See `docs/audit/2026-04-19-audit.md` Finding 1.
+- [x] Ungated all 7 PatraStore tests
+- [x] Ungated all 12 Gap coverage tests
+- [x] 251 tests pass (up from 204)
+
 ## v1.0.2 — 2026-04-11
 
 - [x] Sigil migration — SHA-256 and Ed25519 from sigil stdlib (dropped `src/sha256.cyr`)

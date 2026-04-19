@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.1.0] - 2026-04-19
+
+Sprint 1.1.0 — P(-1) scaffold hardening. Cyrius 5.4.2 upgrade, patra
+bundle refresh, and use-after-free fix in PatraStore that unblocks 19
+previously-gated tests.
+
+### Fixed
+- **Use-after-free on patra result-set pointers (HIGH)** —
+  `_patrastore_row_to_entry` wrapped raw pointers from
+  `patra_result_get_str()` via `str_from()` without copying. After
+  `patrastore_load_all()` called `patra_result_free(rs)`, every `Str`
+  on every loaded entry dangled into freed memory. Later reads (e.g.
+  `entry_hash` → `str_eq` → `memeq`) dereferenced freed data and
+  SIGSEGV'd layout-dependently. Fix: new `_ps_copy_cstr()` helper in
+  `src/patra_store.cyr` allocates a fresh buffer and `memcpy`s the
+  cstr before wrapping. Loaded entries now own their string memory
+  outright. See `docs/audit/2026-04-19-audit.md` Finding 1.
+- **Ungated `test_patrastore_append_load`** (`src/main.cyr`) — the
+  use-after-free above was the root cause of the v1.0.2–v1.0.4
+  cumulative-state crash. Test passes cleanly after the fix.
+- **Ungated 6 additional PatraStore tests + 12 Gap coverage tests**
+  — same root cause. Suite grew 204 → 251 tests; 0 failures.
+
+### Changed
+- **Cyrius toolchain pinned to v5.4.2** (upgrade from v3.6.8 — cc5
+  compiler). Structural PE32+ backend landed upstream but libro
+  remains ELF-only.
+- **Patra bundle refreshed** — `lib/patra.cyr` updated from v0.14.0
+  (3013 lines) to v1.1.1 (3138 lines). API-compatible; pulls in
+  upstream WAL-overflow detection, DROP TABLE, indexed-query
+  planner, and 0.15–1.1.1 parser fixes.
+- **Heap-reset shim dropped** — v1.0.3's
+  `alloc_reset(); fl_init(); patra_init()` band-aid before the
+  PatraStore block is no longer needed with the use-after-free fixed.
+
+### Added
+- `docs/audit/2026-04-19-audit.md` — pre-1.1.0 security audit.
+- `_ps_copy_cstr(cstr)` helper in `src/patra_store.cyr` — owning-copy
+  wrapper for cstrs returned from ephemeral patra buffers.
+
+### Removed
+- `issue-to-fix.md` — resolved by Finding 1 in the audit above.
+
 ## [1.0.3] - 2026-04-12
 
 ### Fixed

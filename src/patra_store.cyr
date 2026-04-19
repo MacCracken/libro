@@ -166,47 +166,59 @@ fn patrastore_load_all(s) {
 # Row → AuditEntry
 # ================================================================
 
+# Copy a null-terminated C string out of the patra result-set buffer
+# into independent heap memory, wrapped as a Str. Patra's rs buffer is
+# freed by patra_result_free() at the end of load_all; Strs built with
+# str_from() alone would dangle. This copies first.
+fn _ps_copy_cstr(cstr) {
+    var n = strlen(cstr);
+    var buf = alloc(n + 1);
+    memcpy(buf, cstr, n);
+    store8(buf + n, 0);
+    return str_new(buf, n);
+}
+
 fn _patrastore_row_to_entry(rs, row) {
     var e = fl_alloc(88);
 
     var id_str = patra_result_get_str(rs, row, 0);
-    _filestore_parse_uuid(e, str_from(id_str));
+    _filestore_parse_uuid(e, _ps_copy_cstr(id_str));
 
-    store64(e + 16, str_from(
+    store64(e + 16, _ps_copy_cstr(
     patra_result_get_str(rs, row, 1)));
 
-    store64(e + 24, _parse_severity(str_from(
+    store64(e + 24, _parse_severity(_ps_copy_cstr(
     patra_result_get_str(rs, row, 2))));
 
-    store64(e + 32, str_from(
+    store64(e + 32, _ps_copy_cstr(
     patra_result_get_str(rs, row, 3)));
 
-    store64(e + 40, str_from(
+    store64(e + 40, _ps_copy_cstr(
     patra_result_get_str(rs, row, 4)));
 
     var det = patra_result_get_str(rs, row, 5);
     if (strlen(det) > 0) {
-        store64(e + 48, str_from(det));
+        store64(e + 48, _ps_copy_cstr(det));
     } else {
         store64(e + 48, str_from("{}"));
     }
 
     var aid = patra_result_get_str(rs, row, 6);
     if (strlen(aid) > 0) {
-        store64(e + 56, str_from(aid));
+        store64(e + 56, _ps_copy_cstr(aid));
     } else {
         store64(e + 56, 0);
     }
 
-    store64(e + 64, str_from(
+    store64(e + 64, _ps_copy_cstr(
     patra_result_get_str(rs, row, 7)));
 
-    store64(e + 72, str_from(
+    store64(e + 72, _ps_copy_cstr(
     patra_result_get_str(rs, row, 8)));
 
     var ha = patra_result_get_str(rs, row, 9);
     if (strlen(ha) > 0) {
-        store64(e + 80, str_from(ha));
+        store64(e + 80, _ps_copy_cstr(ha));
     } else {
         store64(e + 80, str_from(HASH_ALGORITHM));
     }
