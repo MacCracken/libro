@@ -36,6 +36,7 @@ modules = [
     "src/proof.cyr",
     "src/kernel_audit.cyr",
     "src/file_store.cyr",
+    "src/chain_io.cyr",
     "src/patra_store.cyr",
     "src/streaming.cyr",
     "src/proof_json.cyr",

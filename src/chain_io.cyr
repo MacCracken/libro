@@ -28,18 +28,18 @@ fn chain_export(c, path) {
     # Header line — meta
     var hdr = str_builder_new();
     str_builder_add_cstr(hdr, "{\"_libro_chain\":1,\"prev_chain_hash\":\"");
-    var prev = load64(c + 8);
+    var prev = chain_prev_hash(c);
     if (prev != 0) {
         str_builder_add(hdr, prev);
     }
     str_builder_add_cstr(hdr, "\",\"max_capacity\":");
-    str_builder_add_int(hdr, load64(c + 16));
+    str_builder_add_int(hdr, chain_max_capacity(c));
     str_builder_add_cstr(hdr, "}\n");
     var hline = str_builder_build(hdr);
     file_write(fd, str_data(hline), str_len(hline));
 
     # Entry lines
-    var entries = load64(c);
+    var entries = chain_entries(c);
     var n = vec_len(entries);
     var i = 0;
     while (i < n) {
@@ -96,7 +96,7 @@ fn chain_import(path) {
                 _chain_import_apply_meta(c, line_str);
             } else {
                 var e = _filestore_parse_entry(line_str);
-                if (e != 0) { vec_push(load64(c), e); }
+                if (e != 0) { vec_push(chain_entries(c), e); }
             }
             line_idx += 1;
         }
@@ -115,12 +115,12 @@ fn _chain_import_apply_meta(c, line) {
 
     var prev = json_get(pairs, str_from("prev_chain_hash"));
     if (prev != 0 && str_len(prev) > 0) {
-        store64(c + 8, prev);
+        chain_set_prev_hash(c, prev);
     }
 
     var cap = json_get(pairs, str_from("max_capacity"));
     if (cap != 0 && str_len(cap) > 0) {
-        store64(c + 16, str_to_int(cap));
+        chain_set_max_capacity(c, str_to_int(cap));
     }
     return 0;
 }

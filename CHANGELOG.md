@@ -122,6 +122,25 @@ FileStore verification, bench history).
   `src/chain.cyr` — not duplication: `verify_chain` is the loose-entries
   primitive (used by FileStore, streams, archives); `chain_verify` adds
   the AuditChain-level `prev_chain_hash` check on top.
+- **P(-1) hardening pass** (scaffold review, post-sprint). Two findings,
+  both fixed:
+  - **MEDIUM** — `dist/libro.cyr` was shipping without `chain_export` /
+    `chain_import` because `src/chain_io.cyr` had been added to
+    `src/main.cyr`'s include list but not to `cyrius.cyml` `[lib]
+    modules`. `cyrius distlib` regenerated the dist from a stale
+    manifest, and the CI "dist freshness gate" couldn't see the drift
+    (its input and oracle were the same list). Manifest repaired;
+    dist regenerated (4416 → 4477 lines); `chain_export` now at line
+    3865 of the dist.
+  - **LOW** — seven cross-module raw-offset reads of the `chain`
+    struct survived the `#derive(accessors)` sweep: five in
+    `chain_io.cyr` (`load64(c + 8/16)`, `load64(c)`, two
+    `store64(c + …)`) plus two in `review.cyr` in `chain_review`
+    (`load64(c)` at line 61 and `load64(c + 8)` at line 127). All
+    migrated to `chain_entries` / `chain_prev_hash` /
+    `chain_max_capacity` and their `_set_` siblings. Behavior
+    preserved; `chain_review_100` within noise (1.429 → 1.443 ms).
+  Full report: `docs/audit/2026-04-19-audit-2.0.md`.
 
 ### Decisions (no code change)
 - **`_sb_csv_field` single-pass rewrite — REJECTED.** Current form is

@@ -30,6 +30,7 @@ verify, bench history).
 - [x] `chain_verify` / `verify_chain` layering documented in `src/chain.cyr`.
 - [x] `benches/libro_io.bcyr` trimmed — dropped unused `retention.cyr` after nested canonical JSON pushed live fixups back near the 16384 cap.
 - [x] Lint clean — 3 pre-existing 120-char-line warnings fixed (SHA-256 test vector + zero-hash prev_hash built via `str_builder`; patra-store CREATE SQL assembled at runtime).
+- [x] P(-1) hardening pass — distlib manifest repair + accessor-migration tail. `src/chain_io.cyr` added to `cyrius.cyml` `[lib] modules` (dist was shipping without `chain_export`/`chain_import`); six raw-offset `chain`-struct reads in `chain_io.cyr` (5) and `review.cyr` (1) migrated to derived accessors; CLAUDE.md / roadmap counts reconciled. See `docs/audit/2026-04-19-audit-2.0.md`.
 
 ### Validation
 - [x] **286 tests, 0 failed** (255 → 286: +4 append_batch, +4 proof_to_json, +5 nested canonical JSON, +9 ChainIO, +5 streamed FileStore verify).
@@ -101,11 +102,11 @@ verify, bench history).
 - [x] Structured tracing — sakshi instrumentation
 - [x] CI/CD — GitHub Actions for build, test, bench, security scan, release
 
-## Rust features NOT yet ported
+## Rust features port — complete
 
-- [ ] `append_batch()` on AuditChain (batch append multiple entries)
-- [ ] `to_proof_json()` export (pretty-print integrity proof as JSON)
-- [ ] `SqliteStore` — deferred to patra integration
+- [x] `append_batch()` on AuditChain — shipped in 2.0 as `chain_append_batch(c, severities, sources, actions, details_vec)`.
+- [x] `to_proof_json()` — shipped in 2.0 as `proof_to_json(ip)` in `src/proof_json.cyr`.
+- [x] `SqliteStore` — delivered as `PatraStore` (SQL-backed) in `src/patra_store.cyr`, backed by patra 1.1.1.
 
 ## Hardening backlog (not blocked)
 

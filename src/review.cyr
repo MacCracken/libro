@@ -58,7 +58,7 @@ struct review { entry_count; integrity; earliest; latest; sources; severities; a
 
 fn chain_review(c) {
     var r = fl_alloc(72);
-    var entries = load64(c);
+    var entries = chain_entries(c);
     var n = vec_len(entries);
 
     store64(r, n);
@@ -124,7 +124,7 @@ fn chain_review(c) {
         store64(r + 56, 0);
     }
 
-    store64(r + 64, load64(c + 8));
+    store64(r + 64, chain_prev_hash(c));
 
     return r;
 }

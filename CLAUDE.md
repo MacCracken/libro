@@ -25,12 +25,12 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 
 ## Current State
 
-- **Source**: 20 modules under `src/` (18 + `patra_store.cyr` + `proof_json.cyr`), plus stdlib + sigil + patra resolved via `cyrius deps`
-- **Tests**: 263 assertions (all pass)
-- **Benchmarks**: 22 across two binaries (`libro_core.bcyr` 14 + `libro_io.bcyr` 8 — split because cc5 5.4.2's 16384 fixup-table cap)
+- **Source**: 21 library modules under `src/` (list lives in `cyrius.cyml` `[lib] modules`) plus `src/main.cyr`; stdlib + sigil + patra resolved via `cyrius deps`
+- **Tests**: 286 assertions (all pass)
+- **Benchmarks**: 22 across two binaries (`libro_core.bcyr` 14 + `libro_io.bcyr` 8 — split because cc5's 16384 fixup-table cap)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 8 targets)
-- **Binary**: ~404 KB (DCE-built)
-- **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, 4.3k lines. See `DEPS-PATTERN.md` for the contract.
+- **Binary**: ~436 KB (DCE-built)
+- **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~4.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
