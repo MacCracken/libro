@@ -40,6 +40,51 @@ jobs:
           ls lib | head -3
           ls "$HOME/.cyrius/lib" | head -3
 
+      - name: Manifest completeness ([lib] modules ⊇ main.cyr includes)
+        run: |
+          # Every `include "src/<file>.cyr"` in src/main.cyr must be listed in
+          # cyrius.cyml [lib] modules. Otherwise `cyrius distlib` silently ships
+          # a bundle missing the module, and the dist-freshness gate can't see
+          # it because its input (the manifest) is itself the stale oracle.
+          # See docs/audit/2026-04-19-audit-2.0.md Finding 1.
+          INCLUDES=$(grep -E 'include "src/[^"]+\.cyr"' src/main.cyr \
+            | sed -E 's/.*"(src\/[^"]+\.cyr)".*/\1/' | sort -u)
+          MANIFEST=$(awk '/^\[lib\]/{flag=1;next} /^\[/{flag=0} flag' cyrius.cyml \
+            | grep -oE '"src/[^"]+\.cyr"' | tr -d '"' | sort -u)
+          MISSING=$(comm -23 <(echo "$INCLUDES") <(echo "$MANIFEST"))
+          EXTRA=$(comm -13 <(echo "$INCLUDES") <(echo "$MANIFEST"))
+          if [ -n "$MISSING" ]; then
+            echo "FAIL: src/ files included from main.cyr but not in cyrius.cyml [lib] modules:"
+            echo "$MISSING"
+            echo "Add them under [lib] modules so cyrius distlib bundles them into dist/libro.cyr."
+            exit 1
+          fi
+          if [ -n "$EXTRA" ]; then
+            echo "FAIL: files in [lib] modules but not included from main.cyr:"
+            echo "$EXTRA"
+            echo "Remove them from [lib] modules or include them from src/main.cyr."
+            exit 1
+          fi
+          echo "Manifest covers all main.cyr src/ includes."
+
+      - name: Raw-offset guard (struct chain outside src/chain.cyr)
+        run: |
+          # Cross-module readers must use derived accessors on struct chain
+          # (chain_entries / chain_prev_hash / chain_max_capacity / chain_overflow
+          #  + their _set_ siblings) — not raw `load64(c + N)` / `store64(c + N, …)`.
+          # The `c` heuristic is tight in libro: `c` is the chain parameter across
+          # the whole tree by convention. See docs/audit/2026-04-19-audit-2.0.md
+          # Finding 2.
+          HITS=$(grep -nE 'load64\(c \+ [0-9]+\)|store64\(c \+ [0-9]+|load64\(c\)' src/*.cyr \
+            | grep -v '^src/chain\.cyr:' || true)
+          if [ -n "$HITS" ]; then
+            echo "FAIL: raw-offset reads/writes on struct chain outside src/chain.cyr:"
+            echo "$HITS"
+            echo "Use chain_entries / chain_prev_hash / chain_max_capacity (or _set_ variants)."
+            exit 1
+          fi
+          echo "No raw-offset chain reads outside src/chain.cyr."
+
       - name: Format check
         run: cyrfmt --check src/*.cyr
 

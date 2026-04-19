@@ -7,22 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.1-dev] - unreleased
 
-Follow-up cycle after the 2.0.0 cut. Pickups from the P(-1) hardening
-pass audit (`docs/audit/2026-04-19-audit-2.0.md` — findings fixed in
-2.0.0; recommendations filed here):
+Follow-up cycle after the 2.0.0 cut. Picks up the recommendations
+filed in `docs/audit/2026-04-19-audit-2.0.md` — the underlying
+findings were fixed in 2.0.0; these harden the scaffold so the same
+drift classes can't recur.
 
-### Planned
-- CI dist-freshness gate upgrade — additionally assert that every
-  `include "src/*.cyr"` in `src/main.cyr` has a matching entry in
-  `cyrius.cyml` `[lib] modules`. Prevents Finding-1-class drift
-  (manifest out of sync with main, distlib silently shipping a
-  stripped `dist/libro.cyr`).
-- Raw-offset guard — lightweight lint/test asserting no
-  `load64(c + N)` / `store64(c + N, …)` on `struct chain` outside
-  `src/chain.cyr`. Prevents Finding-2-class accessor-sweep regressions
-  (and extends naturally to the other `#derive(accessors)` structs).
-- `docs/guides/integration.md` — add a `chain_export` / `chain_import`
-  snippet so the round-trip pattern has a consumer-visible example.
+### Added
+- **CI manifest-completeness gate** in `.github/workflows/ci.yml`.
+  Compares every `include "src/<file>.cyr"` line in `src/main.cyr`
+  against the `[lib] modules` array in `cyrius.cyml` — fails on
+  either direction of drift (included-but-not-listed OR
+  listed-but-not-included). Closes the gap that let 2.0.0's
+  `chain_io.cyr` ship outside of `dist/libro.cyr`: the pre-existing
+  dist-freshness gate couldn't catch that class because its input
+  (the manifest) was the stale oracle; this new step validates the
+  manifest against a second source of truth (the actual include
+  list).
+- **CI raw-offset guard on `struct chain`** in
+  `.github/workflows/ci.yml`. Greps `src/*.cyr` (excluding the
+  defining `src/chain.cyr`) for `load64(c + N)` / `store64(c + N, …)`
+  / `load64(c)` and fails if any survive. Prevents accessor-sweep
+  regressions of the class caught in 2.0.0 (seven sites across
+  `chain_io.cyr` and `review.cyr` slipping past the
+  `#derive(accessors)` migration). Uses the AGNOS-wide convention
+  that `c` is the chain parameter.
+- **`chain_export` / `chain_import` integration snippet** in
+  `docs/guides/integration.md`. Shows the JSONL round-trip with a
+  post-import `chain_verify` step and a note that overflow archives
+  aren't part of the snapshot.
 
 ## [2.0.0] - 2026-04-19
 

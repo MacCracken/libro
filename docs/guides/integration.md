@@ -123,6 +123,34 @@ stream_publish(stream, e);
 # security_sub and all_sub receive it; daimon_sub does not
 ```
 
+## Portable Chain Snapshot — `chain_export` / `chain_import`
+
+```cyrius
+var audit = chain_new();
+chain_append(audit, SEV_INFO, str_from("daimon"), str_from("boot"),
+    str_from("{\"host\":\"node-01\"}"));
+chain_append(audit, SEV_WARNING, str_from("daimon"), str_from("quota"),
+    str_from("{\"agent\":\"web-01\",\"used_mb\":512}"));
+
+# Round-trip to a JSON Lines snapshot. Line 0 is the chain meta
+# (prev_chain_hash + max_capacity); lines 1+ are entries in the
+# same shape FileStore emits.
+chain_export(audit, str_from("audit.jsonl"));
+
+# Reload on a different host, or after a restart.
+var restored = chain_import(str_from("audit.jsonl"));
+
+# The restored chain hash-verifies end-to-end without the original
+# memory. Consumers forwarding snapshots between nodes should verify
+# before trusting the contents.
+var verify_err = chain_verify(restored);
+# verify_err == 0 on success; non-zero is an error object
+
+# Overflow archives (from capacity-capped rotation) are NOT part of
+# the snapshot — drive a FileStore or PatraStore directly if you
+# need full-history persistence across rotations.
+```
+
 ## Retention Pattern — Compliance
 
 ```cyrius
