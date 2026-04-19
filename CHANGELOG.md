@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] - 2026-04-19
+
+Fuzz-driven hardening sprint. Three new fuzz targets were added for
+2.0-era surfaces that had no dedicated coverage (`chain_import`,
+`filestore_verify_streamed`, the nested canonical-JSON hasher). The
+second immediately surfaced a HIGH-severity denial-of-service bug in
+the streaming verifier.
+
+### Fixed
+- **`filestore_verify_streamed` infinite loop on unterminated input
+  (HIGH, fuzz-caught).** The outer streaming loop
+  `while (eof == 0 || buf_fill > 0)` had no exit path when EOF was
+  reached with residual bytes that contained no newline — i.e., any
+  truncated or unterminated JSONL file. EOF set `eof = 1`, the inner
+  scan found no `\n` and consumed nothing, `buf_fill > 0` kept the
+  outer condition true, and the loop spun forever. The shared
+  `file_lock_shared` was also never released, compounding into a
+  cross-process lock leak. Fix: inject a synthetic `\n` at
+  `_fsvs_buf + buf_fill` when `eof == 1 && consumed == 0 &&
+  buf_fill > 0 && buf_fill < _fsvs_buf_size`, letting the existing
+  scan loop pick up the residual as a final line and exit via the
+  normal path. Adjacent line-too-long check broadened to fire
+  regardless of EOF state, so an exactly-64KB terminal line still
+  returns an error rather than silently dropping data. The 2.0
+  validation missed this because all three existing
+  `test_filestore_verify_streamed*` tests built fixtures via
+  `filestore_append`, which always writes a trailing `\n` — the
+  residual-after-EOF path was never exercised. `filestore_load_all`
+  happens to handle the case correctly (its scan naturally exits
+  when `pos >= total`), so the bug is unique to the streaming path.
+  See `docs/audit/2026-04-19-audit-2.0.md` Finding 4.
+
+### Added
+- **`test_filestore_verify_streamed_unterminated_tail`** in
+  `src/main.cyr` — writes 26 bytes of junk with no trailing newline,
+  runs `filestore_verify_streamed`, and asserts it returns (rather
+  than hangs). The assertion-content is nominal; the regression
+  signal is reachability. If the fix is reverted, CI times out on
+  this test instead of hanging indefinitely.
+- **Three new fuzz targets** in `fuzz/fuzz_libro.fcyr` (8 → 11):
+  - `fuzz_chain_import` — random JSONL bytes through the
+    `chain_import` meta-header + entry parser. Clean (no crashes).
+  - `fuzz_filestore_verify_streamed` — random JSONL bytes through
+    the streaming verifier. Caught the HIGH bug above.
+  - `fuzz_canonical_json_hash` — random `details` payloads through
+    `entry_new` + `entry_compute_hash`, exercising the 2.0 nested
+    canonical-JSON byte-walker. Clean.
+  The fuzz binary was also missing `include "src/chain_io.cyr"`;
+  added so the new `chain_import` target can link.
+
+### Validation
+- **294 tests, 0 failed** (293 → 294: +1 unterminated-tail
+  regression test).
+- 11 fuzz targets (was 8), all clean under the default iteration
+  counts, full harness completes in well under 10 s.
+- 22 benches across 2 binaries, all report. Lint + format clean.
+  Dist regenerated at `v2.0.3` (4477 lines).
+
 ## [2.0.2] - 2026-04-19
 
 Continuing the P(-1) hardening cadence started in 2.0.0/2.0.1. Extends
@@ -721,6 +779,7 @@ previously-gated tests.
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
+[2.0.3]: https://github.com/MacCracken/libro/compare/2.0.2...2.0.3
 [2.0.2]: https://github.com/MacCracken/libro/compare/2.0.1...2.0.2
 [2.0.1]: https://github.com/MacCracken/libro/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/MacCracken/libro/compare/1.2.0...2.0.0

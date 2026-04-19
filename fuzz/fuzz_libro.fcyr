@@ -42,6 +42,7 @@ include "src/timestamping.cyr"
 include "src/proof.cyr"
 include "src/kernel_audit.cyr"
 include "src/file_store.cyr"
+include "src/chain_io.cyr"
 include "src/streaming.cyr"
 
 # ================================================================
@@ -226,6 +227,82 @@ fn fuzz_json_parse(iterations) {
 # Fuzz: topic matching with random patterns
 # ================================================================
 
+# ================================================================
+# Fuzz: chain_import with random JSONL-like bytes
+# ================================================================
+# Feeds random bytes to a tempfile and asks chain_import to parse it.
+# Covers the 2.0 meta-header parser + per-entry parser over adversarial
+# input. Must not crash regardless of payload.
+
+fn _fuzz_write_tmp(path_cstr, len) {
+    var data = fuzz_bytes(len);
+    var fd = file_open(path_cstr, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    if (fd < 0) { return -1; }
+    file_write(fd, data, len);
+    file_close(fd);
+    return 0;
+}
+
+fn fuzz_chain_import(iterations) {
+    var path = str_from("/tmp/libro_fuzz_chain_import.jsonl");
+    var cpath = _entry_to_cstr(path);
+    var i = 0;
+    while (i < iterations) {
+        # Length 0..4095; let empty files + giant-single-line files both happen.
+        var len = (load8(fuzz_bytes(1)) & 0xFF) * 16;
+        _fuzz_write_tmp(cpath, len);
+        # Should never crash; returning 0 (failure) is fine.
+        chain_import(path);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Fuzz: filestore_verify_streamed over random JSONL bytes
+# ================================================================
+# Covers the 64KB-buffered verify path on adversarial input. Returns
+# 0 on parse failure or line-too-long — never crashes.
+
+fn fuzz_filestore_verify_streamed(iterations) {
+    var path = str_from("/tmp/libro_fuzz_filestore_verify.jsonl");
+    var cpath = _entry_to_cstr(path);
+    var i = 0;
+    while (i < iterations) {
+        var len = (load8(fuzz_bytes(1)) & 0xFF) * 16;
+        _fuzz_write_tmp(cpath, len);
+        var s = filestore_open(path);
+        filestore_verify_streamed(s, 8);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Fuzz: canonical-JSON hashing of random details payloads
+# ================================================================
+# The 2.0 canonical-JSON hasher is a recursive byte-walker — must not
+# crash on malformed/nested/unbalanced JSON. Builds random ASCII bytes
+# into the `details` slot of a normal entry and hashes.
+
+fn fuzz_canonical_json_hash(iterations) {
+    var i = 0;
+    var prev = str_from("");
+    while (i < iterations) {
+        # Bias toward JSON-ish bytes so the nested-walker actually
+        # exercises object/array/scalar branches, not just the
+        # "first char is garbage → treat as scalar" shortcut.
+        var raw = fuzz_bytes(64);
+        var n = (load8(raw) & 0x3F) + 1;
+        var details = str_new(raw, n);
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), details, prev);
+        entry_compute_hash(e);
+        prev = entry_hash(e);
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn fuzz_topic_match(iterations) {
     var s = stream_new();
     var i = 0;
@@ -289,6 +366,18 @@ fn main() {
 
     println("  fuzz_topic_match...");
     fuzz_topic_match(iters / 5);
+    println("  OK");
+
+    println("  fuzz_chain_import...");
+    fuzz_chain_import(iters / 10);
+    println("  OK");
+
+    println("  fuzz_filestore_verify_streamed...");
+    fuzz_filestore_verify_streamed(iters / 10);
+    println("  OK");
+
+    println("  fuzz_canonical_json_hash...");
+    fuzz_canonical_json_hash(iters / 5);
     println("  OK");
 
     println("");

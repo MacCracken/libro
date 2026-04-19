@@ -1485,6 +1485,35 @@ fn test_filestore_verify_streamed_chunk_sizes() {
     sys_unlink("/tmp/libro_test_fs_stream_cs.jsonl");
 }
 
+# Regression test for the 2.0.3 filestore_verify_streamed infinite loop.
+# Before the terminal-line fix, a file with bytes after the last newline
+# (malformed/truncated input) made the outer loop spin forever because
+# `eof=1 && buf_fill>0` stayed true with no way to consume the residual.
+# This test writes exactly that pattern; if the fix regresses, CI times
+# out on this test.
+fn test_filestore_verify_streamed_unterminated_tail() {
+    var path = str_from("/tmp/libro_test_fs_stream_unterm.jsonl");
+    var cpath = _entry_to_cstr(path);
+    sys_unlink("/tmp/libro_test_fs_stream_unterm.jsonl");
+
+    # Write random-ish bytes with NO trailing newline and no valid entry
+    # structure. verify_streamed should parse-fail on the line and return
+    # 0 — crucially, it must *return* rather than hang.
+    var fd = file_open(cpath, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    var junk = "not-a-json-line-no-newline";
+    file_write(fd, junk, 26);
+    file_close(fd);
+
+    var fs = filestore_open(path);
+    var verified = filestore_verify_streamed(fs, 4);
+    # verified == 0 because the "line" doesn't parse to a valid entry.
+    # The assertion we care about is reachability — if the function hangs,
+    # this line is never reached and the test suite times out.
+    assert(verified == 0, "unterminated malformed tail: verify returns 0, does not hang");
+
+    sys_unlink("/tmp/libro_test_fs_stream_unterm.jsonl");
+}
+
 fn test_chain_import_count_reports() {
     var path = str_from("/tmp/libro_test_chain_count.jsonl");
     sys_unlink("/tmp/libro_test_chain_count.jsonl");
@@ -2069,6 +2098,7 @@ fn main() {
     test_filestore_verify_streamed();
     test_filestore_verify_streamed_empty();
     test_filestore_verify_streamed_chunk_sizes();
+    test_filestore_verify_streamed_unterminated_tail();
 
     test_group("PatraStore");
     test_patrastore_open_close();
