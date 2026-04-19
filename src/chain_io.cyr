@@ -1,0 +1,126 @@
+# chain_io.cyr — full-chain export/import as JSON Lines.
+#
+# Format: one JSON line per record.
+#   Line 0:   meta  → {"_libro_chain":1,"prev_chain_hash":"…","max_capacity":N}
+#   Lines 1+: entries — same shape as FileStore JSONL (reuses the helper).
+#
+# Reuses `_filestore_entry_json` + `_filestore_parse_entry` from
+# file_store.cyr, so this file must be included after it. Requires
+# `lib/io.cyr` (`file_open`/`file_read`/`file_write`/`file_close`).
+#
+# Overflow archives are NOT serialized — callers wanting full persistence
+# across rotations should drive a FileStore or patra store directly.
+
+# Entry-count cache for round-trip validation without re-reading the file.
+var _ci_last_imported = 0;
+
+# Write the chain's live entries + metadata to `path`. Truncates.
+# Returns 0 on success, -1 on open failure.
+fn chain_export(c, path) {
+    sakshi_info("chain_io: export", 16);
+    var cpath = _entry_to_cstr(path);
+    var fd = file_open(cpath, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    if (fd < 0) {
+        sakshi_error("chain_io: export open failed", 28);
+        return -1;
+    }
+
+    # Header line — meta
+    var hdr = str_builder_new();
+    str_builder_add_cstr(hdr, "{\"_libro_chain\":1,\"prev_chain_hash\":\"");
+    var prev = load64(c + 8);
+    if (prev != 0) {
+        str_builder_add(hdr, prev);
+    }
+    str_builder_add_cstr(hdr, "\",\"max_capacity\":");
+    str_builder_add_int(hdr, load64(c + 16));
+    str_builder_add_cstr(hdr, "}\n");
+    var hline = str_builder_build(hdr);
+    file_write(fd, str_data(hline), str_len(hline));
+
+    # Entry lines
+    var entries = load64(c);
+    var n = vec_len(entries);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(entries, i);
+        var sb = str_builder_new();
+        _filestore_entry_json(sb, e);
+        str_builder_add_cstr(sb, "\n");
+        var line = str_builder_build(sb);
+        file_write(fd, str_data(line), str_len(line));
+        i += 1;
+    }
+
+    file_close(fd);
+    return 0;
+}
+
+# Read a chain back from a file written by chain_export. Returns a new
+# AuditChain pointer, or 0 on failure (missing/invalid header).
+fn chain_import(path) {
+    sakshi_info("chain_io: import", 16);
+    var cpath = _entry_to_cstr(path);
+    var fd = file_open(cpath, O_RDONLY, 0);
+    if (fd < 0) {
+        sakshi_error("chain_io: import open failed", 28);
+        return 0;
+    }
+
+    var fsize = _fs_file_size(fd);
+    if (fsize < 0) { fsize = 0; }
+    syscall(8, fd, 0, 0);
+    var buf = alloc(fsize + 1);
+    var total = 0;
+    var done = 0;
+    while (done == 0) {
+        var n = file_read(fd, buf + total, (fsize + 1) - total);
+        if (n <= 0) { done = 1; } else { total = total + n; }
+    }
+    file_close(fd);
+
+    var c = chain_new();
+    var pos = 0;
+    var line_idx = 0;
+    _ci_last_imported = 0;
+
+    while (pos < total) {
+        var eol = pos;
+        while (eol < total && (load8(buf + eol) & 0xFF) != 10) { eol += 1; }
+        var line_len = eol - pos;
+        if (line_len > 0) {
+            # Clone the line off the shared read buffer before parse —
+            # json_parse creates Str views pointing into the raw bytes.
+            var line_str = str_clone(str_new(buf + pos, line_len));
+            if (line_idx == 0) {
+                _chain_import_apply_meta(c, line_str);
+            } else {
+                var e = _filestore_parse_entry(line_str);
+                if (e != 0) { vec_push(load64(c), e); }
+            }
+            line_idx += 1;
+        }
+        pos = eol + 1;
+    }
+
+    _ci_last_imported = chain_len(c);
+    return c;
+}
+
+fn chain_import_count() { return _ci_last_imported; }
+
+fn _chain_import_apply_meta(c, line) {
+    var pairs = json_parse(line);
+    if (vec_len(pairs) == 0) { return 0; }
+
+    var prev = json_get(pairs, str_from("prev_chain_hash"));
+    if (prev != 0 && str_len(prev) > 0) {
+        store64(c + 8, prev);
+    }
+
+    var cap = json_get(pairs, str_from("max_capacity"));
+    if (cap != 0 && str_len(cap) > 0) {
+        store64(c + 16, str_to_int(cap));
+    }
+    return 0;
+}

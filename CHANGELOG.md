@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0-dev] - unreleased
 
-Major-version sprint. Opens up breaking cleanups shelved in the 1.x line,
-ports two APIs deferred since the Rust port, and wires the missing
-`dist/libro.cyr` distribution artifact per `DEPS-PATTERN.md`.
+Major-version sprint and the last stop for all backlog items before 1.x
+is frozen. Opens up breaking cleanups shelved in the 1.x line, ports
+two APIs deferred since the Rust port, wires the missing
+`dist/libro.cyr` distribution artifact per `DEPS-PATTERN.md`, and drains
+the hardening backlog (nested JSON hashing, chain export/import, streamed
+FileStore verification, bench history).
 
 ### Breaking
 - **`verify_chain(entries)` → `verify_chain(entries, base_index)`** —
@@ -18,6 +21,16 @@ ports two APIs deferred since the Rust port, and wires the missing
   verifying a whole chain from position 0 now pass `verify_chain(e, 0)`.
   `chain_verify(c)` is unchanged (still wraps `verify_chain` with the
   genesis prev-hash check). Consumers: update call sites.
+- **Canonical JSON hashing is now depth-unlimited and non-scalar-aware.**
+  1.x's flat canonicalizer quoted every value regardless of type
+  (`{"n":42}` was hashed as if the value were the string `"42"`) and
+  broke on nested objects/arrays. 2.0 walks raw JSON bytes recursively:
+  objects sort keys lexicographically, arrays preserve order, scalars
+  emit verbatim (trimmed of whitespace). Flat objects with all-string
+  values hash identically to 1.x; any use of numbers, bools, null,
+  arrays, or nested objects as details values changes the hash. Entries
+  written in 1.x with such details will re-verify to a different hash
+  in 2.0 — which is correct, since 1.x was silently miscoercing.
 
 ### Added
 - **`chain_append_batch(c, severities, sources, actions, details_vec)`**
@@ -33,6 +46,23 @@ ports two APIs deferred since the Rust port, and wires the missing
   reference. Module lives separately so bench binaries that exercise
   proof verification without the JSON dep (notably `libro_core.bcyr`)
   can exclude it and stay under cc5 5.4.2's 16384 fixup-table cap.
+- **`chain_export(c, path)` / `chain_import(path)`** in
+  `src/chain_io.cyr` — full-chain JSON Lines serialization. Line 0 is
+  a meta record (`_libro_chain:1`, `prev_chain_hash`, `max_capacity`);
+  lines 1+ are entries in FileStore-compatible format. Overflow
+  archives are not serialized — drive a FileStore for that. Round-trip
+  preserves capacity, prev-chain-hash, and passes `chain_verify`.
+- **`filestore_verify_streamed(s, chunk_size)`** — byte-streamed verify
+  that keeps only `chunk_size` parsed entries live at a time. Reads the
+  JSONL file in 64KB slices, rebuilds lines, verifies in chunks with
+  cross-chunk linkage. Lines > 64KB are not supported (asserted).
+- **Nested-capable canonical JSON hasher** in `src/entry.cyr`. See
+  Breaking above for the semantic change.
+- **Benchmark history tracking** via `benches/bench_history.cyr`.
+  `LIBRO_BENCH_HISTORY=<path>` writes one CSV row per bench
+  (`epoch,binary,name,avg_ns,min_ns,max_ns,iterations,tag`) with
+  optional `LIBRO_BENCH_TAG` label. Unset → no-op. Included by both
+  bench binaries.
 - **`dist/libro.cyr`** — the committed consumer-distribution artifact
   produced by `cyrius distlib`. Was missing from every prior tag; any
   downstream `[deps.libro]` pulling a 1.x tag got a 404 on
@@ -62,7 +92,13 @@ ports two APIs deferred since the Rust port, and wires the missing
 - **CI gates on `dist/libro.cyr` freshness** — PRs that edit `src/*`
   without regenerating `dist/libro.cyr` fail CI.
 - **Benches regrouped** — `benches/libro_core.bcyr` grew one bench
-  (`chain_append_batch_100`); 14 core + 8 i/o = 22 total.
+  (`chain_append_batch_100`); 14 core + 8 i/o = 22 total. Also dropped
+  unused `retention.cyr` from `libro_io.bcyr`'s includes — the nested
+  canonical JSON code pushed live fixups back near the 16384 cap.
+- **`chain_verify` / `verify_chain` layering documented** in
+  `src/chain.cyr` — not duplication: `verify_chain` is the loose-entries
+  primitive (used by FileStore, streams, archives); `chain_verify` adds
+  the AuditChain-level `prev_chain_hash` check on top.
 
 ### Decisions (no code change)
 - `#derive(accessors)` (Cyrius 3.7.1) re-reviewed for 2.0 — **REJECTED
@@ -73,11 +109,18 @@ ports two APIs deferred since the Rust port, and wires the missing
   bounds checks / lazy materialization). Neither is a
   downstream-breakage concern that 2.0 unblocks. Revisit only if the
   ecosystem convention shifts.
+- **`_sb_csv_field` single-pass rewrite — REJECTED.** Current form is
+  one cache-hot read pass + direct-write escape pass. A fused
+  single-pass needs either optimistic-write-with-memmove (slower on
+  no-quote path) or pre-grow-and-reset (same work). Roadmap already
+  called the payoff marginal; confirmed on review. Keeping as-is.
 
 ### Validation
-- **263 tests, 0 failed** (up from 255 in 1.2.0: +4 for `append_batch`,
-  +4 for `proof_to_json`).
-- **22 benches** across 2 binaries, all report.
+- **286 tests, 0 failed** (up from 255 in 1.2.0: +4 `append_batch`,
+  +4 `proof_to_json`, +5 nested canonical JSON, +9 ChainIO round-trip,
+  +5 streamed FileStore verify).
+- **22 benches** across 2 binaries, all report. Bench history opt-in
+  via `LIBRO_BENCH_HISTORY` env var.
 - Fuzz harness clean (no crashes).
 - Simulated-consumer test: `dist/libro.cyr` compiles and links when
   included after stdlib + sigil + patra.

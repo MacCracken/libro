@@ -50,6 +50,7 @@ include "src/timestamping.cyr"
 include "src/proof.cyr"
 include "src/kernel_audit.cyr"
 include "src/file_store.cyr"
+include "src/chain_io.cyr"
 include "src/patra_store.cyr"
 include "src/streaming.cyr"
 include "src/proof_json.cyr"
@@ -84,11 +85,14 @@ fn test_sha256_448bit() {
 }
 
 fn test_sha256_multiblock() {
-    # "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno"
-    # + "ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu" = 112 bytes (2 blocks)
-    var msg = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
+    # NIST 896-bit (112-byte) test vector, built from two halves —
+    # Cyrius has no string-literal concatenation, so str_builder it is.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno");
+    str_builder_add_cstr(sb, "ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu");
+    var msg = str_builder_build(sb);
     var digest = alloc(32);
-    sha256(msg, 112, digest);
+    sha256(str_data(msg), 112, digest);
     var hex = hex_encode_str(digest, 32);
     var expected = str_from("cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
     assert(str_eq(hex, expected) == 1, "sha256 896-bit NIST");
@@ -289,8 +293,13 @@ fn test_chain_broken_link() {
     var e1 = entry_new(SEV_INFO, str_from("src"), str_from("act1"), det, str_from(""));
     vec_push(entries, e1);
 
-    # e2 points to wrong prev_hash
-    var e2 = entry_new(SEV_INFO, str_from("src"), str_from("act2"), det, str_from("0000000000000000000000000000000000000000000000000000000000000000"));
+    # e2 points to a fake prev_hash — 64 ASCII zeros, built at runtime
+    # since Cyrius can't split a literal across lines.
+    var zh = str_builder_new();
+    str_builder_add_cstr(zh, "00000000000000000000000000000000");
+    str_builder_add_cstr(zh, "00000000000000000000000000000000");
+    var fake_prev = str_builder_build(zh);
+    var e2 = entry_new(SEV_INFO, str_from("src"), str_from("act2"), det, fake_prev);
     vec_push(entries, e2);
 
     var result = verify_chain(entries, 0);
@@ -1255,6 +1264,218 @@ fn test_filestore_empty() {
     sys_unlink("/tmp/libro_test_fse.jsonl");
 }
 
+fn test_canonical_json_nested_object() {
+    var d1 = str_from("{\"a\":{\"x\":1,\"y\":2}}");
+    var d2 = str_from("{\"a\":{\"y\":2,\"x\":1}}");
+    var e1 = entry_new(SEV_INFO, str_from("s"), str_from("a"), d1, str_from(""));
+    var e2 = entry_new(SEV_INFO, str_from("s"), str_from("a"), d2, str_from(""));
+    # Timestamps/UUIDs differ — tamper test: replace e2 fields with e1's
+    # and re-hash. Easier route: just assert that tampering d2→d1 retains
+    # the invariant by comparing canonical forms via a probe entry.
+    var probe1 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d1, str_from(""));
+    store64(probe1 + 0, 0);  # zero UUID (upper half)
+    store64(probe1 + 8, 0);  # zero UUID (lower half)
+    store64(probe1 + 16, str_from("2000-01-01T00:00:00Z"));  # pin timestamp
+    var h1 = entry_compute_hash(probe1);
+
+    var probe2 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d2, str_from(""));
+    store64(probe2 + 0, 0);
+    store64(probe2 + 8, 0);
+    store64(probe2 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h2 = entry_compute_hash(probe2);
+
+    assert(str_eq(h1, h2) == 1, "nested object key-order independence");
+}
+
+fn test_canonical_json_array_preserves_order() {
+    var d1 = str_from("{\"xs\":[1,2,3]}");
+    var d2 = str_from("{\"xs\":[3,2,1]}");
+    var probe1 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d1, str_from(""));
+    store64(probe1 + 0, 0);
+    store64(probe1 + 8, 0);
+    store64(probe1 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h1 = entry_compute_hash(probe1);
+
+    var probe2 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d2, str_from(""));
+    store64(probe2 + 0, 0);
+    store64(probe2 + 8, 0);
+    store64(probe2 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h2 = entry_compute_hash(probe2);
+
+    assert(str_eq(h1, h2) == 0, "array order is significant");
+}
+
+fn test_canonical_json_deep_nesting() {
+    var d = str_from("{\"a\":{\"b\":{\"c\":{\"d\":[1,true,null,\"s\"]}}}}");
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), d, str_from(""));
+    assert(entry_verify(e) == 1, "deep nesting verifies");
+    assert(str_len(entry_hash(e)) == 64, "deep-nested hash length 64");
+}
+
+fn test_canonical_json_mixed_value_types() {
+    var d1 = str_from("{\"b\":true,\"n\":42,\"s\":\"hi\",\"z\":null}");
+    var d2 = str_from("{\"n\":42,\"z\":null,\"s\":\"hi\",\"b\":true}");
+    var probe1 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d1, str_from(""));
+    store64(probe1 + 0, 0);
+    store64(probe1 + 8, 0);
+    store64(probe1 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h1 = entry_compute_hash(probe1);
+
+    var probe2 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d2, str_from(""));
+    store64(probe2 + 0, 0);
+    store64(probe2 + 8, 0);
+    store64(probe2 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h2 = entry_compute_hash(probe2);
+
+    assert(str_eq(h1, h2) == 1, "mixed-type flat object key-order independence");
+}
+
+fn test_canonical_json_whitespace_insensitive() {
+    var d1 = str_from("{\"a\":1,\"b\":2}");
+    var d2 = str_from("{  \"a\" : 1 ,\n  \"b\" : 2  }");
+    var probe1 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d1, str_from(""));
+    store64(probe1 + 0, 0);
+    store64(probe1 + 8, 0);
+    store64(probe1 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h1 = entry_compute_hash(probe1);
+
+    var probe2 = entry_new(SEV_INFO, str_from("p"), str_from("p"), d2, str_from(""));
+    store64(probe2 + 0, 0);
+    store64(probe2 + 8, 0);
+    store64(probe2 + 16, str_from("2000-01-01T00:00:00Z"));
+    var h2 = entry_compute_hash(probe2);
+
+    assert(str_eq(h1, h2) == 1, "whitespace between tokens does not affect hash");
+}
+
+fn test_chain_export_import_roundtrip() {
+    var path = str_from("/tmp/libro_test_chain_export.jsonl");
+    sys_unlink("/tmp/libro_test_chain_export.jsonl");
+
+    var c = chain_with_capacity(50);
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act1"), det);
+    chain_append(c, SEV_WARNING, str_from("src"), str_from("act2"), det);
+    chain_append(c, SEV_ERROR, str_from("src"), str_from("act3"), det);
+    var head = chain_head_hash(c);
+
+    assert(chain_export(c, path) == 0, "chain_export ok");
+
+    var c2 = chain_import(path);
+    assert(c2 != 0, "chain_import returned chain");
+    assert(chain_len(c2) == 3, "chain_import restored 3 entries");
+    assert(chain_max_capacity(c2) == 50, "chain_import restored capacity");
+    assert(str_eq(chain_head_hash(c2), head) == 1, "chain_import preserves head hash");
+    assert(chain_verify(c2) == 0, "chain_import passes verify");
+
+    sys_unlink("/tmp/libro_test_chain_export.jsonl");
+}
+
+fn test_chain_export_empty() {
+    var path = str_from("/tmp/libro_test_chain_empty.jsonl");
+    sys_unlink("/tmp/libro_test_chain_empty.jsonl");
+
+    var c = chain_new();
+    assert(chain_export(c, path) == 0, "chain_export empty ok");
+
+    var c2 = chain_import(path);
+    assert(c2 != 0, "chain_import empty returns chain");
+    assert(chain_len(c2) == 0, "chain_import empty has 0 entries");
+
+    sys_unlink("/tmp/libro_test_chain_empty.jsonl");
+}
+
+fn test_chain_export_preserves_prev_chain_hash() {
+    var path = str_from("/tmp/libro_test_chain_prev.jsonl");
+    sys_unlink("/tmp/libro_test_chain_prev.jsonl");
+
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("b"), det);
+    chain_rotate(c);  # seeds prev_chain_hash to last head
+    chain_append(c, SEV_INFO, str_from("s"), str_from("c"), det);
+
+    var orig_prev = chain_prev_hash(c);
+    chain_export(c, path);
+
+    var c2 = chain_import(path);
+    assert(str_eq(chain_prev_hash(c2), orig_prev) == 1, "prev_chain_hash round-trip");
+    assert(chain_verify(c2) == 0, "imported rotated chain verifies");
+
+    sys_unlink("/tmp/libro_test_chain_prev.jsonl");
+}
+
+fn test_filestore_verify_streamed() {
+    var path = str_from("/tmp/libro_test_fs_stream.jsonl");
+    sys_unlink("/tmp/libro_test_fs_stream.jsonl");
+
+    var fs = filestore_open(path);
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 12) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        filestore_append(fs, e);
+        prev = entry_hash(e);
+        i += 1;
+    }
+
+    var verified = filestore_verify_streamed(fs, 5);
+    assert(verified == 12, "filestore_verify_streamed counts all entries");
+
+    sys_unlink("/tmp/libro_test_fs_stream.jsonl");
+}
+
+fn test_filestore_verify_streamed_empty() {
+    var path = str_from("/tmp/libro_test_fs_stream_e.jsonl");
+    sys_unlink("/tmp/libro_test_fs_stream_e.jsonl");
+
+    var fs = filestore_open(path);
+    var verified = filestore_verify_streamed(fs, 10);
+    assert(verified == 0, "filestore_verify_streamed empty returns 0");
+
+    sys_unlink("/tmp/libro_test_fs_stream_e.jsonl");
+}
+
+fn test_filestore_verify_streamed_chunk_sizes() {
+    var path = str_from("/tmp/libro_test_fs_stream_cs.jsonl");
+    sys_unlink("/tmp/libro_test_fs_stream_cs.jsonl");
+
+    var fs = filestore_open(path);
+    var det = str_from("{}");
+    var prev = str_from("");
+    var i = 0;
+    while (i < 7) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
+        filestore_append(fs, e);
+        prev = entry_hash(e);
+        i += 1;
+    }
+
+    assert(filestore_verify_streamed(fs, 1) == 7, "chunk_size=1 verifies all");
+    assert(filestore_verify_streamed(fs, 100) == 7, "chunk_size > n verifies all");
+    assert(filestore_verify_streamed(fs, 3) == 7, "chunk_size=3 (partial final) verifies all");
+
+    sys_unlink("/tmp/libro_test_fs_stream_cs.jsonl");
+}
+
+fn test_chain_import_count_reports() {
+    var path = str_from("/tmp/libro_test_chain_count.jsonl");
+    sys_unlink("/tmp/libro_test_chain_count.jsonl");
+
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("b"), det);
+    chain_export(c, path);
+
+    chain_import(path);
+    assert(chain_import_count() == 2, "chain_import_count reports last count");
+
+    sys_unlink("/tmp/libro_test_chain_count.jsonl");
+}
+
 # ================================================================
 # Gap coverage tests
 # ================================================================
@@ -1806,6 +2027,22 @@ fn main() {
     test_filestore_empty();
     test_filestore_multiple_appends();
     test_filestore_load_survives_second_load();
+
+    test_group("Canonical JSON (nested)");
+    test_canonical_json_nested_object();
+    test_canonical_json_array_preserves_order();
+    test_canonical_json_deep_nesting();
+    test_canonical_json_mixed_value_types();
+    test_canonical_json_whitespace_insensitive();
+
+    test_group("ChainIO");
+    test_chain_export_import_roundtrip();
+    test_chain_export_empty();
+    test_chain_export_preserves_prev_chain_hash();
+    test_chain_import_count_reports();
+    test_filestore_verify_streamed();
+    test_filestore_verify_streamed_empty();
+    test_filestore_verify_streamed_chunk_sizes();
 
     test_group("PatraStore");
     test_patrastore_open_close();

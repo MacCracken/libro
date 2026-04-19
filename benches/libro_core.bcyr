@@ -34,6 +34,8 @@ include "src/merkle.cyr"
 include "src/signing.cyr"
 include "src/proof.cyr"
 
+include "benches/bench_history.cyr"
+
 var _b_chain = 0;
 var _b_det = 0;
 var _b_entries = 0;
@@ -227,6 +229,7 @@ fn main() {
 
     println("");
     bench_report_all(benches);
+    bench_history_write("libro_core", benches);
     return 0;
 }
 

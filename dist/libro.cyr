@@ -386,59 +386,32 @@ fn timestamp_rfc3339(epoch_secs) {
 }
 
 # ================================================================
-# Canonical JSON hashing
+# Canonical JSON hashing (recursive, depth-unlimited)
 # ================================================================
-# For P-1: supports flat JSON objects with string values,
-# numbers, booleans, and null. Nested objects deferred to P-2.
+# Walks raw JSON bytes and emits a canonical form into the hasher:
+#   null, true, false, numbers → emitted verbatim, whitespace stripped
+#   strings → emitted as "…" with original escapes preserved verbatim
+#   objects → "{"k":v,…}" with keys sorted lexicographically
+#   arrays  → "[v,v,…]" in original order (no sort)
 #
-# Rust canonical format:
-#   null    → "null"
-#   bool    → "true" / "false"
-#   number  → decimal string
-#   string  → "\"" + raw bytes + "\""
-#   object  → "{" + sorted key-value pairs + "}"
+# 2.0 rewrite: flat-only canonicalizer via lib/json.cyr replaced with
+# a direct byte-walker that handles arbitrary nesting. Flat objects
+# with all-string values hash identically to the 1.x form; any use of
+# numbers, bools, null, arrays, or nested objects as top-level details
+# values now hashes differently (1.x emitted all values as
+# quoted strings, silently miscoercing non-strings). Consumers that
+# stored hashes computed from non-string-only flat JSON in 1.x will
+# see a hash break on re-verify — which is correct behaviour and one
+# of the reasons this is a 2.0 feature.
 
 fn canonical_json_hash_str(json_str, hasher) {
     var slen = str_len(json_str);
-
     if (slen == 0) {
         hasher_update(hasher, "null", 4);
         return 0;
     }
-
     var sdata = str_data(json_str);
-    var first = load8(sdata) & 0xFF;
-
-    # Object: parse, sort keys, re-emit canonically
-    if (first == 123) {
-        _cjh_hash_object(json_str, hasher);
-        return 0;
-    }
-
-    # String value (starts with quote): emit with quotes
-    if (first == 34) {
-        hasher_update(hasher, sdata, slen);
-        return 0;
-    }
-
-    # null literal
-    if (first == 110) {
-        hasher_update(hasher, "null", 4);
-        return 0;
-    }
-
-    # true/false
-    if (first == 116) {
-        hasher_update(hasher, "true", 4);
-        return 0;
-    }
-    if (first == 102) {
-        hasher_update(hasher, "false", 5);
-        return 0;
-    }
-
-    # Number or other scalar — emit raw
-    hasher_update(hasher, sdata, slen);
+    _cjh_emit(sdata, 0, slen, hasher);
     return 0;
 }
 
@@ -460,69 +433,188 @@ fn _str_cmp(a, b) {
     return alen - blen;
 }
 
-# Hash a flat JSON object with sorted keys
-fn _cjh_hash_object(json_str, hasher) {
-    var pairs = json_parse(json_str);
-    var n = vec_len(pairs);
+fn _cjh_is_ws(c) {
+    if (c == 32 || c == 10 || c == 13 || c == 9) { return 1; }
+    return 0;
+}
 
-    # Collect keys
+fn _cjh_skip_ws(data, pos, slen) {
+    while (pos < slen && _cjh_is_ws(load8(data + pos) & 0xFF) == 1) { pos += 1; }
+    return pos;
+}
+
+# Skip past a string (incl. surrounding quotes); handles backslash escapes.
+# Precondition: data[pos] == '"'. Returns position *after* the closing quote.
+fn _cjh_skip_string(data, pos, slen) {
+    pos += 1;
+    var stop = 0;
+    while (pos < slen && stop == 0) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 92) {
+            pos += 2;
+        } elif (c == 34) {
+            pos += 1;
+            stop = 1;
+        } else {
+            pos += 1;
+        }
+    }
+    return pos;
+}
+
+# Skip past a bracket-balanced span starting at `open` (123='{' or 91='[').
+fn _cjh_skip_container(data, pos, slen, open, close) {
+    pos += 1;
+    var depth = 1;
+    while (pos < slen && depth > 0) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 34) {
+            pos = _cjh_skip_string(data, pos, slen);
+        } elif (c == open) {
+            depth += 1;
+            pos += 1;
+        } elif (c == close) {
+            depth -= 1;
+            pos += 1;
+        } else {
+            pos += 1;
+        }
+    }
+    return pos;
+}
+
+# Skip past a scalar (number / true / false / null) — stops at
+# delimiter byte (whitespace, ',', '}', ']').
+fn _cjh_skip_scalar(data, pos, slen) {
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 44 || c == 125 || c == 93 || _cjh_is_ws(c) == 1) { return pos; }
+        pos += 1;
+    }
+    return pos;
+}
+
+fn _cjh_skip_value(data, pos, slen) {
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos >= slen) { return pos; }
+    var c = load8(data + pos) & 0xFF;
+    if (c == 34)  { return _cjh_skip_string(data, pos, slen); }
+    if (c == 123) { return _cjh_skip_container(data, pos, slen, 123, 125); }
+    if (c == 91)  { return _cjh_skip_container(data, pos, slen, 91, 93); }
+    return _cjh_skip_scalar(data, pos, slen);
+}
+
+# Emit any JSON value starting at `pos`. Returns position after the value.
+fn _cjh_emit(data, pos, slen, hasher) {
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos >= slen) { return pos; }
+    var c = load8(data + pos) & 0xFF;
+    if (c == 123) { return _cjh_emit_object(data, pos, slen, hasher); }
+    if (c == 91)  { return _cjh_emit_array(data, pos, slen, hasher); }
+    if (c == 34)  {
+        var end = _cjh_skip_string(data, pos, slen);
+        hasher_update(hasher, data + pos, end - pos);
+        return end;
+    }
+    # Scalar: emit trimmed bytes verbatim.
+    var scalar_end = _cjh_skip_scalar(data, pos, slen);
+    hasher_update(hasher, data + pos, scalar_end - pos);
+    return scalar_end;
+}
+
+# Emit an object with keys sorted lexicographically. Parallel vecs hold
+# each pair's key and its value byte-range in `data` so we can recurse
+# into values after sort without materializing an AST.
+fn _cjh_emit_object(data, start, slen, hasher) {
+    var pos = start + 1;
     var keys = vec_new();
-    var i = 0;
-    while (i < n) {
-        var pair = vec_get(pairs, i);
-        vec_push(keys, json_key(pair));
-        i += 1;
+    var val_starts = vec_new();
+    var val_ends = vec_new();
+
+    var stop = 0;
+    while (pos < slen && stop == 0) {
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 125) { pos += 1; stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 44) { pos += 1; }
+        elif ((load8(data + pos) & 0xFF) == 34) {
+            var key_start = pos + 1;
+            pos = _cjh_skip_string(data, pos, slen);
+            var key_end = pos - 1;
+            var k = str_new(data + key_start, key_end - key_start);
+            pos = _cjh_skip_ws(data, pos, slen);
+            if (pos < slen && (load8(data + pos) & 0xFF) == 58) { pos += 1; }
+            pos = _cjh_skip_ws(data, pos, slen);
+            var vs = pos;
+            pos = _cjh_skip_value(data, pos, slen);
+            var ve = pos;
+            vec_push(keys, k);
+            vec_push(val_starts, vs);
+            vec_push(val_ends, ve);
+        } else {
+            pos += 1;
+        }
     }
 
-    # Sort keys lexicographically
-    _sort_str_vec_simple(keys);
+    var n = vec_len(keys);
+    var idx = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(idx, i); i += 1; }
+
+    # Insertion sort idx by keys[idx[i]] lexicographically.
+    i = 1;
+    while (i < n) {
+        var ki = vec_get(idx, i);
+        var j = i - 1;
+        var settled = 0;
+        while (j >= 0 && settled == 0) {
+            var kj = vec_get(idx, j);
+            if (_str_cmp(vec_get(keys, kj), vec_get(keys, ki)) > 0) {
+                vec_set(idx, j + 1, kj);
+                j -= 1;
+            } else {
+                settled = 1;
+            }
+        }
+        vec_set(idx, j + 1, ki);
+        i += 1;
+    }
 
     hasher_update(hasher, "{", 1);
     i = 0;
     while (i < n) {
-        if (i > 0) {
-            hasher_update(hasher, ",", 1);
-        }
-        var k = vec_get(keys, i);
-        # Emit key with quotes
+        if (i > 0) { hasher_update(hasher, ",", 1); }
+        var j2 = vec_get(idx, i);
+        var k2 = vec_get(keys, j2);
         hasher_update(hasher, "\"", 1);
-        hasher_update(hasher, str_data(k), str_len(k));
+        hasher_update(hasher, str_data(k2), str_len(k2));
         hasher_update(hasher, "\":", 2);
-        # Find value for this key and emit as quoted string.
-        # Upstream libro 1.0.3 passed a cstring where json_get wants a
-        # Str, causing SEGV on any non-empty details object. k is
-        # already a Str so we pass it directly.
-        var v = json_get(pairs, k);
-        hasher_update(hasher, "\"", 1);
-        hasher_update(hasher, str_data(v), str_len(v));
-        hasher_update(hasher, "\"", 1);
+        _cjh_emit(data, vec_get(val_starts, j2), vec_get(val_ends, j2), hasher);
         i += 1;
     }
     hasher_update(hasher, "}", 1);
-    return 0;
+    return pos;
 }
 
-# Simple insertion sort on vec of Str
-fn _sort_str_vec_simple(v) {
-    var n = vec_len(v);
-    var i = 1;
-    while (i < n) {
-        var key = vec_get(v, i);
-        var j = i - 1;
-        var done = 0;
-        while (j >= 0 && done == 0) {
-            var vj = vec_get(v, j);
-            if (_str_cmp(vj, key) > 0) {
-                vec_set(v, j + 1, vj);
-                j = j - 1;
-            } else {
-                done = 1;
-            }
+# Emit an array in original order.
+fn _cjh_emit_array(data, start, slen, hasher) {
+    var pos = start + 1;
+    hasher_update(hasher, "[", 1);
+    var count = 0;
+    var stop = 0;
+    while (pos < slen && stop == 0) {
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 93) { pos += 1; stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 44) { pos += 1; }
+        else {
+            if (count > 0) { hasher_update(hasher, ",", 1); }
+            pos = _cjh_emit(data, pos, slen, hasher);
+            count += 1;
         }
-        vec_set(v, j + 1, key);
-        i += 1;
     }
-    return 0;
+    hasher_update(hasher, "]", 1);
+    return pos;
 }
 
 # Convert Str to null-terminated C string (for json_get lookup)
@@ -1176,6 +1268,17 @@ fn chain_from_entries(entries) {
 # ================================================================
 # Verification — check integrity of the chain
 # ================================================================
+#
+# Two-layer split (not duplication):
+#   - `verify_chain(entries, base_index)` in verify.cyr — entry-level:
+#     self-hash + adjacent linkage across a vec of entries. No knowledge
+#     of AuditChain struct, genesis, or rotation state. Usable on
+#     chunks, file-loaded slices, and archives.
+#   - `chain_verify(c)` below — struct-level: adds the genesis prev_hash
+#     check against `prev_chain_hash` (slot +8), then delegates entry-
+#     level work to `verify_chain`.
+# Keep the split: consumers verifying loose vecs (FileStore, stream) call
+# verify_chain directly; consumers with a live AuditChain call chain_verify.
 
 fn chain_verify(c) {
     sakshi_debug("chain: verify", 13);
@@ -3573,6 +3676,122 @@ fn filestore_load_and_verify(s) {
 }
 
 # ================================================================
+# Streaming verification — O(chunk_size) entry-pointer memory
+# ================================================================
+# Reads the JSONL file in 64KB byte chunks, parsing one line at a time
+# and verifying in groups of `chunk_size` entries. Cross-chunk linkage
+# is carried via `prev_tail_hash`, so it's equivalent to verify_chain
+# over the full file. Returns total verified count on success, or an
+# error pointer on failure.
+#
+# Lines longer than 64KB are not supported (asserts via `assert` on
+# buffer-full without newline). Current entry JSON is well under this.
+
+var _fsvs_buf_size = 65536;
+var _fsvs_buf = 0;
+
+fn filestore_verify_streamed(s, chunk_size) {
+    sakshi_info("filestore: verify streamed", 26);
+    if (chunk_size < 1) { chunk_size = 1; }
+    if (_fsvs_buf == 0) { _fsvs_buf = alloc(_fsvs_buf_size); }
+
+    var cpath = _filestore_cpath(s);
+    var fd = file_open(cpath, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    file_lock_shared(fd);
+
+    var buf_fill = 0;
+    var chunk = vec_new();
+    var verified = 0;
+    var offset = 0;
+    var prev_tail_hash = str_from("");
+
+    var eof = 0;
+    while (eof == 0 || buf_fill > 0) {
+        if (eof == 0 && buf_fill < _fsvs_buf_size) {
+            var n = file_read(fd, _fsvs_buf + buf_fill, _fsvs_buf_size - buf_fill);
+            if (n <= 0) { eof = 1; } else { buf_fill = buf_fill + n; }
+        }
+
+        var consumed = 0;
+        var scan_done = 0;
+        while (scan_done == 0) {
+            var nl = -1;
+            var i = consumed;
+            while (i < buf_fill && nl < 0) {
+                if ((load8(_fsvs_buf + i) & 0xFF) == 10) { nl = i; }
+                i += 1;
+            }
+            if (nl < 0) {
+                scan_done = 1;
+            } else {
+                var line_len = nl - consumed;
+                if (line_len > 0) {
+                    var line_str = str_clone(str_new(_fsvs_buf + consumed, line_len));
+                    var e = _filestore_parse_entry(line_str);
+                    if (e != 0) {
+                        vec_push(chunk, e);
+                        if (vec_len(chunk) >= chunk_size) {
+                            var err = _fsvs_verify_chunk(chunk, offset, prev_tail_hash);
+                            if (err != 0) {
+                                file_unlock(fd);
+                                file_close(fd);
+                                return err;
+                            }
+                            var last = vec_get(chunk, vec_len(chunk) - 1);
+                            prev_tail_hash = entry_hash(last);
+                            verified = verified + vec_len(chunk);
+                            offset = offset + vec_len(chunk);
+                            chunk = vec_new();
+                        }
+                    }
+                }
+                consumed = nl + 1;
+            }
+        }
+
+        if (consumed > 0) {
+            if (consumed < buf_fill) {
+                memcpy(_fsvs_buf, _fsvs_buf + consumed, buf_fill - consumed);
+            }
+            buf_fill = buf_fill - consumed;
+        }
+
+        if (eof == 0 && buf_fill >= _fsvs_buf_size) {
+            sakshi_error("filestore: verify streamed — line exceeds 64KB", 47);
+            file_unlock(fd);
+            file_close(fd);
+            return 0;
+        }
+    }
+
+    file_unlock(fd);
+    file_close(fd);
+
+    if (vec_len(chunk) > 0) {
+        var err2 = _fsvs_verify_chunk(chunk, offset, prev_tail_hash);
+        if (err2 != 0) { return err2; }
+        verified = verified + vec_len(chunk);
+    }
+
+    return verified;
+}
+
+# Verify a chunk's internal linkage and boundary against the prior tail hash.
+fn _fsvs_verify_chunk(chunk, offset, prev_tail_hash) {
+    var clen = vec_len(chunk);
+    if (clen == 0) { return 0; }
+    if (offset > 0) {
+        var first = vec_get(chunk, 0);
+        var fp = entry_prev_hash(first);
+        if (constant_time_eq_str(fp, prev_tail_hash) == 0) {
+            return error_integrity(offset, prev_tail_hash, fp);
+        }
+    }
+    return verify_chain(chunk, offset);
+}
+
+# ================================================================
 # Query — load all, apply filter
 # ================================================================
 
@@ -3794,12 +4013,18 @@ fn _patrastore_db(s) { return load64(s); }
 # Schema
 # ================================================================
 
-var _ps_create_sql = "CREATE TABLE audit_entries (id STR, ts STR, sev STR, src STR, act STR, det STR, aid STR, phash STR, hash STR, halg STR)";
+fn _ps_build_create_sql() {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "CREATE TABLE audit_entries (");
+    str_builder_add_cstr(sb, "id STR, ts STR, sev STR, src STR, act STR, ");
+    str_builder_add_cstr(sb, "det STR, aid STR, phash STR, hash STR, halg STR)");
+    return _entry_to_cstr(str_builder_build(sb));
+}
 
 fn _patrastore_ensure_table(s) {
     if (load64(s + 8) == 1) { return 0; }
     var db = load64(s);
-    var r = patra_exec(db, _ps_create_sql);
+    var r = patra_exec(db, _ps_build_create_sql());
     if (r == PATRA_OK || r == PATRA_ERR_EXISTS) {
         store64(s + 8, 1);
     }

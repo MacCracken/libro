@@ -238,59 +238,32 @@ fn timestamp_rfc3339(epoch_secs) {
 }
 
 # ================================================================
-# Canonical JSON hashing
+# Canonical JSON hashing (recursive, depth-unlimited)
 # ================================================================
-# For P-1: supports flat JSON objects with string values,
-# numbers, booleans, and null. Nested objects deferred to P-2.
+# Walks raw JSON bytes and emits a canonical form into the hasher:
+#   null, true, false, numbers → emitted verbatim, whitespace stripped
+#   strings → emitted as "…" with original escapes preserved verbatim
+#   objects → "{"k":v,…}" with keys sorted lexicographically
+#   arrays  → "[v,v,…]" in original order (no sort)
 #
-# Rust canonical format:
-#   null    → "null"
-#   bool    → "true" / "false"
-#   number  → decimal string
-#   string  → "\"" + raw bytes + "\""
-#   object  → "{" + sorted key-value pairs + "}"
+# 2.0 rewrite: flat-only canonicalizer via lib/json.cyr replaced with
+# a direct byte-walker that handles arbitrary nesting. Flat objects
+# with all-string values hash identically to the 1.x form; any use of
+# numbers, bools, null, arrays, or nested objects as top-level details
+# values now hashes differently (1.x emitted all values as
+# quoted strings, silently miscoercing non-strings). Consumers that
+# stored hashes computed from non-string-only flat JSON in 1.x will
+# see a hash break on re-verify — which is correct behaviour and one
+# of the reasons this is a 2.0 feature.
 
 fn canonical_json_hash_str(json_str, hasher) {
     var slen = str_len(json_str);
-
     if (slen == 0) {
         hasher_update(hasher, "null", 4);
         return 0;
     }
-
     var sdata = str_data(json_str);
-    var first = load8(sdata) & 0xFF;
-
-    # Object: parse, sort keys, re-emit canonically
-    if (first == 123) {
-        _cjh_hash_object(json_str, hasher);
-        return 0;
-    }
-
-    # String value (starts with quote): emit with quotes
-    if (first == 34) {
-        hasher_update(hasher, sdata, slen);
-        return 0;
-    }
-
-    # null literal
-    if (first == 110) {
-        hasher_update(hasher, "null", 4);
-        return 0;
-    }
-
-    # true/false
-    if (first == 116) {
-        hasher_update(hasher, "true", 4);
-        return 0;
-    }
-    if (first == 102) {
-        hasher_update(hasher, "false", 5);
-        return 0;
-    }
-
-    # Number or other scalar — emit raw
-    hasher_update(hasher, sdata, slen);
+    _cjh_emit(sdata, 0, slen, hasher);
     return 0;
 }
 
@@ -312,69 +285,188 @@ fn _str_cmp(a, b) {
     return alen - blen;
 }
 
-# Hash a flat JSON object with sorted keys
-fn _cjh_hash_object(json_str, hasher) {
-    var pairs = json_parse(json_str);
-    var n = vec_len(pairs);
+fn _cjh_is_ws(c) {
+    if (c == 32 || c == 10 || c == 13 || c == 9) { return 1; }
+    return 0;
+}
 
-    # Collect keys
+fn _cjh_skip_ws(data, pos, slen) {
+    while (pos < slen && _cjh_is_ws(load8(data + pos) & 0xFF) == 1) { pos += 1; }
+    return pos;
+}
+
+# Skip past a string (incl. surrounding quotes); handles backslash escapes.
+# Precondition: data[pos] == '"'. Returns position *after* the closing quote.
+fn _cjh_skip_string(data, pos, slen) {
+    pos += 1;
+    var stop = 0;
+    while (pos < slen && stop == 0) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 92) {
+            pos += 2;
+        } elif (c == 34) {
+            pos += 1;
+            stop = 1;
+        } else {
+            pos += 1;
+        }
+    }
+    return pos;
+}
+
+# Skip past a bracket-balanced span starting at `open` (123='{' or 91='[').
+fn _cjh_skip_container(data, pos, slen, open, close) {
+    pos += 1;
+    var depth = 1;
+    while (pos < slen && depth > 0) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 34) {
+            pos = _cjh_skip_string(data, pos, slen);
+        } elif (c == open) {
+            depth += 1;
+            pos += 1;
+        } elif (c == close) {
+            depth -= 1;
+            pos += 1;
+        } else {
+            pos += 1;
+        }
+    }
+    return pos;
+}
+
+# Skip past a scalar (number / true / false / null) — stops at
+# delimiter byte (whitespace, ',', '}', ']').
+fn _cjh_skip_scalar(data, pos, slen) {
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 44 || c == 125 || c == 93 || _cjh_is_ws(c) == 1) { return pos; }
+        pos += 1;
+    }
+    return pos;
+}
+
+fn _cjh_skip_value(data, pos, slen) {
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos >= slen) { return pos; }
+    var c = load8(data + pos) & 0xFF;
+    if (c == 34)  { return _cjh_skip_string(data, pos, slen); }
+    if (c == 123) { return _cjh_skip_container(data, pos, slen, 123, 125); }
+    if (c == 91)  { return _cjh_skip_container(data, pos, slen, 91, 93); }
+    return _cjh_skip_scalar(data, pos, slen);
+}
+
+# Emit any JSON value starting at `pos`. Returns position after the value.
+fn _cjh_emit(data, pos, slen, hasher) {
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos >= slen) { return pos; }
+    var c = load8(data + pos) & 0xFF;
+    if (c == 123) { return _cjh_emit_object(data, pos, slen, hasher); }
+    if (c == 91)  { return _cjh_emit_array(data, pos, slen, hasher); }
+    if (c == 34)  {
+        var end = _cjh_skip_string(data, pos, slen);
+        hasher_update(hasher, data + pos, end - pos);
+        return end;
+    }
+    # Scalar: emit trimmed bytes verbatim.
+    var scalar_end = _cjh_skip_scalar(data, pos, slen);
+    hasher_update(hasher, data + pos, scalar_end - pos);
+    return scalar_end;
+}
+
+# Emit an object with keys sorted lexicographically. Parallel vecs hold
+# each pair's key and its value byte-range in `data` so we can recurse
+# into values after sort without materializing an AST.
+fn _cjh_emit_object(data, start, slen, hasher) {
+    var pos = start + 1;
     var keys = vec_new();
-    var i = 0;
-    while (i < n) {
-        var pair = vec_get(pairs, i);
-        vec_push(keys, json_key(pair));
-        i += 1;
+    var val_starts = vec_new();
+    var val_ends = vec_new();
+
+    var stop = 0;
+    while (pos < slen && stop == 0) {
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 125) { pos += 1; stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 44) { pos += 1; }
+        elif ((load8(data + pos) & 0xFF) == 34) {
+            var key_start = pos + 1;
+            pos = _cjh_skip_string(data, pos, slen);
+            var key_end = pos - 1;
+            var k = str_new(data + key_start, key_end - key_start);
+            pos = _cjh_skip_ws(data, pos, slen);
+            if (pos < slen && (load8(data + pos) & 0xFF) == 58) { pos += 1; }
+            pos = _cjh_skip_ws(data, pos, slen);
+            var vs = pos;
+            pos = _cjh_skip_value(data, pos, slen);
+            var ve = pos;
+            vec_push(keys, k);
+            vec_push(val_starts, vs);
+            vec_push(val_ends, ve);
+        } else {
+            pos += 1;
+        }
     }
 
-    # Sort keys lexicographically
-    _sort_str_vec_simple(keys);
+    var n = vec_len(keys);
+    var idx = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(idx, i); i += 1; }
+
+    # Insertion sort idx by keys[idx[i]] lexicographically.
+    i = 1;
+    while (i < n) {
+        var ki = vec_get(idx, i);
+        var j = i - 1;
+        var settled = 0;
+        while (j >= 0 && settled == 0) {
+            var kj = vec_get(idx, j);
+            if (_str_cmp(vec_get(keys, kj), vec_get(keys, ki)) > 0) {
+                vec_set(idx, j + 1, kj);
+                j -= 1;
+            } else {
+                settled = 1;
+            }
+        }
+        vec_set(idx, j + 1, ki);
+        i += 1;
+    }
 
     hasher_update(hasher, "{", 1);
     i = 0;
     while (i < n) {
-        if (i > 0) {
-            hasher_update(hasher, ",", 1);
-        }
-        var k = vec_get(keys, i);
-        # Emit key with quotes
+        if (i > 0) { hasher_update(hasher, ",", 1); }
+        var j2 = vec_get(idx, i);
+        var k2 = vec_get(keys, j2);
         hasher_update(hasher, "\"", 1);
-        hasher_update(hasher, str_data(k), str_len(k));
+        hasher_update(hasher, str_data(k2), str_len(k2));
         hasher_update(hasher, "\":", 2);
-        # Find value for this key and emit as quoted string.
-        # Upstream libro 1.0.3 passed a cstring where json_get wants a
-        # Str, causing SEGV on any non-empty details object. k is
-        # already a Str so we pass it directly.
-        var v = json_get(pairs, k);
-        hasher_update(hasher, "\"", 1);
-        hasher_update(hasher, str_data(v), str_len(v));
-        hasher_update(hasher, "\"", 1);
+        _cjh_emit(data, vec_get(val_starts, j2), vec_get(val_ends, j2), hasher);
         i += 1;
     }
     hasher_update(hasher, "}", 1);
-    return 0;
+    return pos;
 }
 
-# Simple insertion sort on vec of Str
-fn _sort_str_vec_simple(v) {
-    var n = vec_len(v);
-    var i = 1;
-    while (i < n) {
-        var key = vec_get(v, i);
-        var j = i - 1;
-        var done = 0;
-        while (j >= 0 && done == 0) {
-            var vj = vec_get(v, j);
-            if (_str_cmp(vj, key) > 0) {
-                vec_set(v, j + 1, vj);
-                j = j - 1;
-            } else {
-                done = 1;
-            }
+# Emit an array in original order.
+fn _cjh_emit_array(data, start, slen, hasher) {
+    var pos = start + 1;
+    hasher_update(hasher, "[", 1);
+    var count = 0;
+    var stop = 0;
+    while (pos < slen && stop == 0) {
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 93) { pos += 1; stop = 1; }
+        elif ((load8(data + pos) & 0xFF) == 44) { pos += 1; }
+        else {
+            if (count > 0) { hasher_update(hasher, ",", 1); }
+            pos = _cjh_emit(data, pos, slen, hasher);
+            count += 1;
         }
-        vec_set(v, j + 1, key);
-        i += 1;
     }
-    return 0;
+    hasher_update(hasher, "]", 1);
+    return pos;
 }
 
 # Convert Str to null-terminated C string (for json_get lookup)

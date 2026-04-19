@@ -200,6 +200,17 @@ fn chain_from_entries(entries) {
 # ================================================================
 # Verification — check integrity of the chain
 # ================================================================
+#
+# Two-layer split (not duplication):
+#   - `verify_chain(entries, base_index)` in verify.cyr — entry-level:
+#     self-hash + adjacent linkage across a vec of entries. No knowledge
+#     of AuditChain struct, genesis, or rotation state. Usable on
+#     chunks, file-loaded slices, and archives.
+#   - `chain_verify(c)` below — struct-level: adds the genesis prev_hash
+#     check against `prev_chain_hash` (slot +8), then delegates entry-
+#     level work to `verify_chain`.
+# Keep the split: consumers verifying loose vecs (FileStore, stream) call
+# verify_chain directly; consumers with a live AuditChain call chain_verify.
 
 fn chain_verify(c) {
     sakshi_debug("chain: verify", 13);

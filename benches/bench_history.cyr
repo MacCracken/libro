@@ -1,0 +1,57 @@
+# bench_history.cyr — append per-bench-run CSV rows to a history file.
+#
+# Activated by env var LIBRO_BENCH_HISTORY (absolute or relative path).
+# Unset → no-op, benches run normally. Optional env LIBRO_BENCH_TAG for
+# caller-supplied labels (git sha, branch, machine id, …).
+#
+# Columns: epoch,binary,name,avg_ns,min_ns,max_ns,iterations,tag
+# Header is written once when the file is created; subsequent runs append.
+#
+# Usage: include this file after lib/bench.cyr + src/entry.cyr in a
+# bench binary, then call `bench_history_write(binary_name, benches)`
+# after `bench_report_all(benches)`.
+
+fn _bh_row(sb, epoch, binary, b, tag) {
+    str_builder_add_int(sb, epoch);
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_cstr(sb, binary);
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_cstr(sb, bench_name(b));
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_int(sb, bench_avg_ns(b));
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_int(sb, bench_min_ns(b));
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_int(sb, bench_max_ns(b));
+    str_builder_add_cstr(sb, ",");
+    str_builder_add_int(sb, bench_iterations(b));
+    str_builder_add_cstr(sb, ",");
+    if (tag != 0) { str_builder_add_cstr(sb, tag); }
+    str_builder_add_cstr(sb, "\n");
+    return 0;
+}
+
+fn bench_history_write(binary, benches) {
+    var path = getenv("LIBRO_BENCH_HISTORY");
+    if (path == 0) { return 0; }
+
+    var tag = getenv("LIBRO_BENCH_TAG");
+    var epoch = get_epoch_secs();
+
+    var needs_header = 0;
+    if (file_exists(path) == 0) { needs_header = 1; }
+
+    var sb = str_builder_new();
+    if (needs_header == 1) {
+        str_builder_add_cstr(sb, "epoch,binary,name,avg_ns,min_ns,max_ns,iterations,tag\n");
+    }
+    var n = vec_len(benches);
+    var i = 0;
+    while (i < n) {
+        _bh_row(sb, epoch, binary, vec_get(benches, i), tag);
+        i += 1;
+    }
+    var out = str_builder_build(sb);
+    file_append_locked(path, str_data(out), str_len(out));
+    return 0;
+}

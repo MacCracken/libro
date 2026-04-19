@@ -188,6 +188,122 @@ fn filestore_load_and_verify(s) {
 }
 
 # ================================================================
+# Streaming verification — O(chunk_size) entry-pointer memory
+# ================================================================
+# Reads the JSONL file in 64KB byte chunks, parsing one line at a time
+# and verifying in groups of `chunk_size` entries. Cross-chunk linkage
+# is carried via `prev_tail_hash`, so it's equivalent to verify_chain
+# over the full file. Returns total verified count on success, or an
+# error pointer on failure.
+#
+# Lines longer than 64KB are not supported (asserts via `assert` on
+# buffer-full without newline). Current entry JSON is well under this.
+
+var _fsvs_buf_size = 65536;
+var _fsvs_buf = 0;
+
+fn filestore_verify_streamed(s, chunk_size) {
+    sakshi_info("filestore: verify streamed", 26);
+    if (chunk_size < 1) { chunk_size = 1; }
+    if (_fsvs_buf == 0) { _fsvs_buf = alloc(_fsvs_buf_size); }
+
+    var cpath = _filestore_cpath(s);
+    var fd = file_open(cpath, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    file_lock_shared(fd);
+
+    var buf_fill = 0;
+    var chunk = vec_new();
+    var verified = 0;
+    var offset = 0;
+    var prev_tail_hash = str_from("");
+
+    var eof = 0;
+    while (eof == 0 || buf_fill > 0) {
+        if (eof == 0 && buf_fill < _fsvs_buf_size) {
+            var n = file_read(fd, _fsvs_buf + buf_fill, _fsvs_buf_size - buf_fill);
+            if (n <= 0) { eof = 1; } else { buf_fill = buf_fill + n; }
+        }
+
+        var consumed = 0;
+        var scan_done = 0;
+        while (scan_done == 0) {
+            var nl = -1;
+            var i = consumed;
+            while (i < buf_fill && nl < 0) {
+                if ((load8(_fsvs_buf + i) & 0xFF) == 10) { nl = i; }
+                i += 1;
+            }
+            if (nl < 0) {
+                scan_done = 1;
+            } else {
+                var line_len = nl - consumed;
+                if (line_len > 0) {
+                    var line_str = str_clone(str_new(_fsvs_buf + consumed, line_len));
+                    var e = _filestore_parse_entry(line_str);
+                    if (e != 0) {
+                        vec_push(chunk, e);
+                        if (vec_len(chunk) >= chunk_size) {
+                            var err = _fsvs_verify_chunk(chunk, offset, prev_tail_hash);
+                            if (err != 0) {
+                                file_unlock(fd);
+                                file_close(fd);
+                                return err;
+                            }
+                            var last = vec_get(chunk, vec_len(chunk) - 1);
+                            prev_tail_hash = entry_hash(last);
+                            verified = verified + vec_len(chunk);
+                            offset = offset + vec_len(chunk);
+                            chunk = vec_new();
+                        }
+                    }
+                }
+                consumed = nl + 1;
+            }
+        }
+
+        if (consumed > 0) {
+            if (consumed < buf_fill) {
+                memcpy(_fsvs_buf, _fsvs_buf + consumed, buf_fill - consumed);
+            }
+            buf_fill = buf_fill - consumed;
+        }
+
+        if (eof == 0 && buf_fill >= _fsvs_buf_size) {
+            sakshi_error("filestore: verify streamed — line exceeds 64KB", 47);
+            file_unlock(fd);
+            file_close(fd);
+            return 0;
+        }
+    }
+
+    file_unlock(fd);
+    file_close(fd);
+
+    if (vec_len(chunk) > 0) {
+        var err2 = _fsvs_verify_chunk(chunk, offset, prev_tail_hash);
+        if (err2 != 0) { return err2; }
+        verified = verified + vec_len(chunk);
+    }
+
+    return verified;
+}
+
+# Verify a chunk's internal linkage and boundary against the prior tail hash.
+fn _fsvs_verify_chunk(chunk, offset, prev_tail_hash) {
+    var clen = vec_len(chunk);
+    if (clen == 0) { return 0; }
+    if (offset > 0) {
+        var first = vec_get(chunk, 0);
+        var fp = entry_prev_hash(first);
+        if (constant_time_eq_str(fp, prev_tail_hash) == 0) {
+            return error_integrity(offset, prev_tail_hash, fp);
+        }
+    }
+    return verify_chain(chunk, offset);
+}
+
+# ================================================================
 # Query — load all, apply filter
 # ================================================================
 

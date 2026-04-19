@@ -1,5 +1,42 @@
 # Roadmap
 
+## v2.0.0 — 2026-04-19
+
+Major-version sprint. Last stop for 1.x-era backlog before the line is frozen.
+Breaking cleanups shelved in 1.x, two deferred Rust-port APIs landed, missing
+`dist/libro.cyr` distribution artifact wired per `DEPS-PATTERN.md`, hardening
+backlog drained (nested JSON hash, chain export/import, streamed FileStore
+verify, bench history).
+
+### Breaking
+- [x] `verify_chain(entries)` → `verify_chain(entries, base_index)`; `verify_chain_offset` folded in. `chain_verify(c)` unchanged. Consumers pass `0` for whole-chain verification.
+- [x] Canonical JSON hashing rewritten as a recursive byte-walker — depth-unlimited, scalar-aware. 1.x flat canonicalizer quoted every value regardless of type and broke on nested objects/arrays. Flat all-string objects still hash identically; non-string values, arrays, and nested objects now hash differently (and correctly).
+
+### Added
+- [x] `chain_append_batch(c, severities, sources, actions, details_vec)` — N entries, one rotation check. Returns vec of created entry pointers. Over-capacity batches tolerated for the call's duration.
+- [x] `proof_to_json(ip)` in `src/proof_json.cyr` — ports `to_proof_json()` from Rust. Separate module so `libro_core.bcyr` can exclude it and stay under the cc5 16384 fixup cap.
+- [x] `chain_export(c, path)` / `chain_import(path)` in `src/chain_io.cyr` — full-chain JSON Lines serialization. Preserves entries, `prev_chain_hash`, `max_capacity`. Overflow archives intentionally not serialized.
+- [x] `filestore_verify_streamed(s, chunk_size)` — byte-streamed verify over a 64KB read buffer, keeps only `chunk_size` entries live at a time. Cross-chunk linkage propagated via tail-hash.
+- [x] Bench history CSV via `benches/bench_history.cyr` — `LIBRO_BENCH_HISTORY=<path>` writes one row per bench; `LIBRO_BENCH_TAG` for run labels. No-op when env unset.
+- [x] `dist/libro.cyr` (4,488 lines) — produced by `cyrius distlib`, committed. `[lib] modules = […]` in `cyrius.cyml`; CI gates on freshness.
+- [x] `_sb_csv_field` quote branch direct-emit — one pre-grow + tight loop vs N `_sb_add_byte` calls.
+
+### Changed / cleanup
+- [x] FileStore read buffer right-sized via `lseek(fd, 0, SEEK_END)` — one allocation per load.
+- [x] `_filestore_cpath` cached on struct (16→24 bytes) — cstr derived once at `filestore_open`.
+- [x] `_der_parse_tlv` → multi-return `(total, value_ptr)` — kills `_der_value_ptr` / `_der_value_len` globals. `civil_from_days` stays on globals (5.4.2 multi-return caps at 2).
+- [x] `chain_verify` / `verify_chain` layering documented in `src/chain.cyr`.
+- [x] `benches/libro_io.bcyr` trimmed — dropped unused `retention.cyr` after nested canonical JSON pushed live fixups back near the 16384 cap.
+- [x] Lint clean — 3 pre-existing 120-char-line warnings fixed (SHA-256 test vector + zero-hash prev_hash built via `str_builder`; patra-store CREATE SQL assembled at runtime).
+
+### Validation
+- [x] **286 tests, 0 failed** (255 → 286: +4 append_batch, +4 proof_to_json, +5 nested canonical JSON, +9 ChainIO, +5 streamed FileStore verify).
+- [x] 22 benches across 2 binaries. Fuzz clean. Simulated-consumer: `dist/libro.cyr` compiles after stdlib + sigil + patra.
+
+### Decisions (no code change)
+- [x] `#derive(accessors)` re-reviewed — REJECTED again. AGNOS-wide raw-offset convention + hook-point flexibility.
+- [x] `_sb_csv_field` single-pass — REJECTED. Current two-pass form is one cache-hot check + one direct-write escape; a fused version needs optimistic-write-with-memmove or pre-grow-and-reset, neither cleaner.
+
 ## v1.2.0 — 2026-04-19
 
 - [x] 24 workaround globals removed — patra_store 12, entry 6, anchoring 3, review 1, chain 1, merkle 1 (dead). cc3-era workarounds for locals clobbered across nested `str_builder_*` / `hasher_update` call chains; cc5 5.4.2 preserves them reliably.
@@ -71,15 +108,7 @@
 
 ## Hardening backlog (not blocked)
 
-- [ ] Nested JSON canonical hashing (depth > 1)
-- [ ] Benchmark history tracking (CSV append per run)
-- [ ] Chain export/import (full chain serialization to file)
-- [ ] Streaming verification for FileStore
-- [ ] `append_batch()` port from Rust
-- [ ] FileStore large-file buffer sizing — `_fs_buf` doubles from 64 KB; on a 100 MB file we alloc several giant buffers and orphan them (bump allocator never frees). mmap, pre-allocate at max expected size, or document max-store-size assumption.
-- [ ] `_sb_csv_field` single-pass — currently scans once to decide if quoting is needed, then again to escape. Payoff marginal (CSV already sub-ms); clarity win.
-- [ ] Cache `_entry_to_cstr` on the store struct — `filestore_open` / `filestore_append` / `filestore_len` each re-derive the cstr from the same path.
-- [ ] Resolve `chain_verify` / `verify_chain` duplication — minor overlap between `src/chain.cyr` and `src/verify.cyr`. Document the split or merge.
+- [ ] MCP tools via bote (≥ 2.5.1): `libro_query`, `libro_verify`, `libro_export` — bote is no longer blocked. Deferred to post-2.0 (lives in its own repo/PR).
 
 ## Blocked — Waiting on Ecosystem
 
@@ -89,4 +118,3 @@
 - [ ] Remote attestation (TPM-backed chain sealing)
 - [ ] Multi-node chain sync (federated audit across fleet)
 - [ ] Conflict resolution for concurrent appends
-- [ ] MCP tools via bote: `libro_query`, `libro_verify`, `libro_export`

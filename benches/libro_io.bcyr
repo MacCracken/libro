@@ -27,7 +27,6 @@ include "src/hasher.cyr"
 include "src/entry.cyr"
 include "src/verify.cyr"
 include "src/query.cyr"
-include "src/retention.cyr"
 include "src/chain.cyr"
 include "src/store.cyr"
 include "src/export.cyr"
@@ -37,6 +36,8 @@ include "src/signing.cyr"
 include "src/anchoring.cyr"
 include "src/file_store.cyr"
 include "src/streaming.cyr"
+
+include "benches/bench_history.cyr"
 
 var _b_chain = 0;
 var _b_det = 0;
@@ -162,6 +163,7 @@ fn main() {
 
     println("");
     bench_report_all(benches);
+    bench_history_write("libro_io", benches);
 
     file_close(_b_dev_null);
     sys_unlink("/tmp/libro_bench_fs.jsonl");
