@@ -220,7 +220,7 @@ fn patrastore_is_empty(s) {
 
 fn patrastore_load_and_verify(s) {
     var entries = patrastore_load_all(s);
-    var err = verify_chain(entries);
+    var err = verify_chain(entries, 0);
     if (err != 0) {
         sakshi_error("patrastore: verify failed", 25);
         return err;

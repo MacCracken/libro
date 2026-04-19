@@ -1,6 +1,6 @@
 [package]
 name = "libro"
-version = "1.2.0"
+version = "2.0.0-dev"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
@@ -10,6 +10,36 @@ repository = "https://github.com/MacCracken/libro"
 [build]
 entry = "src/main.cyr"
 output = "libro"
+
+# Library distribution. Order mirrors the include order in src/main.cyr —
+# critical for Cyrius's single-pass forward-reference resolution.
+# `cyrius distlib` reads this section to produce dist/libro.cyr.
+# Kept under [lib] (not [build]) so benches and standalone repros under
+# tests/ don't pull all 20 modules into their compilation unit via the
+# manifest — they `include` explicitly.
+[lib]
+modules = [
+    "src/error.cyr",
+    "src/hasher.cyr",
+    "src/entry.cyr",
+    "src/verify.cyr",
+    "src/query.cyr",
+    "src/retention.cyr",
+    "src/chain.cyr",
+    "src/store.cyr",
+    "src/export.cyr",
+    "src/review.cyr",
+    "src/merkle.cyr",
+    "src/signing.cyr",
+    "src/anchoring.cyr",
+    "src/timestamping.cyr",
+    "src/proof.cyr",
+    "src/kernel_audit.cyr",
+    "src/file_store.cyr",
+    "src/patra_store.cyr",
+    "src/streaming.cyr",
+    "src/proof_json.cyr",
+]
 
 # ── Dependencies ─────────────────────────────────────────────────
 # Cyrius-stdlib modules copied into lib/ by `cyrius deps`. libro

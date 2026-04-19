@@ -79,6 +79,37 @@ fn chain_append(c, severity, source, action, details) {
     return e;
 }
 
+# Batch-append N entries with one rotation check instead of N. Parallel
+# vecs — severities[i] / sources[i] / actions[i] / details_vec[i] form the
+# i-th entry. Returns a new vec of the created entry pointers.
+#
+# Capacity enforcement: auto-rotate is checked once at start, so a batch
+# larger than `max_capacity` can exceed it for the duration of this call.
+# The next `chain_append` / `chain_append_batch` will rotate as usual.
+fn chain_append_batch(c, severities, sources, actions, details_vec) {
+    _chain_auto_rotate(c);
+    var n = vec_len(severities);
+    var entries = load64(c);
+    var out = vec_new();
+    var prev = _chain_prev_link(c);
+    var i = 0;
+    while (i < n) {
+        var e = entry_new(
+            vec_get(severities, i),
+            vec_get(sources, i),
+            vec_get(actions, i),
+            vec_get(details_vec, i),
+            prev
+        );
+        vec_push(entries, e);
+        vec_push(out, e);
+        prev = entry_hash(e);
+        i += 1;
+    }
+    sakshi_debug("chain: append batch", 19);
+    return out;
+}
+
 fn chain_append_with_agent(c, severity, source, action, details, agent_id) {
     _chain_auto_rotate(c);
 
@@ -187,7 +218,7 @@ fn chain_verify(c) {
         return error_integrity(0, expected_prev, first_prev);
     }
 
-    return verify_chain(entries);
+    return verify_chain(entries, 0);
 }
 
 # ================================================================

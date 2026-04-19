@@ -53,12 +53,26 @@ jobs:
           ./build/libro > /tmp/libro_out 2>&1 || true
           grep -q "0 failed" /tmp/libro_out || { echo "FAIL: tests did not report 0 failed"; exit 1; }
 
+      - name: Regenerate dist/libro.cyr (consumer distribution artifact)
+        run: |
+          cyrius distlib || true  # self-compile check fails on external-dep refs (sigil); bundle still emitted
+          test -s dist/libro.cyr || { echo "FAIL: dist/libro.cyr not produced"; exit 1; }
+          echo "dist/libro.cyr: $(wc -l < dist/libro.cyr) lines, $(wc -c < dist/libro.cyr) bytes"
+
+      - name: Verify dist/libro.cyr matches committed copy
+        run: |
+          if ! git diff --exit-code dist/libro.cyr; then
+            echo "FAIL: committed dist/libro.cyr is stale. Run 'cyrius distlib' and commit."
+            exit 1
+          fi
+
       - name: Archive
         run: |
           TAG="${GITHUB_REF_NAME}"
           rm -f cyrius-*.tar.gz
           git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
-          sha256sum libro-*.tar.gz build/libro > SHA256SUMS
+          cp dist/libro.cyr "libro-${TAG}.cyr"
+          sha256sum libro-*.tar.gz libro-*.cyr build/libro > SHA256SUMS
 
       - name: Extract changelog
         run: |
@@ -71,5 +85,6 @@ jobs:
           prerelease: ${{ startsWith(github.ref_name, '0.') }}
           files: |
             libro-*.tar.gz
+            libro-*.cyr
             build/libro
             SHA256SUMS

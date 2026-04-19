@@ -82,6 +82,15 @@ jobs:
             "build/$name"
           done
 
+      - name: dist/libro.cyr is up-to-date
+        run: |
+          cyrius distlib || true  # self-compile check fails on external-dep refs (sigil); bundle still emitted
+          test -s dist/libro.cyr || { echo "FAIL: dist/libro.cyr not produced"; exit 1; }
+          if ! git diff --exit-code dist/libro.cyr; then
+            echo "FAIL: dist/libro.cyr is stale. Run 'cyrius distlib' locally and commit."
+            exit 1
+          fi
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest

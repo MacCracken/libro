@@ -1,12 +1,18 @@
 # Libro — Claude Code Instructions
 
+> **READ `DEPS-PATTERN.md` AT REPO ROOT BEFORE TOUCHING BUILD OR
+> RELEASE.** libro ships to downstream Cyrius projects via a
+> committed `dist/libro.cyr` produced by `cyrius distlib`. That
+> is the only distribution contract. Patra is the reference.
+> Do not invent alternatives.
+
 ## Project Identity
 
 **Libro** (Italian: book) — Cryptographic audit chain — tamper-proof SHA-256 hash-linked event logging and verification
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 1.1.1 (2026-04-19)
+- **Version**: 2.0.0-dev (2026-04-19)
 - **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 5.4.2+ (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -19,11 +25,12 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 
 ## Current State
 
-- **Source**: 18 modules under `src/`, plus vendored stdlib + patra bundle under `lib/`
-- **Tests**: 251 assertions (all pass — 19 PatraStore + Gap-coverage tests relanded in 1.1.0)
-- **Benchmarks**: 21
+- **Source**: 20 modules under `src/` (18 + `patra_store.cyr` + `proof_json.cyr`), plus stdlib + sigil + patra resolved via `cyrius deps`
+- **Tests**: 263 assertions (all pass)
+- **Benchmarks**: 22 across two binaries (`libro_core.bcyr` 14 + `libro_io.bcyr` 8 — split because cc5 5.4.2's 16384 fixup-table cap)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 8 targets)
-- **Binary**: ~384 KB (DCE-built)
+- **Binary**: ~404 KB (DCE-built)
+- **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, 4.3k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
@@ -39,7 +46,7 @@ No external deps beyond the Cyrius toolchain.
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "251 passed, 0 failed"
+# Run tests — expect "263 passed, 0 failed"
 ./build/libro
 
 # Benchmarks (two binaries — cc5 fixup table limit forced the split in 1.2.0)
@@ -98,13 +105,14 @@ from findings → post-review benchmarks → docs audit → repeat if heavy.
 ## Project Structure
 
 ```
-src/main.cyr            Entry point — 251 inline tests + 18 module includes
-src/*.cyr               Library modules (18 files: error, hasher, entry, verify,
+src/main.cyr            Entry point — 263 inline tests + 20 module includes
+src/*.cyr               Library modules (20 files: error, hasher, entry, verify,
                         query, retention, chain, store, export, review, merkle,
                         signing, anchoring, timestamping, proof, kernel_audit,
-                        file_store, patra_store, streaming)
-benches/libro_core.bcyr 13 core benchmarks (crypto/chain/merkle/sign)
+                        file_store, patra_store, streaming, proof_json)
+benches/libro_core.bcyr 14 core benchmarks (crypto/chain/merkle/sign/batch)
 benches/libro_io.bcyr    8 i/o benchmarks (export/review/anchor/stream/filestore)
+dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
 lib/                    Vendored Cyrius stdlib + patra v1.1.1 bundle

@@ -50,7 +50,7 @@ fn memstore_load_all(s) {
 fn memstore_load_and_verify(s) {
     sakshi_info("store: load and verify", 22);
     var entries = load64(s);
-    var err = verify_chain(entries);
+    var err = verify_chain(entries, 0);
     if (err != 0) {
         sakshi_error("store: verification failed", 26);
         return err;
@@ -94,7 +94,7 @@ fn memstore_verify_streamed(s, chunk_size) {
         }
 
         # Verify internal integrity
-        var err = verify_chain_offset(chunk, offset);
+        var err = verify_chain(chunk, offset);
         if (err != 0) { return err; }
 
         # Track tail hash for next chunk

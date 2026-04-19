@@ -53,7 +53,18 @@ fn bench_chain_append(ignored) {
 }
 
 fn bench_chain_verify(ignored) {
-    verify_chain(_b_entries);
+    verify_chain(_b_entries, 0);
+    return 0;
+}
+
+var _b_batch_sev = 0;
+var _b_batch_src = 0;
+var _b_batch_act = 0;
+var _b_batch_det = 0;
+
+fn bench_chain_append_batch(ignored) {
+    var c = chain_new();
+    chain_append_batch(c, _b_batch_sev, _b_batch_src, _b_batch_act, _b_batch_det);
     return 0;
 }
 
@@ -143,6 +154,19 @@ fn main() {
     _b_vk = verifying_key_from_signing(_b_sk);
     _b_sig = sign_entry(_b_sk, vec_get(_b_entries, 0));
 
+    _b_batch_sev = vec_new();
+    _b_batch_src = vec_new();
+    _b_batch_act = vec_new();
+    _b_batch_det = vec_new();
+    i = 0;
+    while (i < 100) {
+        vec_push(_b_batch_sev, SEV_INFO);
+        vec_push(_b_batch_src, str_from("bench-src"));
+        vec_push(_b_batch_act, str_from("bench-act"));
+        vec_push(_b_batch_det, _b_det);
+        i += 1;
+    }
+
     var benches = vec_new();
 
     var b1 = bench_new("sha256_64b");
@@ -156,6 +180,10 @@ fn main() {
     var b3 = bench_new("chain_append_100");
     bench_run(b3, &bench_chain_append, 10);
     vec_push(benches, b3);
+
+    var b3b = bench_new("chain_append_batch_100");
+    bench_run(b3b, &bench_chain_append_batch, 10);
+    vec_push(benches, b3b);
 
     var b4 = bench_new("chain_verify_100");
     bench_run(b4, &bench_chain_verify, 100);

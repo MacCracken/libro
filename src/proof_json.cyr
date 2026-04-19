@@ -1,0 +1,136 @@
+# proof_json.cyr — JSON pretty-printer for IntegrityProof.
+#
+# Lives in its own module (rather than proof.cyr) so that benchmark binaries
+# that exercise proof verification without needing JSON output — notably
+# libro_core.bcyr — can exclude it and stay under cc5 5.4.2's 16384
+# fixup-table cap. References _sb_json_escape (export.cyr) and anchor_*
+# (anchoring.cyr); both must be included before this file.
+#
+# Added in 2.0. Ports `to_proof_json()` from the Rust reference.
+
+fn _sb_json_str_or_null(sb, s) {
+    if (s == 0 || str_len(s) == 0) {
+        str_builder_add_cstr(sb, "null");
+        return 0;
+    }
+    str_builder_add_cstr(sb, "\"");
+    _sb_json_escape(sb, s);
+    str_builder_add_cstr(sb, "\"");
+    return 0;
+}
+
+fn _sb_proof_entry(sb, e) {
+    str_builder_add_cstr(sb, "    {\"id\":\"");
+    str_builder_add(sb, uuid_format(entry_id(e)));
+    str_builder_add_cstr(sb, "\",\"timestamp\":\"");
+    str_builder_add(sb, entry_timestamp(e));
+    str_builder_add_cstr(sb, "\",\"severity\":\"");
+    str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
+    str_builder_add_cstr(sb, "\",\"source\":\"");
+    _sb_json_escape(sb, entry_source(e));
+    str_builder_add_cstr(sb, "\",\"action\":\"");
+    _sb_json_escape(sb, entry_action(e));
+    str_builder_add_cstr(sb, "\",\"details\":");
+    str_builder_add(sb, entry_details(e));
+    str_builder_add_cstr(sb, ",\"agent_id\":");
+    _sb_json_str_or_null(sb, entry_agent_id(e));
+    str_builder_add_cstr(sb, ",\"prev_hash\":\"");
+    str_builder_add(sb, entry_prev_hash(e));
+    str_builder_add_cstr(sb, "\",\"hash\":\"");
+    str_builder_add(sb, entry_hash(e));
+    str_builder_add_cstr(sb, "\"}");
+    return 0;
+}
+
+fn _sb_proof_inclusion(sb, mp) {
+    str_builder_add_cstr(sb, "    {\"index\":");
+    str_builder_add_int(sb, merkle_proof_index(mp));
+    str_builder_add_cstr(sb, ",\"leaf\":\"");
+    str_builder_add(sb, merkle_proof_leaf(mp));
+    str_builder_add_cstr(sb, "\",\"root\":\"");
+    str_builder_add(sb, merkle_proof_root(mp));
+    str_builder_add_cstr(sb, "\",\"path\":[");
+    var path = merkle_proof_path(mp);
+    var pn = vec_len(path);
+    var i = 0;
+    while (i < pn) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add(sb, vec_get(path, i));
+        str_builder_add_cstr(sb, "\"");
+        i += 1;
+    }
+    str_builder_add_cstr(sb, "]}");
+    return 0;
+}
+
+fn _sb_proof_anchor(sb, a) {
+    str_builder_add_cstr(sb, "  \"anchor\": {\n");
+    str_builder_add_cstr(sb, "    \"merkle_root\": \"");
+    str_builder_add(sb, anchor_merkle_root(a));
+    str_builder_add_cstr(sb, "\",\n    \"entry_count\": ");
+    str_builder_add_int(sb, anchor_entry_count(a));
+    str_builder_add_cstr(sb, ",\n    \"chain_head\": \"");
+    str_builder_add(sb, anchor_chain_head(a));
+    str_builder_add_cstr(sb, "\",\n    \"hash\": \"");
+    str_builder_add(sb, anchor_hash(a));
+    str_builder_add_cstr(sb, "\"\n  }");
+    return 0;
+}
+
+fn proof_to_json(ip) {
+    if (ip == 0) { return str_from("null"); }
+    var sb = str_builder_new();
+    var sth = load64(ip);
+    var entries = load64(ip + 24);
+    var inclusions = load64(ip + 16);
+    var anchor = load64(ip + 32);
+
+    str_builder_add_cstr(sb, "{\n  \"tree_head\": {\n");
+    str_builder_add_cstr(sb, "    \"root\": \"");
+    str_builder_add(sb, sth_root(sth));
+    str_builder_add_cstr(sb, "\",\n    \"tree_size\": ");
+    str_builder_add_int(sb, sth_tree_size(sth));
+    str_builder_add_cstr(sb, ",\n    \"timestamp\": \"");
+    str_builder_add(sb, sth_timestamp(sth));
+    str_builder_add_cstr(sb, "\",\n    \"signature\": ");
+    _sb_json_str_or_null(sb, sth_signature(sth));
+    str_builder_add_cstr(sb, ",\n    \"verifying_key\": ");
+    _sb_json_str_or_null(sb, sth_verifying_key(sth));
+    str_builder_add_cstr(sb, ",\n    \"algorithm\": ");
+    _sb_json_str_or_null(sb, sth_algorithm(sth));
+    str_builder_add_cstr(sb, "\n  },\n");
+
+    str_builder_add_cstr(sb, "  \"entries\": [");
+    var en = vec_len(entries);
+    var i = 0;
+    while (i < en) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\n");
+        _sb_proof_entry(sb, vec_get(entries, i));
+        i += 1;
+    }
+    if (en > 0) { str_builder_add_cstr(sb, "\n  "); }
+    str_builder_add_cstr(sb, "],\n");
+
+    str_builder_add_cstr(sb, "  \"inclusions\": [");
+    var inn = vec_len(inclusions);
+    i = 0;
+    while (i < inn) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\n");
+        _sb_proof_inclusion(sb, vec_get(inclusions, i));
+        i += 1;
+    }
+    if (inn > 0) { str_builder_add_cstr(sb, "\n  "); }
+    str_builder_add_cstr(sb, "],\n");
+
+    if (anchor == 0) {
+        str_builder_add_cstr(sb, "  \"anchor\": null\n}");
+    } else {
+        _sb_proof_anchor(sb, anchor);
+        str_builder_add_cstr(sb, "\n}");
+    }
+
+    return str_builder_build(sb);
+}

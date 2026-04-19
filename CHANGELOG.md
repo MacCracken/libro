@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-dev] - unreleased
+
+Major-version sprint. Opens up breaking cleanups shelved in the 1.x line,
+ports two APIs deferred since the Rust port, and wires the missing
+`dist/libro.cyr` distribution artifact per `DEPS-PATTERN.md`.
+
+### Breaking
+- **`verify_chain(entries)` → `verify_chain(entries, base_index)`** —
+  the old one-arg form is gone. `verify_chain_offset` was folded in
+  (it did the same work with an extra base-index argument). Callers
+  verifying a whole chain from position 0 now pass `verify_chain(e, 0)`.
+  `chain_verify(c)` is unchanged (still wraps `verify_chain` with the
+  genesis prev-hash check). Consumers: update call sites.
+
+### Added
+- **`chain_append_batch(c, severities, sources, actions, details_vec)`**
+  — batch-append N entries with one rotation check (vs N) by taking
+  four parallel vecs. Returns a vec of the created entry pointers.
+  Capacity enforcement: auto-rotate is checked once at start; a batch
+  larger than `max_capacity` can exceed it for the duration of the call
+  and the next `chain_append` will rotate as usual. Bench:
+  `chain_append_batch_100` within noise of `chain_append_100` at the
+  current unlimited-capacity shape; the win shows up in capped chains.
+- **`proof_to_json(ip)`** in `src/proof_json.cyr` — pretty-printed JSON
+  emitter for `IntegrityProof`. Ports `to_proof_json()` from the Rust
+  reference. Module lives separately so bench binaries that exercise
+  proof verification without the JSON dep (notably `libro_core.bcyr`)
+  can exclude it and stay under cc5 5.4.2's 16384 fixup-table cap.
+- **`dist/libro.cyr`** — the committed consumer-distribution artifact
+  produced by `cyrius distlib`. Was missing from every prior tag; any
+  downstream `[deps.libro]` pulling a 1.x tag got a 404 on
+  `cyrius deps`. `[lib] modules = […]` added to `cyrius.cyml` so the
+  tool knows what to bundle. CI + release workflows now regenerate
+  and gate on the artifact. See `DEPS-PATTERN.md`.
+- **`_sb_csv_field` direct-emit escape path** — on the quote-required
+  branch, replaces N per-byte `_sb_add_byte` calls with one pre-grow +
+  a tight direct-write loop.
+
+### Changed
+- **FileStore read buffer is right-sized via `lseek(fd, 0, SEEK_END)`**
+  instead of the 64KB→double-on-overflow scheme. On a 100 MB file the
+  old strategy orphaned several doubling-step buffers in the bump
+  allocator; now one allocation per `filestore_load_all`. Adds
+  `_fs_file_size(fd)` helper.
+- **`_filestore_cpath(s)` cached on the FileStore struct** — struct
+  layout grew 16 → 24 bytes (`+16 cpath` added). `filestore_open`
+  derives the cstr once; `filestore_append` / `filestore_load_all` /
+  `filestore_len` read from the cached slot instead of calling
+  `_entry_to_cstr(load64(s))` per op.
+- **`_der_parse_tlv` returns `(total, value_ptr)` via multi-return**
+  — replaces the `_der_value_ptr` / `_der_value_len` globals.
+  Callers derive `value_len = total - (value_ptr - data)`.
+  `civil_from_days` stays on `_cd_y/m/d` globals because 5.4.2's
+  multi-return caps at 2 values.
+- **CI gates on `dist/libro.cyr` freshness** — PRs that edit `src/*`
+  without regenerating `dist/libro.cyr` fail CI.
+- **Benches regrouped** — `benches/libro_core.bcyr` grew one bench
+  (`chain_append_batch_100`); 14 core + 8 i/o = 22 total.
+
+### Decisions (no code change)
+- `#derive(accessors)` (Cyrius 3.7.1) re-reviewed for 2.0 — **REJECTED
+  again.** Empirically works in 5.4.2 (verified with `/tmp/derive_test`),
+  but the 1.2.0 rejection reasons still apply: AGNOS-wide convention
+  (patra, sigil, ark all use raw-offset accessors) and hook-point
+  flexibility (hand-written accessors let us add sakshi tracing /
+  bounds checks / lazy materialization). Neither is a
+  downstream-breakage concern that 2.0 unblocks. Revisit only if the
+  ecosystem convention shifts.
+
+### Validation
+- **263 tests, 0 failed** (up from 255 in 1.2.0: +4 for `append_batch`,
+  +4 for `proof_to_json`).
+- **22 benches** across 2 binaries, all report.
+- Fuzz harness clean (no crashes).
+- Simulated-consumer test: `dist/libro.cyr` compiles and links when
+  included after stdlib + sigil + patra.
+
 ## [1.2.0] - 2026-04-19
 
 cc3-debt paydown sprint. With Cyrius 5.4.2 (cc5) reliably preserving

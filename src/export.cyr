@@ -159,21 +159,18 @@ fn _export_entry_csv(e, fd) {
     return 0;
 }
 
-# CSV field escaping: wrap in quotes if contains comma, quote, or newline.
-# Double all internal quotes.
+# CSV field escaping: wrap in quotes if field contains comma, quote, or newline.
+# Double all internal quotes. Single scan to decide quoting; on the escape path,
+# one pre-grown buffer + direct byte writes (no per-char fn calls).
 fn _sb_csv_field(sb, s) {
     var data = str_data(s);
     var slen = str_len(s);
-    var needs_quote = 0;
 
-    # Check if escaping needed
+    var needs_quote = 0;
     var i = 0;
     while (i < slen) {
         var c = load8(data + i) & 0xFF;
-        if (c == 44 || c == 34 || c == 10) {
-            needs_quote = 1;
-            i = slen;
-        }
+        if (c == 44 || c == 34 || c == 10) { needs_quote = 1; i = slen; }
         i += 1;
     }
 
@@ -182,17 +179,25 @@ fn _sb_csv_field(sb, s) {
         return 0;
     }
 
-    str_builder_add_cstr(sb, "\"");
+    # Worst case: every byte is a quote → doubled. +2 for surrounding quotes.
+    _sb_grow(sb, slen * 2 + 2);
+    var buf = load64(sb);
+    var out = load64(sb + 8);
+    store8(buf + out, 34);
+    out += 1;
     i = 0;
     while (i < slen) {
         var c = load8(data + i) & 0xFF;
+        store8(buf + out, c);
+        out += 1;
         if (c == 34) {
-            str_builder_add_cstr(sb, "\"\"");
-        } else {
-            _sb_add_byte(sb, c);
+            store8(buf + out, 34);
+            out += 1;
         }
         i += 1;
     }
-    str_builder_add_cstr(sb, "\"");
+    store8(buf + out, 34);
+    out += 1;
+    store64(sb + 8, out);
     return 0;
 }

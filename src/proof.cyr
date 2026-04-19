@@ -196,7 +196,7 @@ fn _proof_verify_common(ip, tree_head_valid) {
     var sth = load64(ip);
 
     # Verify entry chain integrity
-    var err = verify_chain(entries);
+    var err = verify_chain(entries, 0);
     if (err == 0) {
         store64(pv + 8, 1);
     }

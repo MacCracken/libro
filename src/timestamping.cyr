@@ -278,13 +278,11 @@ fn ts_request_to_der(r) {
 # DER parsing helpers
 # ================================================================
 
-# Parse a TLV header. Returns total consumed bytes.
-# Sets _der_value_ptr and _der_value_len globals.
-var _der_value_ptr = 0;
-var _der_value_len = 0;
-
+# Parse a TLV header. Returns (total_consumed_bytes, value_ptr) — value_len is
+# derivable as total - (value_ptr - data). total == 0 signals parse failure;
+# value_ptr is undefined in that case.
 fn _der_parse_tlv(data, data_len) {
-    if (data_len < 2) { return 0; }
+    if (data_len < 2) { return (0, 0); }
 
     var len_byte = load8(data + 1) & 0xFF;
     var header_size = 2;
@@ -292,7 +290,7 @@ fn _der_parse_tlv(data, data_len) {
 
     if (len_byte >= 128) {
         var num_bytes = len_byte & 0x7F;
-        if (data_len < 2 + num_bytes) { return 0; }
+        if (data_len < 2 + num_bytes) { return (0, 0); }
         length = 0;
         var i = 0;
         while (i < num_bytes) {
@@ -303,11 +301,9 @@ fn _der_parse_tlv(data, data_len) {
     }
 
     var total = header_size + length;
-    if (data_len < total) { return 0; }
+    if (data_len < total) { return (0, 0); }
 
-    _der_value_ptr = data + header_size;
-    _der_value_len = length;
-    return total;
+    return (total, data + header_size);
 }
 
 # Decode unsigned integer from DER bytes
@@ -336,39 +332,36 @@ fn ts_response_from_der(data, data_len) {
     var resp = fl_alloc(24);
 
     # Parse outer SEQUENCE
-    var total = _der_parse_tlv(data, data_len);
+    var total, seq_data = _der_parse_tlv(data, data_len);
     if (total == 0) {
         store64(resp, TS_REJECTION);
         store64(resp + 8, 0);
         store64(resp + 16, str_from("DER parse error"));
         return resp;
     }
-
-    var seq_data = _der_value_ptr;
-    var seq_len = _der_value_len;
+    var seq_len = total - (seq_data - data);
 
     # Parse PKIStatusInfo SEQUENCE
-    var si_total = _der_parse_tlv(seq_data, seq_len);
+    var si_total, si_data = _der_parse_tlv(seq_data, seq_len);
     if (si_total == 0) {
         store64(resp, TS_REJECTION);
         store64(resp + 8, 0);
         store64(resp + 16, str_from("status info parse error"));
         return resp;
     }
-
-    var si_data = _der_value_ptr;
-    var si_len = _der_value_len;
+    var si_len = si_total - (si_data - seq_data);
 
     # Parse status INTEGER from PKIStatusInfo
-    var st_total = _der_parse_tlv(si_data, si_len);
+    var st_total, st_data = _der_parse_tlv(si_data, si_len);
     if (st_total == 0) {
         store64(resp, TS_REJECTION);
         store64(resp + 8, 0);
         store64(resp + 16, str_from("status integer parse error"));
         return resp;
     }
+    var st_len = st_total - (st_data - si_data);
 
-    var status_val = _der_decode_unsigned(_der_value_ptr, _der_value_len);
+    var status_val = _der_decode_unsigned(st_data, st_len);
     store64(resp, status_val);
 
     # Token = remaining bytes after PKIStatusInfo

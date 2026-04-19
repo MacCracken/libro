@@ -52,6 +52,7 @@ include "src/kernel_audit.cyr"
 include "src/file_store.cyr"
 include "src/patra_store.cyr"
 include "src/streaming.cyr"
+include "src/proof_json.cyr"
 
 # ================================================================
 # Tests
@@ -260,7 +261,7 @@ fn test_chain_valid() {
     var e3 = entry_new(SEV_ERROR, str_from("src"), str_from("act3"), det, entry_hash(e2));
     vec_push(entries, e3);
 
-    var result = verify_chain(entries);
+    var result = verify_chain(entries, 0);
     assert(result == 0, "chain verify valid");
 }
 
@@ -276,7 +277,7 @@ fn test_chain_tampered_hash() {
 
     # Tamper with e1's action
     store64(e1 + 40, str_from("tampered"));
-    var result = verify_chain(entries);
+    var result = verify_chain(entries, 0);
     assert(result != 0, "chain detects tampered entry");
     assert(error_code(result) == ERR_INTEGRITY, "chain error is integrity");
 }
@@ -292,14 +293,14 @@ fn test_chain_broken_link() {
     var e2 = entry_new(SEV_INFO, str_from("src"), str_from("act2"), det, str_from("0000000000000000000000000000000000000000000000000000000000000000"));
     vec_push(entries, e2);
 
-    var result = verify_chain(entries);
+    var result = verify_chain(entries, 0);
     assert(result != 0, "chain detects broken link");
     assert(error_code(result) == ERR_INTEGRITY, "broken link error is integrity");
 }
 
 fn test_chain_empty() {
     var entries = vec_new();
-    var result = verify_chain(entries);
+    var result = verify_chain(entries, 0);
     assert(result == 0, "empty chain is valid");
 }
 
@@ -307,7 +308,7 @@ fn test_chain_single() {
     var entries = vec_new();
     var e = entry_new(SEV_INFO, str_from("src"), str_from("act"), str_from("{}"), str_from(""));
     vec_push(entries, e);
-    var result = verify_chain(entries);
+    var result = verify_chain(entries, 0);
     assert(result == 0, "single entry chain is valid");
 }
 
@@ -426,6 +427,41 @@ fn test_chain_append() {
     # Verify chain integrity
     var err = chain_verify(c);
     assert(err == 0, "chain append verify");
+}
+
+fn test_chain_append_batch() {
+    var c = chain_new();
+    var det = str_from("{}");
+
+    # Seed with one entry so the batch starts after a non-empty tail.
+    chain_append(c, SEV_INFO, str_from("src"), str_from("seed"), det);
+
+    var sevs = vec_new();
+    var srcs = vec_new();
+    var acts = vec_new();
+    var dets = vec_new();
+    var i = 0;
+    while (i < 5) {
+        vec_push(sevs, SEV_INFO);
+        vec_push(srcs, str_from("src"));
+        vec_push(acts, str_from("batched"));
+        vec_push(dets, det);
+        i += 1;
+    }
+
+    var out = chain_append_batch(c, sevs, srcs, acts, dets);
+    assert(vec_len(out) == 5, "append_batch returned 5 entries");
+    assert(chain_len(c) == 6, "chain grew by 5 (seed + batch)");
+
+    # Linkage must be intact end-to-end.
+    var err = chain_verify(c);
+    assert(err == 0, "append_batch verify");
+
+    # First batched entry must link to seed's hash.
+    var seed = vec_get(chain_entries(c), 0);
+    var first_batched = vec_get(out, 0);
+    assert(str_eq(entry_prev_hash(first_batched), entry_hash(seed)) == 1,
+        "batch first entry links to seed");
 }
 
 fn test_chain_append_with_agent() {
@@ -1002,6 +1038,28 @@ fn test_proof_with_anchor() {
     var pv = proof_verify_unsigned(ip);
     assert(pv_anchor_valid(pv) == 1, "proof anchor valid");
     assert(pv_is_valid(pv) == 1, "proof with anchor valid");
+}
+
+fn test_proof_to_json_unsigned() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act"), det);
+
+    var ip = proof_build_unsigned(c);
+    proof_with_all_inclusions(ip);
+
+    var json = proof_to_json(ip);
+    assert(str_len(json) > 0, "proof_to_json non-empty");
+
+    var data = str_data(json);
+    assert(load8(data) == 123, "proof_to_json starts with '{'");
+    assert(load8(data + str_len(json) - 1) == 125, "proof_to_json ends with '}'");
+}
+
+fn test_proof_to_json_null_on_zero() {
+    var json = proof_to_json(0);
+    var expected = str_from("null");
+    assert(str_eq(json, expected) == 1, "proof_to_json(0) = null");
 }
 
 fn test_receipt_create() {
@@ -1669,6 +1727,7 @@ fn main() {
 
     test_group("AuditChain");
     test_chain_append();
+    test_chain_append_batch();
     test_chain_append_with_agent();
     test_chain_rotate();
     test_chain_auto_rotate();
@@ -1725,6 +1784,8 @@ fn main() {
 
     test_group("Integrity proof");
     test_proof_unsigned();
+    test_proof_to_json_unsigned();
+    test_proof_to_json_null_on_zero();
     test_proof_signed();
     test_proof_with_consistency();
     test_proof_with_anchor();
