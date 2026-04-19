@@ -1,5 +1,15 @@
 # Roadmap
 
+## v1.1.1 — 2026-04-19
+
+- [x] CI/release modernized (reads `.cyrius-toolchain`, DCE, semver-only tags, lint + fuzz + bench in CI)
+- [x] Manifest `cyrius.toml` → `cyrius.cyml` (first-party convention)
+- [x] FileStore UAF across loads (audit Finding 3) fixed + regression test
+- [x] CSV/JSON escape per-char alloc eliminated (export jsonl −14.8 %, csv −15.9 %)
+- [x] `uuid_format` single-pass (chain_append −5 %)
+- [x] CLAUDE.md refreshed — dropped 5 obsolete cc3-era Cyrius quirk notes
+- [x] 255 tests, 0 failed
+
 ## v1.1.0 — 2026-04-19
 
 - [x] P(-1) scaffold-hardening pass (clean build, lint, bench baseline, audit)

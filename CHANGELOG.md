@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-04-19
+
+CI/release modernization and a round of quick-win refactors from the
+post-1.1.0 review pass.
+
+### Fixed
+- **FileStore silent corruption across loads (MEDIUM)** —
+  `filestore_load_all` wrapped pointers into the global `_fs_buf`
+  read buffer and shipped those references out through parsed
+  entries. A second `filestore_load_all` overwrote the buffer
+  in place, aliasing the first call's entries onto the second
+  file's bytes. Fixed by cloning each line with
+  `str_clone(str_new(_fs_buf + pos, line_len))` before parsing.
+  Regression test `test_filestore_load_survives_second_load`
+  added — flips PASS↔FAIL on 2 asserts if the clone is removed.
+  See `docs/audit/2026-04-19-audit.md` Finding 3 (upgraded
+  LOW → MEDIUM).
+
+### Changed
+- **CI/release workflows modernized** to match patra / first-party
+  standards. Toolchain version now sourced from `.cyrius-toolchain`
+  (no hardcoded version strings in YAML). `cyrius build` used in
+  place of raw `cat | cc3`. `CYRIUS_DCE=1` applied to every build
+  step. Format check, `cyrius lint`, ELF verification, fuzz
+  harness run, and benchmark run added to CI. Release tag filter
+  tightened from `'*'` to `'[0-9]*'` (semver-only).
+- **Manifest renamed** `cyrius.toml` → `cyrius.cyml` to match the
+  first-party convention (ark, nous, sigil, patra). Cyrius still
+  accepts either name; `.cyml` is now preferred.
+- **`.cyrius-toolchain` refreshed** to 5.4.2 (was 4.5.0; lagged
+  behind the actual pin in `cyrius.cyml`).
+- **`scripts/version-bump.sh`** updated to edit `cyrius.cyml`
+  first, falling back to `cyrius.toml` when `.cyml` is absent.
+- **`CLAUDE.md` refreshed** — dropped stale cc3-era Cyrius quirks
+  (the `\r`-escape, negative-literal, fixup-8192, silent-stub,
+  and 256-init-global workarounds have all been obsolete since
+  Cyrius 3.10 / 4.x). Added `str_from`/`str_new` lifetime note
+  and a P(-1) pointer into the agnosticos template.
+
+### Added
+- **`_sb_add_byte(sb, c)` helper in `src/export.cyr`** — single-byte
+  append for the per-character paths in `_sb_json_escape` and
+  `_sb_csv_field`. Replaces a per-character `alloc(2) + store8 +
+  store8 + str_builder_add_cstr(…)` pattern that was producing one
+  heap allocation per non-special character in JSON/CSV exports.
+- **Single-pass `uuid_format` in `src/entry.cyr`** — replaces the
+  former 5× `hex_encode_str` + `str_builder` path with one 37-byte
+  allocation and direct nibble-to-hex writes. Every entry
+  creation, export, and proof call paid the old cost.
+
+### Performance (post-fixes vs 1.1.0 baseline)
+- `export_jsonl_100`: 601 µs → 512 µs (**−14.8 %**)
+- `export_csv_100`: 321 µs → 270 µs (**−15.9 %**)
+- `chain_append_100`: 1.896 ms → 1.802 ms (**−5.0 %**)
+- `proof_unsigned_100`: 1.314 ms → 1.290 ms (**−1.8 %**)
+- `entry_hash`: 10 µs → 10 µs (unchanged at this resolution)
+
+### Validation
+- **255 passed, 0 failed** (up from 251 in 1.1.0; +4 from the new
+  FileStore regression test).
+- Benchmarks green, fuzz harness clean.
+
 ## [1.1.0] - 2026-04-19
 
 Sprint 1.1.0 — P(-1) scaffold hardening. Cyrius 5.4.2 upgrade, patra

@@ -1,6 +1,19 @@
 # export.cyr — export audit entries as JSON Lines or CSV
 # Writes to a file descriptor (fd).
 
+# Append a single byte to a str_builder. Inlined variant of
+# str_builder_add_cstr for the hot per-character path in escape loops —
+# skips strlen + memcpy + the 2-byte scratch alloc that a cstr route
+# would pay per character.
+fn _sb_add_byte(sb, c) {
+    _sb_grow(sb, 1);
+    var buf = load64(sb);
+    var len = load64(sb + 8);
+    store8(buf + len, c);
+    store64(sb + 8, len + 1);
+    return 0;
+}
+
 # ================================================================
 # JSON Lines export — one JSON object per line
 # ================================================================
@@ -71,10 +84,7 @@ fn _sb_json_escape(sb, s) {
             str_builder_add_cstr(sb, "\\n");
         }
         if (c != 34 && c != 92 && c != 10) {
-            var tmp = alloc(2);
-            store8(tmp, c);
-            store8(tmp + 1, 0);
-            str_builder_add_cstr(sb, tmp);
+            _sb_add_byte(sb, c);
         }
         i = i + 1;
     }
@@ -179,10 +189,7 @@ fn _sb_csv_field(sb, s) {
         if (c == 34) {
             str_builder_add_cstr(sb, "\"\"");
         } else {
-            var tmp = alloc(2);
-            store8(tmp, c);
-            store8(tmp + 1, 0);
-            str_builder_add_cstr(sb, tmp);
+            _sb_add_byte(sb, c);
         }
         i = i + 1;
     }

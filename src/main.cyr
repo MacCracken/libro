@@ -1397,6 +1397,50 @@ fn test_filestore_multiple_appends() {
     sys_unlink("/tmp/libro_test_fma.jsonl");
 }
 
+# Regression test for audit Finding 3: FileStore's load path used to
+# wrap pointers into the shared `_fs_buf` read buffer. A second
+# `filestore_load_all` would overwrite the first load's bytes, aliasing
+# the first set of entries onto the second file's content. Now that
+# lines are cloned before parsing, first-load entries must remain
+# correct after a second load runs.
+fn test_filestore_load_survives_second_load() {
+    sys_unlink("/tmp/libro_test_fsA.jsonl");
+    sys_unlink("/tmp/libro_test_fsB.jsonl");
+
+    var pa = str_from("/tmp/libro_test_fsA.jsonl");
+    var pb = str_from("/tmp/libro_test_fsB.jsonl");
+    var det = str_from("{}");
+
+    var fsa = filestore_open(pa);
+    var ea = entry_new(SEV_INFO, str_from("alpha_src"),
+    str_from("alpha_act"), det, str_from(""));
+    filestore_append(fsa, ea);
+
+    var fsb = filestore_open(pb);
+    var eb = entry_new(SEV_WARNING, str_from("beta_src"),
+    str_from("beta_act"), det, str_from(""));
+    filestore_append(fsb, eb);
+
+    var loaded_a = filestore_load_all(fsa);
+    assert(vec_len(loaded_a) == 1, "A loaded 1");
+
+    # Second load overwrites _fs_buf; if entries in loaded_a aliased
+    # _fs_buf they would now read B's content.
+    var loaded_b = filestore_load_all(fsb);
+    assert(vec_len(loaded_b) == 1, "B loaded 1");
+
+    var ra = vec_get(loaded_a, 0);
+    assert(str_eq(entry_source(ra),
+    str_from("alpha_src")) == 1,
+    "A source survives second load");
+    assert(str_eq(entry_action(ra),
+    str_from("alpha_act")) == 1,
+    "A action survives second load");
+
+    sys_unlink("/tmp/libro_test_fsA.jsonl");
+    sys_unlink("/tmp/libro_test_fsB.jsonl");
+}
+
 fn test_compliance_presets() {
     var pci = retention_pci_dss();
     assert(retention_type(pci) == RETAIN_DURATION,
@@ -1700,6 +1744,7 @@ fn main() {
     test_filestore_query();
     test_filestore_empty();
     test_filestore_multiple_appends();
+    test_filestore_load_survives_second_load();
 
     test_group("PatraStore");
     test_patrastore_open_close();

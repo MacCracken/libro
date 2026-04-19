@@ -92,23 +92,52 @@ fn uuid_v4(buf) {
 }
 
 # Format UUID as 8-4-4-4-12 hex string (36 chars)
+# Write one byte of `buf` as two lowercase hex chars at out[pos..pos+2].
+fn _uuid_hex_byte(buf, bi, out, pos) {
+    var b = load8(buf + bi) & 0xFF;
+    var hi = (b >> 4) & 0xF;
+    var lo = b & 0xF;
+    if (hi < 10) { store8(out + pos, 48 + hi); }
+    else { store8(out + pos, 87 + hi); }
+    if (lo < 10) { store8(out + pos + 1, 48 + lo); }
+    else { store8(out + pos + 1, 87 + lo); }
+    return 0;
+}
+
+# Single-pass UUID formatter. Writes 36 chars (8-4-4-4-12) + NUL into
+# one fresh 37-byte buffer and wraps it once. Replaces the former
+# 5× hex_encode_str + str_builder path that allocated ~12 intermediate
+# objects per UUID. bench_entry_hash and every export/proof call pays
+# this once per entry.
 fn uuid_format(buf) {
-    var sb = str_builder_new();
-    var hex = hex_encode_str(buf, 4);
-    str_builder_add(sb, hex);
-    str_builder_add_cstr(sb, "-");
-    hex = hex_encode_str(buf + 4, 2);
-    str_builder_add(sb, hex);
-    str_builder_add_cstr(sb, "-");
-    hex = hex_encode_str(buf + 6, 2);
-    str_builder_add(sb, hex);
-    str_builder_add_cstr(sb, "-");
-    hex = hex_encode_str(buf + 8, 2);
-    str_builder_add(sb, hex);
-    str_builder_add_cstr(sb, "-");
-    hex = hex_encode_str(buf + 10, 6);
-    str_builder_add(sb, hex);
-    return str_builder_build(sb);
+    var out = alloc(37);
+    # bytes 0..3 → out[0..7]
+    _uuid_hex_byte(buf, 0, out, 0);
+    _uuid_hex_byte(buf, 1, out, 2);
+    _uuid_hex_byte(buf, 2, out, 4);
+    _uuid_hex_byte(buf, 3, out, 6);
+    store8(out + 8, 45);
+    # bytes 4..5 → out[9..12]
+    _uuid_hex_byte(buf, 4, out, 9);
+    _uuid_hex_byte(buf, 5, out, 11);
+    store8(out + 13, 45);
+    # bytes 6..7 → out[14..17]
+    _uuid_hex_byte(buf, 6, out, 14);
+    _uuid_hex_byte(buf, 7, out, 16);
+    store8(out + 18, 45);
+    # bytes 8..9 → out[19..22]
+    _uuid_hex_byte(buf, 8, out, 19);
+    _uuid_hex_byte(buf, 9, out, 21);
+    store8(out + 23, 45);
+    # bytes 10..15 → out[24..35]
+    _uuid_hex_byte(buf, 10, out, 24);
+    _uuid_hex_byte(buf, 11, out, 26);
+    _uuid_hex_byte(buf, 12, out, 28);
+    _uuid_hex_byte(buf, 13, out, 30);
+    _uuid_hex_byte(buf, 14, out, 32);
+    _uuid_hex_byte(buf, 15, out, 34);
+    store8(out + 36, 0);
+    return str_new(out, 36);
 }
 
 # ================================================================

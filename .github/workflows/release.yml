@@ -2,21 +2,18 @@ name: Release
 
 on:
   push:
-    tags: ['*']
+    tags: ['[0-9]*']
 
 permissions:
   contents: write
-
-env:
-  CYRIUS_VERSION: "3.6.8"
 
 jobs:
   ci:
     name: CI Gate
     uses: ./.github/workflows/ci.yml
 
-  build:
-    name: Build Release
+  release:
+    name: Build & Release
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
@@ -25,60 +22,48 @@ jobs:
       - name: Verify version
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          CYML_VERSION=$(grep '^version = ' cyrius.cyml | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG="${GITHUB_REF_NAME}"
           [ "$FILE_VERSION" = "$TAG" ] || { echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
+          [ "$CYML_VERSION" = "$TAG" ] || { echo "cyrius.cyml ($CYML_VERSION) != tag ($TAG)"; exit 1; }
 
       - name: Install Cyrius toolchain
         run: |
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(cat .cyrius-toolchain | tr -d '[:space:]')}"
+          echo "Installing Cyrius $CYRIUS_VERSION"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
           mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
           cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/bin/cyrius" 2>/dev/null || true
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
           chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
-      - name: Build
+      - name: Build (DCE)
         run: |
           mkdir -p build
-          cat src/main.cyr | cc3 > build/libro 2>/dev/null
-          chmod +x build/libro
+          CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
           echo "libro: $(wc -c < build/libro) bytes"
 
-      - name: Test
+      - name: Smoke test
         run: |
-          OUTPUT=$(./build/libro 2>&1)
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -q "0 failed"
-
-      - name: Clean toolchain artifacts
-        run: rm -f cyrius-*.tar.gz
+          ./build/libro > /tmp/libro_out 2>&1 || true
+          grep -q "0 failed" /tmp/libro_out || { echo "FAIL: tests did not report 0 failed"; exit 1; }
 
       - name: Archive
         run: |
           TAG="${GITHUB_REF_NAME}"
+          rm -f cyrius-*.tar.gz
           git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
-          sha256sum libro-*.tar.gz > SHA256SUMS
+          sha256sum libro-*.tar.gz build/libro > SHA256SUMS
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts
-          path: |
-            libro-*.tar.gz
-            SHA256SUMS
+      - name: Extract changelog
+        run: |
+          awk "/^## \\[${GITHUB_REF_NAME}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/body.md
 
-  release:
-    name: Create GitHub Release
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-artifacts
-      - name: Changelog
-        run: awk "/^## \\[${GITHUB_REF_NAME}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/body.md
       - uses: softprops/action-gh-release@v2
         with:
           name: "libro ${{ github.ref_name }}"
@@ -86,4 +71,5 @@ jobs:
           prerelease: ${{ startsWith(github.ref_name, '0.') }}
           files: |
             libro-*.tar.gz
+            build/libro
             SHA256SUMS

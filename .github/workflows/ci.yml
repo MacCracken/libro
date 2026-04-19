@@ -11,11 +11,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CYRIUS_VERSION: "3.6.8"
-
 jobs:
-  build-and-test:
+  build:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
@@ -23,23 +20,43 @@ jobs:
 
       - name: Install Cyrius toolchain
         run: |
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(cat .cyrius-toolchain | tr -d '[:space:]')}"
+          echo "Installing Cyrius $CYRIUS_VERSION"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
           mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
           cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/bin/cyrius" 2>/dev/null || true
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
           chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "Cyrius $CYRIUS_VERSION installed"
+          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
-      - name: Build
+      - name: Setup lib symlink
+        run: |
+          # libro vendors its own lib/ (patra bundle, stdlib copies). Keep it.
+          # The runner's ~/.cyrius/lib is used for include fallback.
+          ls lib | head -3
+          ls "$HOME/.cyrius/lib" | head -3
+
+      - name: Format check
+        run: cyrfmt --check src/*.cyr
+
+      - name: Lint
+        run: |
+          for f in src/*.cyr; do
+            cyrius lint "$f" || true
+          done
+
+      - name: Build (DCE)
         run: |
           mkdir -p build
-          cat src/main.cyr | cc3 > build/libro 2>build/errors.log
-          if [ $? -ne 0 ]; then cat build/errors.log; exit 1; fi
-          chmod +x build/libro
+          CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
           echo "libro: $(wc -c < build/libro) bytes"
+
+      - name: Verify ELF
+        run: xxd -l 4 build/libro | grep -q "7f45 4c46"
 
       - name: Test suite
         run: |
@@ -48,42 +65,19 @@ jobs:
           grep -q "0 failed" /tmp/libro_test_out || { echo "FAIL: tests did not report 0 failed"; exit 1; }
           echo "PASS: all tests"
 
+      - name: Fuzz
+        run: |
+          for f in fuzz/*.fcyr; do
+            name=$(basename "$f" .fcyr)
+            CYRIUS_DCE=1 cyrius build "$f" "build/$name"
+            timeout 10 "build/$name" || { echo "FUZZ CRASH: $name"; exit 1; }
+            echo "  $name: ok"
+          done
+
       - name: Benchmarks
         run: |
-          if [ -f benches/libro.bcyr ]; then
-            cat benches/libro.bcyr | cc3 > build/libro_bench 2>/dev/null && chmod +x build/libro_bench && ./build/libro_bench
-          fi
-        continue-on-error: true
-
-  check:
-    name: Check & Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-
-      - name: Format check
-        run: |
-          fail=0
-          for f in src/*.cyr; do
-            cyrfmt "$f" > /tmp/fmt_check 2>/dev/null
-            if ! diff -q "$f" /tmp/fmt_check > /dev/null 2>&1; then
-              echo "needs formatting: $(basename $f)"
-              fail=1
-            fi
-          done
-          rm -f /tmp/fmt_check
-          test $fail -eq 0
+          CYRIUS_DCE=1 cyrius build benches/libro.bcyr build/libro_bench
+          ./build/libro_bench
 
   security:
     name: Security Scan
@@ -96,6 +90,9 @@ jobs:
           if grep -rn 'syscall(59' src/ 2>/dev/null | grep -v "# " | grep -v kernel_audit; then
             echo "WARN: raw execve in libro modules"; WARN=1
           fi
+          if grep -rn '"/etc/' src/ 2>/dev/null; then
+            echo "WARN: hardcoded /etc paths"; WARN=1
+          fi
           echo "security scan complete (warnings: $WARN)"
 
   docs:
@@ -106,12 +103,14 @@ jobs:
       - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE; do
+          for doc in README.md CHANGELOG.md CLAUDE.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE VERSION cyrius.cyml .cyrius-toolchain; do
             if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING
       - name: Verify version consistency
         run: |
-          VERSION=$(cat VERSION | tr -d '[:space:]')
-          grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in changelog"; exit 1; }
-          echo "Version consistent: $VERSION"
+          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          CYML_VERSION=$(grep '^version = ' cyrius.cyml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          [ "$FILE_VERSION" = "$CYML_VERSION" ] || { echo "VERSION ($FILE_VERSION) != cyrius.cyml ($CYML_VERSION)"; exit 1; }
+          grep -q "\[$FILE_VERSION\]" CHANGELOG.md || { echo "FAIL: version $FILE_VERSION not in CHANGELOG.md"; exit 1; }
+          echo "Version consistent: $FILE_VERSION"

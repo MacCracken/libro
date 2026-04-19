@@ -105,7 +105,14 @@ fn filestore_load_all(s) {
 
         var line_len = eol - pos;
         if (line_len > 0) {
-            var line_str = str_new(_fs_buf + pos, line_len);
+            # Clone the line out of the shared `_fs_buf` read buffer before
+            # parsing. `_fs_buf` is re-used (and may be reallocated larger)
+            # on the next `filestore_load_all` call, so any `Str` that
+            # wraps a pointer into it — including the derived
+            # `str_new(data + offset, ...)` pointers produced by
+            # `json_parse` — would dangle once a second load runs.
+            # See docs/audit/2026-04-19-audit.md Finding 3.
+            var line_str = str_clone(str_new(_fs_buf + pos, line_len));
             var e = _filestore_parse_entry(line_str);
             if (e != 0) {
                 vec_push(entries, e);
