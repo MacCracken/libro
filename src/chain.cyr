@@ -68,28 +68,24 @@ fn chain_head_hash(c) {
 # Append — add entry to chain, auto-rotating if full
 # ================================================================
 
-var _chain_c = 0;
-
 fn chain_append(c, severity, source, action, details) {
-    _chain_c = c;
-    _chain_auto_rotate(_chain_c);
+    _chain_auto_rotate(c);
 
     # Determine prev_hash
-    var prev = _chain_prev_link(_chain_c);
+    var prev = _chain_prev_link(c);
     var e = entry_new(severity, source, action, details, prev);
-    vec_push(load64(_chain_c), e);
+    vec_push(load64(c), e);
     sakshi_debug("chain: append", 13);
     return e;
 }
 
 fn chain_append_with_agent(c, severity, source, action, details, agent_id) {
-    _chain_c = c;
-    _chain_auto_rotate(_chain_c);
+    _chain_auto_rotate(c);
 
-    var prev = _chain_prev_link(_chain_c);
+    var prev = _chain_prev_link(c);
     var e = entry_new(severity, source, action, details, prev);
     entry_with_agent(e, agent_id);
-    vec_push(load64(_chain_c), e);
+    vec_push(load64(c), e);
     return e;
 }
 
@@ -208,7 +204,7 @@ fn chain_by_source(c, source) {
         if (str_eq(entry_source(e), source) == 1) {
             vec_push(result, e);
         }
-        i = i + 1;
+        i += 1;
     }
     return result;
 }
@@ -223,7 +219,7 @@ fn chain_by_severity(c, severity) {
         if (entry_severity(e) == severity) {
             vec_push(result, e);
         }
-        i = i + 1;
+        i += 1;
     }
     return result;
 }
@@ -241,7 +237,7 @@ fn chain_by_agent(c, agent_id) {
                 vec_push(result, e);
             }
         }
-        i = i + 1;
+        i += 1;
     }
     return result;
 }
@@ -263,7 +259,7 @@ fn chain_page(c, offset, limit) {
     var i = start;
     while (i < end) {
         vec_push(result, vec_get(entries, i));
-        i = i + 1;
+        i += 1;
     }
     return result;
 }
@@ -292,7 +288,7 @@ fn chain_apply_retention(c, policy) {
         } else {
             vec_push(retained, e);
         }
-        i = i + 1;
+        i += 1;
     }
 
     # Head hash of last archived entry

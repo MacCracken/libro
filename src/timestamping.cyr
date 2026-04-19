@@ -237,7 +237,7 @@ fn ts_request_to_der(r) {
             var nb = load8(nonce_bytes + nonce_start);
             if ((nb & 0xFF) != 0) { nonce_start = ns_max; }
             if ((nb & 0xFF) == 0) {
-                nonce_start = nonce_start + 1;
+                nonce_start += 1;
             }
         }
         var trimmed = nonce_bytes + nonce_start;
@@ -297,7 +297,7 @@ fn _der_parse_tlv(data, data_len) {
         var i = 0;
         while (i < num_bytes) {
             length = (length << 8) | (load8(data + 2 + i) & 0xFF);
-            i = i + 1;
+            i += 1;
         }
         header_size = 2 + num_bytes;
     }
@@ -316,7 +316,7 @@ fn _der_decode_unsigned(data, len) {
     var i = 0;
     while (i < len) {
         val = (val << 8) | (load8(data + i) & 0xFF);
-        i = i + 1;
+        i += 1;
     }
     return val;
 }

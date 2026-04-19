@@ -116,7 +116,7 @@ fn merkle_build(entries) {
     while (i < n) {
         var e = vec_get(entries, i);
         vec_push(leaves, entry_hash(e));
-        i = i + 1;
+        i += 1;
     }
 
     # Build levels bottom-up
@@ -127,7 +127,7 @@ fn merkle_build(entries) {
         i = 0;
         while (i < cl) {
             vec_push(nodes, vec_get(current, i));
-            i = i + 1;
+            i += 1;
         }
 
         # Compute next level
@@ -218,7 +218,7 @@ fn merkle_verify_proof(mp) {
         } else {
             current = _merkle_hash_pair(current, nh);
         }
-        i = i + 1;
+        i += 1;
     }
     return constant_time_eq_str(current, merkle_proof_root(mp));
 }
@@ -241,8 +241,6 @@ fn _largest_pow2_lt(n) {
 # ================================================================
 # Canonical subtree hash — RFC 9162 no-duplication root
 # ================================================================
-
-var _csh_nodes = 0;
 
 fn _canonical_subtree_hash(nodes_vec, start, count) {
     if (count == 1) {
@@ -347,7 +345,7 @@ fn merkle_verify_consistency(cp) {
     var pi = 0;
     while (pi < vec_len(path)) {
         vec_push(working, vec_get(path, pi));
-        pi = pi + 1;
+        pi += 1;
     }
 
     if (vec_len(working) == 0) { return 0; }
@@ -382,7 +380,7 @@ fn merkle_verify_consistency(cp) {
 
         fn_val = fn_val >> 1;
         sn_val = sn_val >> 1;
-        wi = wi + 1;
+        wi += 1;
     }
 
     if (sn_val != 0) { return 0; }

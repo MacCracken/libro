@@ -79,7 +79,7 @@ fn memstore_verify_streamed(s, chunk_size) {
         var i = offset;
         while (i < end) {
             vec_push(chunk, vec_get(entries, i));
-            i = i + 1;
+            i += 1;
         }
 
         var clen = vec_len(chunk);
@@ -134,7 +134,7 @@ fn memstore_load_page(s, offset, limit) {
     var i = start;
     while (i < end) {
         vec_push(result, vec_get(entries, i));
-        i = i + 1;
+        i += 1;
     }
     return result;
 }

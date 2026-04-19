@@ -18,7 +18,7 @@ fn kernel_audit_available() {
 fn classify_kernel_result(result) {
     if (result == 0) { return SEV_INFO; }
     if (result > 0) { return SEV_WARNING; }
-    if (result == 0 - 13) { return SEV_SECURITY; }
+    if (result == -13) { return SEV_SECURITY; }
     return SEV_ERROR;
 }
 

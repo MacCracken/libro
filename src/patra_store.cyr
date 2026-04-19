@@ -51,85 +51,53 @@ fn _patrastore_ensure_table(s) {
 # Append — build INSERT SQL and execute
 # ================================================================
 
-var _ps_sb = 0;
-
-fn _ps_add_field(val) {
-    str_builder_add_cstr(_ps_sb, "'");
-    str_builder_add(_ps_sb, val);
-    str_builder_add_cstr(_ps_sb, "'");
-    return 0;
-}
-
-fn _ps_add_cfield(val) {
-    str_builder_add_cstr(_ps_sb, "'");
-    str_builder_add_cstr(_ps_sb, val);
-    str_builder_add_cstr(_ps_sb, "'");
-    return 0;
-}
-
-fn _ps_comma() {
-    str_builder_add_cstr(_ps_sb, ", ");
-    return 0;
-}
-
-# Globals to capture entry fields before building SQL
-var _ps_id = 0;
-var _ps_ts = 0;
-var _ps_sev = 0;
-var _ps_src = 0;
-var _ps_act = 0;
-var _ps_det = 0;
-var _ps_aid2 = 0;
-var _ps_ph = 0;
-var _ps_hash = 0;
-var _ps_halg = 0;
-var _ps_db = 0;
-
 fn patrastore_append(s, e) {
     sakshi_debug("patrastore: append", 18);
-    _ps_db = load64(s);
+    var db = load64(s);
 
-    # Capture all fields to globals first
-    _ps_id = uuid_format(entry_id(e));
-    _ps_ts = entry_timestamp(e);
-    _ps_sev = severity_as_str(entry_severity(e));
-    _ps_src = entry_source(e);
-    _ps_act = entry_action(e);
-    _ps_det = entry_details(e);
-    var aid = entry_agent_id(e);
-    if (aid != 0) { _ps_aid2 = aid; }
-    if (aid == 0) { _ps_aid2 = str_from(""); }
-    _ps_ph = entry_prev_hash(e);
-    _ps_hash = entry_hash(e);
-    _ps_halg = entry_hash_algorithm(e);
+    # Entry fields as locals. The 1.0.x era held these in globals because
+    # cc3 could clobber locals across the str_builder_add* call chain
+    # below; cc5 5.4.2 preserves them reliably — confirmed by the full
+    # test suite passing with this refactor.
+    var id = uuid_format(entry_id(e));
+    var ts = entry_timestamp(e);
+    var sev = severity_as_str(entry_severity(e));
+    var src = entry_source(e);
+    var act = entry_action(e);
+    var det = entry_details(e);
+    var aid_raw = entry_agent_id(e);
+    var aid = aid_raw;
+    if (aid_raw == 0) { aid = str_from(""); }
+    var ph = entry_prev_hash(e);
+    var hash = entry_hash(e);
+    var halg = entry_hash_algorithm(e);
 
-    # Build SQL with no function calls
-    _ps_sb = str_builder_new();
-    str_builder_add_cstr(_ps_sb, "INSERT INTO audit_entries VALUES ('");
-    str_builder_add(_ps_sb, _ps_id);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_ts);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add_cstr(_ps_sb, _ps_sev);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_src);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_act);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_det);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_aid2);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_ph);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_hash);
-    str_builder_add_cstr(_ps_sb, "', '");
-    str_builder_add(_ps_sb, _ps_halg);
-    str_builder_add_cstr(_ps_sb, "')");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "INSERT INTO audit_entries VALUES ('");
+    str_builder_add(sb, id);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, ts);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add_cstr(sb, sev);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, src);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, act);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, det);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, aid);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, ph);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, hash);
+    str_builder_add_cstr(sb, "', '");
+    str_builder_add(sb, halg);
+    str_builder_add_cstr(sb, "')");
 
-    var sql = str_builder_build(_ps_sb);
+    var sql = str_builder_build(sb);
     var cstr = _entry_to_cstr(sql);
-    var r = patra_exec(_ps_db, cstr);
+    var r = patra_exec(db, cstr);
     if (r != PATRA_OK) {
         sakshi_error("patrastore: insert failed", 25);
     }
@@ -156,7 +124,7 @@ fn patrastore_load_all(s) {
         if (e != 0) {
             vec_push(entries, e);
         }
-        i = i + 1;
+        i += 1;
     }
     patra_result_free(rs);
     return entries;
@@ -275,12 +243,12 @@ fn patrastore_query(s, filter) {
 
 fn patrastore_by_source(s, source) {
     var db = load64(s);
-    _ps_sb = str_builder_new();
-    str_builder_add_cstr(_ps_sb,
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb,
     "SELECT * FROM audit_entries WHERE src = '");
-    str_builder_add(_ps_sb, source);
-    str_builder_add_cstr(_ps_sb, "'");
-    var sql = str_builder_build(_ps_sb);
+    str_builder_add(sb, source);
+    str_builder_add_cstr(sb, "'");
+    var sql = str_builder_build(sb);
     var rs = patra_query(db, _entry_to_cstr(sql));
     if (rs == 0) { return vec_new(); }
 
@@ -290,7 +258,7 @@ fn patrastore_by_source(s, source) {
     while (i < n) {
         var e = _patrastore_row_to_entry(rs, i);
         if (e != 0) { vec_push(entries, e); }
-        i = i + 1;
+        i += 1;
     }
     patra_result_free(rs);
     return entries;

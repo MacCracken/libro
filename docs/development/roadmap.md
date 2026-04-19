@@ -1,8 +1,32 @@
 # Roadmap
 
+## Unreleased — ready to ship (you pick the version)
+
+cc3-debt paydown sprint. All changes landed in the working tree,
+255/255 tests green, benches within noise. See
+`docs/development/sprint-1.2.0.md` for the full plan + decision log.
+
+**Source changes (already in working tree, not yet tagged):**
+
+- [x] **24 workaround globals removed** — patra_store 12, entry 6, anchoring 3, review 1, chain 1, merkle 1 dead. All were cc3-era workarounds for locals clobbered across nested `str_builder_*` / `hasher_update` call chains; cc5 5.4.2 preserves them reliably.
+- [x] **Negative literals + compound assignment sweep** — `(0 - N)` → `-N` (13 sites) and `i = i + 1` → `i += 1` in simple counter loops (~50 sites). Native in Cyrius 3.10.3+.
+- [x] **`severity_len(sev)` added** in `src/entry.cyr`; `entry_compute_hash` no longer calls `strlen` on the constant severity cstr every entry.
+- [x] **`cyrius.cyml` enriched** — added `repository`, `[deps] stdlib = […]` (13 modules), `[deps.sigil]` (tag 2.8.3), `[deps.patra]` (tag 1.1.1). Matches patra / first-party convention.
+- [x] **Sprint 1.2.0 plan captured** in `docs/development/sprint-1.2.0.md` — every idea from the 1.1.x reviews is recorded there so nothing is lost across sessions.
+
+**Decisions recorded (no code change):**
+
+- [x] `secret var` (Cyrius 5.3.5) — NOT APPLICABLE. Libro key material is heap-allocated; `secret var` only zeroises stack-local arrays. `signing_key_zeroize(sk)` already handles heap zeroization.
+- [x] `ct_select` / `lib/ct.cyr` (Cyrius 5.3.5) — NO MIGRATION NEEDED. Every security-critical compare already routes through `constant_time_eq_str` → sigil's branchless `ct_eq`. Remaining `str_eq` calls are metadata, not secrets.
+- [x] `#derive(accessors)` (Cyrius 3.7.1) — REJECT. Would require `struct` declarations across 18 modules. AGNOS-wide convention (libro, patra, sigil, ark) is raw-offset accessors; consistency + hook-point flexibility outweighs the ~30-line boilerplate saving.
+
+**Validation:** 255 passed, 0 failed. `sign_entry` 6.147 → 5.786 ms (−5.9 %) from the patra_store local refactor; every other bench within ±2 % noise. Fuzz clean.
+
+**Version bump is yours to call** — none of this has touched `VERSION` / `cyrius.cyml` version / CHANGELOG yet.
+
 ## v1.1.1 — 2026-04-19
 
-- [x] CI/release modernized (reads `.cyrius-toolchain`, DCE, semver-only tags, lint + fuzz + bench in CI)
+- [x] CI/release modernized (reads toolchain pin from `cyrius.cyml` `cyrius = "..."` field, DCE, semver-only tags, lint + fuzz + bench in CI)
 - [x] Manifest `cyrius.toml` → `cyrius.cyml` (first-party convention)
 - [x] FileStore UAF across loads (audit Finding 3) fixed + regression test
 - [x] CSV/JSON escape per-char alloc eliminated (export jsonl −14.8 %, csv −15.9 %)

@@ -394,7 +394,7 @@ fn test_retention_keep_count() {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
 
     var r = retention_keep_count(3);
@@ -502,7 +502,7 @@ fn test_chain_page() {
     var i = 0;
     while (i < 10) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
 
     var page = chain_page(c, 3, 4);
@@ -534,7 +534,7 @@ fn test_chain_retention() {
     var i = 0;
     while (i < 5) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
 
     var policy = retention_keep_count(2);
@@ -565,7 +565,7 @@ fn test_memstore_verify() {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
         memstore_append(s, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
 
     var result = memstore_load_and_verify(s);
@@ -582,7 +582,7 @@ fn test_memstore_streamed() {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
         memstore_append(s, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
 
     var count = memstore_verify_streamed(s, 3);
@@ -613,7 +613,7 @@ fn test_memstore_page() {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
         memstore_append(s, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
 
     var page = memstore_load_page(s, 2, 2);
@@ -714,7 +714,7 @@ fn test_merkle_inclusion_proof() {
     var i = 0;
     while (i < 8) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
 
     var tree = merkle_build(chain_entries(c));
@@ -723,7 +723,7 @@ fn test_merkle_inclusion_proof() {
         var mp = merkle_proof(tree, i);
         assert(mp != 0, "merkle proof exists");
         assert(merkle_verify_proof(mp) == 1, "merkle proof verifies");
-        i = i + 1;
+        i += 1;
     }
 }
 
@@ -741,7 +741,7 @@ fn test_merkle_odd_leaf_count() {
     var i = 0;
     while (i < 5) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
     var tree = merkle_build(chain_entries(c));
     assert(tree != 0, "merkle odd build");
@@ -750,7 +750,7 @@ fn test_merkle_odd_leaf_count() {
     while (i < 5) {
         var mp = merkle_proof(tree, i);
         assert(merkle_verify_proof(mp) == 1, "merkle odd proof verifies");
-        i = i + 1;
+        i += 1;
     }
 }
 
@@ -760,14 +760,14 @@ fn test_merkle_consistency() {
     var i = 0;
     while (i < 4) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
     var tree4 = merkle_build(chain_entries(c));
 
     # Add more entries
     while (i < 8) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
     var tree8 = merkle_build(chain_entries(c));
 
@@ -782,7 +782,7 @@ fn test_merkle_consistency_same_size() {
     var i = 0;
     while (i < 4) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
     var tree = merkle_build(chain_entries(c));
     var cp = merkle_consistency_proof(tree, 4);
@@ -924,8 +924,8 @@ fn test_ts_status() {
 fn test_kernel_classify() {
     assert(classify_kernel_result(0) == SEV_INFO, "result 0 = info");
     assert(classify_kernel_result(1) == SEV_WARNING, "result 1 = warning");
-    assert(classify_kernel_result(0 - 1) == SEV_ERROR, "result -1 = error");
-    assert(classify_kernel_result(0 - 13) == SEV_SECURITY, "result -13 = security");
+    assert(classify_kernel_result(-1) == SEV_ERROR, "result -1 = error");
+    assert(classify_kernel_result(-13) == SEV_SECURITY, "result -13 = security");
 }
 
 fn test_proof_unsigned() {
@@ -974,7 +974,7 @@ fn test_proof_with_consistency() {
     var i = 0;
     while (i < 8) {
         chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
 
     var ip = proof_build_unsigned(c);
@@ -1099,7 +1099,7 @@ fn test_stream_multiple_entries() {
     while (i < 5) {
         var e = entry_new(SEV_INFO, str_from("src"), str_from("evt"), str_from("{}"), str_from(""));
         stream_publish(s, e);
-        i = i + 1;
+        i += 1;
     }
 
     assert_eq(stream_published(s), 5, "5 published");
@@ -1158,7 +1158,7 @@ fn test_filestore_verify() {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
         filestore_append(fs, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
 
     var result = filestore_load_and_verify(fs);
@@ -1211,7 +1211,7 @@ fn test_retention_keep_duration() {
         str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
     var r = retention_keep_duration(0);
     var split = retention_split_index(r, entries);
@@ -1228,7 +1228,7 @@ fn test_retention_keep_after() {
         str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
     var r = retention_keep_after(0);
     var split = retention_split_index(r, entries);
@@ -1245,7 +1245,7 @@ fn test_retention_keep_duration_future() {
         str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
     var r = retention_keep_duration(365 * 86400);
     var split = retention_split_index(r, entries);
@@ -1335,7 +1335,7 @@ fn test_merkle_large_tree() {
     while (i < 16) {
         chain_append(c, SEV_INFO, str_from("s"),
         str_from("a"), det);
-        i = i + 1;
+        i += 1;
     }
     var tree = merkle_build(chain_entries(c));
     assert(merkle_tree_leaf_count(tree) == 16,
@@ -1345,7 +1345,7 @@ fn test_merkle_large_tree() {
         var mp = merkle_proof(tree, i);
         assert(merkle_verify_proof(mp) == 1,
         "merkle 16 proof");
-        i = i + 1;
+        i += 1;
     }
 }
 
@@ -1387,7 +1387,7 @@ fn test_filestore_multiple_appends() {
         str_from("a"), det, prev);
         filestore_append(fs, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
     assert(filestore_len(fs) == 10,
     "filestore 10 entries");
@@ -1510,7 +1510,7 @@ fn test_patrastore_verify() {
         str_from("a"), det, prev);
         patrastore_append(ps, e);
         prev = entry_hash(e);
-        i = i + 1;
+        i += 1;
     }
     var result = patrastore_load_and_verify(ps);
     assert(vec_len(result) == 3,

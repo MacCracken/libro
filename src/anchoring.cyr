@@ -37,22 +37,19 @@ fn anchor_hash(a) { return load64(a + 64); }
 # Anchor construction
 # ================================================================
 
-var _anch_ptr = 0;
-
 fn anchor_from_tree(tree, chain_head_hash) {
     sakshi_info("anchor: create", 14);
     var a = fl_alloc(72);
-    _anch_ptr = a;
     uuid_v4(a);
-    store64(_anch_ptr + 16, merkle_tree_root(tree));
-    store64(_anch_ptr + 24, merkle_tree_leaf_count(tree));
-    store64(_anch_ptr + 32, chain_head_hash);
-    store64(_anch_ptr + 40, str_from(HASH_ALGORITHM));
-    store64(_anch_ptr + 48, timestamp_rfc3339(get_epoch_secs()));
-    store64(_anch_ptr + 56, 0);
-    var h = anchor_compute_hash(_anch_ptr);
-    store64(_anch_ptr + 64, h);
-    return _anch_ptr;
+    store64(a + 16, merkle_tree_root(tree));
+    store64(a + 24, merkle_tree_leaf_count(tree));
+    store64(a + 32, chain_head_hash);
+    store64(a + 40, str_from(HASH_ALGORITHM));
+    store64(a + 48, timestamp_rfc3339(get_epoch_secs()));
+    store64(a + 56, 0);
+    var h = anchor_compute_hash(a);
+    store64(a + 64, h);
+    return a;
 }
 
 fn anchor_new(tree, chain) {
@@ -74,46 +71,42 @@ fn anchor_with_prev(a, prev_anchor) {
 # Order: id(16 raw) → merkle_root → entry_count(8 LE) →
 #         chain_head → hash_algorithm → created_at → prev_anchor_hash
 
-var _ach_hasher = 0;
-var _ach_anchor = 0;
-
 fn anchor_compute_hash(a) {
-    _ach_anchor = a;
-    _ach_hasher = hasher_new();
+    var hasher = hasher_new();
 
     # 1. UUID (16 raw bytes)
-    hasher_update(_ach_hasher, _ach_anchor, 16);
+    hasher_update(hasher, a, 16);
 
     # 2. merkle_root (length-prefixed)
-    var mr = load64(_ach_anchor + 16);
-    hash_field(_ach_hasher, str_data(mr), str_len(mr));
+    var mr = load64(a + 16);
+    hash_field(hasher, str_data(mr), str_len(mr));
 
     # 3. entry_count as 8-byte LE
     if (_hf_lebuf == 0) { _hf_lebuf = alloc(8); }
-    store64(_hf_lebuf, load64(_ach_anchor + 24));
-    hasher_update(_ach_hasher, _hf_lebuf, 8);
+    store64(_hf_lebuf, load64(a + 24));
+    hasher_update(hasher, _hf_lebuf, 8);
 
     # 4. chain_head (length-prefixed)
-    var ch = load64(_ach_anchor + 32);
-    hash_field(_ach_hasher, str_data(ch), str_len(ch));
+    var ch = load64(a + 32);
+    hash_field(hasher, str_data(ch), str_len(ch));
 
     # 5. hash_algorithm (length-prefixed)
-    var ha = load64(_ach_anchor + 40);
-    hash_field(_ach_hasher, str_data(ha), str_len(ha));
+    var ha = load64(a + 40);
+    hash_field(hasher, str_data(ha), str_len(ha));
 
     # 6. created_at (length-prefixed)
-    var ca = load64(_ach_anchor + 48);
-    hash_field(_ach_hasher, str_data(ca), str_len(ca));
+    var ca = load64(a + 48);
+    hash_field(hasher, str_data(ca), str_len(ca));
 
     # 7. prev_anchor_hash (length-prefixed, empty if none)
-    var pah = load64(_ach_anchor + 56);
+    var pah = load64(a + 56);
     if (pah == 0) {
-        hash_field(_ach_hasher, "", 0);
+        hash_field(hasher, "", 0);
     } else {
-        hash_field(_ach_hasher, str_data(pah), str_len(pah));
+        hash_field(hasher, str_data(pah), str_len(pah));
     }
 
-    return hasher_finalize_hex(_ach_hasher);
+    return hasher_finalize_hex(hasher);
 }
 
 # ================================================================

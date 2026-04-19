@@ -15,12 +15,12 @@
 fn query_new() {
     var q = fl_alloc(56);
     store64(q, 0);
-    store64(q + 8, 0 - 1);
+    store64(q + 8, -1);
     store64(q + 16, 0);
     store64(q + 24, 0);
     store64(q + 32, 0);
     store64(q + 40, 0);
-    store64(q + 48, 0 - 1);
+    store64(q + 48, -1);
     return q;
 }
 
@@ -75,7 +75,7 @@ fn query_matches(q, e) {
 
     # Exact severity filter
     var qsev = load64(q + 8);
-    if (qsev != 0 - 1) {
+    if (qsev != -1) {
         if (entry_severity(e) != qsev) { return 0; }
     }
 
@@ -95,7 +95,7 @@ fn query_matches(q, e) {
 
     # Min severity filter
     var qmin = load64(q + 48);
-    if (qmin != 0 - 1) {
+    if (qmin != -1) {
         if (entry_severity(e) < qmin) { return 0; }
     }
 
@@ -137,7 +137,7 @@ fn _parse_digits(buf, count) {
     var i = 0;
     while (i < count) {
         result = result * 10 + ((load8(buf + i) & 0xFF) - 48);
-        i = i + 1;
+        i += 1;
     }
     return result;
 }
@@ -168,7 +168,7 @@ fn query_apply(q, entries) {
         if (query_matches(q, e) == 1) {
             vec_push(result, e);
         }
-        i = i + 1;
+        i += 1;
     }
     return result;
 }

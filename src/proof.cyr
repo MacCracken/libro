@@ -46,8 +46,8 @@ fn pv_new() {
     store64(p + 8, 0);
     store64(p + 16, 0);
     store64(p + 24, 0);
-    store64(p + 32, 0 - 1);
-    store64(p + 40, 0 - 1);
+    store64(p + 32, -1);
+    store64(p + 40, -1);
     return p;
 }
 
@@ -64,9 +64,9 @@ fn pv_is_valid(p) {
     if (load64(p + 16) != 1) { return 0; }
     if (load64(p + 24) != 1) { return 0; }
     var cv = load64(p + 32);
-    if (cv != 0 - 1 && cv != 1) { return 0; }
+    if (cv != -1 && cv != 1) { return 0; }
     var av = load64(p + 40);
-    if (av != 0 - 1 && av != 1) { return 0; }
+    if (av != -1 && av != 1) { return 0; }
     return 1;
 }
 
@@ -159,7 +159,7 @@ fn proof_with_all_inclusions(ip) {
     var i = 0;
     while (i < lc) {
         proof_with_inclusion(ip, i);
-        i = i + 1;
+        i += 1;
     }
     return ip;
 }
@@ -223,7 +223,7 @@ fn _proof_verify_common(ip, tree_head_valid) {
         if (merkle_verify_proof(mp) == 0) {
             all_inc_valid = 0;
         }
-        i = i + 1;
+        i += 1;
     }
     store64(pv + 24, all_inc_valid);
 

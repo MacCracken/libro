@@ -99,7 +99,7 @@ fn _retention_first_after(entries, cutoff_secs) {
         if (ts > cutoff_secs) {
             return i;
         }
-        i = i + 1;
+        i += 1;
     }
     return n;
 }

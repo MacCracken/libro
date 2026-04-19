@@ -6,8 +6,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 1.1.0 (2026-04-19)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 5.4.2+ (pin in `.cyrius-toolchain`)
+- **Version**: 1.1.1 (2026-04-19)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 5.4.2+ (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -74,7 +74,7 @@ from findings → post-review benchmarks → docs audit → repeat if heavy.
 6. Run benchmarks, compare to baseline
 7. Audit — perf, memory, security, correctness
 8. Docs — CHANGELOG, roadmap, ADRs if applicable
-9. Version sync — `VERSION`, `cyrius.cyml`, `.cyrius-toolchain`, CHANGELOG header (`scripts/version-bump.sh`)
+9. Version sync — `VERSION`, `cyrius.cyml`, CHANGELOG header (`scripts/version-bump.sh`)
 10. Back to step 1
 
 ### Task Sizing
@@ -117,7 +117,7 @@ docs/                   Architecture, guides, compliance, ADRs, audit reports
 Root files (required):
   README.md, CHANGELOG.md, CLAUDE.md, CONTRIBUTING.md,
   SECURITY.md, CODE_OF_CONDUCT.md, LICENSE, VERSION,
-  cyrius.cyml, .cyrius-toolchain
+  cyrius.cyml
 
 docs/ (required):
   architecture/overview.md — module map, data flow, consumers
@@ -135,7 +135,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: single line in `.cyrius-toolchain` (currently `5.4.2`). CI and release workflows both read this file — no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "5.4.2"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -149,7 +149,7 @@ docs/ (when earned):
 - Do not add dependencies beyond the Cyrius toolchain
 - Do not skip benchmarks before claiming performance improvements
 - Do not commit `build/`
-- Do not hardcode Cyrius version in CI YAML — read `.cyrius-toolchain`
+- Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
 ## Known Cyrius Compiler Quirks (5.4.2)
 

@@ -1,11 +1,46 @@
 [package]
 name = "libro"
-version = "1.1.1"
-description = "libro — cryptographic audit chain"
+version = "1.2.0"
+description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
 cyrius = "5.4.2"
+repository = "https://github.com/MacCracken/libro"
 
 [build]
 entry = "src/main.cyr"
 output = "libro"
+
+# ── Dependencies ─────────────────────────────────────────────────
+# Cyrius-stdlib modules copied into lib/ by `cyrius deps`. libro
+# includes them directly via `include "lib/<name>.cyr"`; the list here
+# mirrors the top of src/main.cyr so the manifest stays load-bearing.
+[deps]
+stdlib = [
+    "assert",
+    "alloc",
+    "vec",
+    "str",
+    "fmt",
+    "syscalls",
+    "io",
+    "freelist",
+    "hashmap",
+    "json",
+    "sakshi",
+    "bigint",
+    "chrono",
+]
+
+# External first-party deps. Currently vendored in lib/ for reproducibility;
+# `cyrius deps` can resync to the pinned tags.
+
+[deps.sigil]
+git = "https://github.com/MacCracken/sigil.git"
+tag = "2.8.3"
+modules = ["sigil.cyr"]
+
+[deps.patra]
+git = "https://github.com/MacCracken/patra.git"
+tag = "1.1.1"
+modules = ["patra.cyr"]
