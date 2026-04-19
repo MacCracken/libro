@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.1-dev] - unreleased
+## [2.0.1] - 2026-04-19
 
 Follow-up cycle after the 2.0.0 cut. Picks up the recommendations
 filed in `docs/audit/2026-04-19-audit-2.0.md` — the underlying
@@ -665,7 +665,7 @@ previously-gated tests.
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
-[2.0.1-dev]: https://github.com/MacCracken/libro/compare/2.0.0...HEAD
+[2.0.1]: https://github.com/MacCracken/libro/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/MacCracken/libro/compare/1.2.0...2.0.0
 [Unreleased]: https://github.com/MacCracken/libro/compare/v0.91.0...HEAD
 [0.91.0]: https://github.com/MacCracken/libro/compare/v0.90.0...v0.91.0
