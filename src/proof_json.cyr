@@ -81,10 +81,10 @@ fn _sb_proof_anchor(sb, a) {
 fn proof_to_json(ip) {
     if (ip == 0) { return str_from("null"); }
     var sb = str_builder_new();
-    var sth = load64(ip);
-    var entries = load64(ip + 24);
-    var inclusions = load64(ip + 16);
-    var anchor = load64(ip + 32);
+    var sth = iproof_tree_head(ip);
+    var entries = iproof_entries(ip);
+    var inclusions = iproof_inclusions(ip);
+    var anchor = iproof_anchor(ip);
 
     str_builder_add_cstr(sb, "{\n  \"tree_head\": {\n");
     str_builder_add_cstr(sb, "    \"root\": \"");

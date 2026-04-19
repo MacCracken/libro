@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-04-19
+
+Continuing the P(-1) hardening cadence started in 2.0.0/2.0.1. Extends
+the 2.0.1 raw-offset guard from `struct chain` to six more derived
+structs, fixes one cross-module raw-offset reader the 2.0 sweep
+missed, and strengthens the `proof_to_json` tests so an offset-typo
+regression would actually break a test (not just silently produce
+wrong JSON).
+
+### Fixed
+- **`src/proof_json.cyr:84-87` was reading `iproof` via raw offsets**
+  (`load64(ip)`, `load64(ip + 16)`, `load64(ip + 24)`, `load64(ip + 32)`)
+  — same Finding-2 class as the 2.0.0 chain_io.cyr / review.cyr
+  migrations, surviving the sweep because the 2.0.1 CI guard only
+  covered `struct chain`. Migrated to `iproof_tree_head` /
+  `iproof_inclusions` / `iproof_entries` / `iproof_anchor`. Behavior
+  preserved (all prior `test_proof_to_json_*` assertions still pass);
+  the extended CI guard below now enforces the invariant.
+
+### Added
+- **Extended CI raw-offset guard** in `.github/workflows/ci.yml` —
+  covers 6 more `#derive(accessors)` structs with unambiguous
+  cross-codebase parameter names: `ip` (iproof), `sk` (signing_key),
+  `vk` (verifying_key), `es` (entry_sig), `mp` (merkle_proof),
+  `cp` (consistency). Now iterates a `(struct, defining_file, param)`
+  rule table via a helper function, so adding a new rule is a
+  one-line change. Rules were selected by dry-running each candidate
+  param name across `src/*.cyr` and keeping only those that map
+  unambiguously to a single struct (e.g. `a` is used for `anchor`,
+  `archive`, *and* `ts_attestation` across different files — not safe
+  to add without a finer-grained check).
+- **`test_proof_to_json_fields_present`** in `src/main.cyr` — builds
+  an unsigned proof with inclusions over a 3-entry chain, calls
+  `proof_to_json`, and asserts the output contains the JSON markers
+  for all four iproof-backed sections (`tree_head`, `root`,
+  `tree_size`, `entries`, `inclusions`, `anchor`). Would have caught
+  any of the 4 offset-typo regressions fixed above — the prior two
+  tests only checked start/end braces and the null case.
+
+### Deferred
+- `proof_to_json` benchmark — an attempt to add it to
+  `benches/libro_io.bcyr` overflowed cc5's 16384 fixup-table cap
+  (same constraint that forced the 1.2.0 core/io split). `libro_core.bcyr`
+  excludes `src/proof_json.cyr` on purpose per 2.0's rationale
+  ("modules lives separately so bench binaries that exercise proof
+  verification without the JSON dep can exclude it and stay under
+  the cap"). Clean path is a third bench binary
+  (`benches/libro_proof.bcyr`) with a minimal include set — filed as
+  a 2.0.3+ follow-up.
+
+### Validation
+- **293 tests, 0 failed** (286 → 293: +7 asserts from
+  `test_proof_to_json_fields_present`).
+- 22 benches across 2 binaries; fuzz clean; lint + format clean;
+  dist regenerated at `v2.0.2-dev` (4477 lines).
+
 ## [2.0.1] - 2026-04-19
 
 Follow-up cycle after the 2.0.0 cut. Picks up the recommendations
@@ -665,6 +721,7 @@ previously-gated tests.
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
+[2.0.2]: https://github.com/MacCracken/libro/compare/2.0.1...2.0.2
 [2.0.1]: https://github.com/MacCracken/libro/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/MacCracken/libro/compare/1.2.0...2.0.0
 [Unreleased]: https://github.com/MacCracken/libro/compare/v0.91.0...HEAD

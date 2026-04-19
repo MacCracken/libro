@@ -67,23 +67,39 @@ jobs:
           fi
           echo "Manifest covers all main.cyr src/ includes."
 
-      - name: Raw-offset guard (struct chain outside src/chain.cyr)
+      - name: Raw-offset guard (derived structs outside defining files)
         run: |
-          # Cross-module readers must use derived accessors on struct chain
-          # (chain_entries / chain_prev_hash / chain_max_capacity / chain_overflow
-          #  + their _set_ siblings) — not raw `load64(c + N)` / `store64(c + N, …)`.
-          # The `c` heuristic is tight in libro: `c` is the chain parameter across
-          # the whole tree by convention. See docs/audit/2026-04-19-audit-2.0.md
-          # Finding 2.
-          HITS=$(grep -nE 'load64\(c \+ [0-9]+\)|store64\(c \+ [0-9]+|load64\(c\)' src/*.cyr \
-            | grep -v '^src/chain\.cyr:' || true)
-          if [ -n "$HITS" ]; then
-            echo "FAIL: raw-offset reads/writes on struct chain outside src/chain.cyr:"
-            echo "$HITS"
-            echo "Use chain_entries / chain_prev_hash / chain_max_capacity (or _set_ variants)."
-            exit 1
-          fi
-          echo "No raw-offset chain reads outside src/chain.cyr."
+          # Cross-module readers must use derived accessors on #derive(accessors)
+          # structs — not raw `load64(X + N)` / `store64(X + N, …)` / `load64(X)`.
+          # We codify one rule per (struct, defining_file, param_name) triple where
+          # the param name is unambiguous across libro. See
+          # docs/audit/2026-04-19-audit-2.0.md Finding 2 and 2.0.1 release.
+          #
+          # Adding a new struct rule: pick a param name used only for that struct
+          # anywhere in src/, otherwise false positives from shared letters.
+          FAILED=0
+          check_struct() {
+            local struct="$1" defining="$2" param="$3"
+            local hits
+            hits=$(grep -nE "load64\($param \+ [0-9]+\)|store64\($param \+ [0-9]+|load64\($param\)" src/*.cyr 2>/dev/null \
+              | grep -v "^$defining:" || true)
+            if [ -n "$hits" ]; then
+              echo "FAIL: raw-offset reads/writes on struct $struct outside $defining (param '$param'):"
+              echo "$hits"
+              echo "  → use the $struct""_* derived accessors (getters + _set_ setters)."
+              FAILED=1
+            fi
+          }
+          # struct         | defining file        | canonical param name
+          check_struct chain          src/chain.cyr    c
+          check_struct iproof         src/proof.cyr    ip
+          check_struct signing_key    src/signing.cyr  sk
+          check_struct verifying_key  src/signing.cyr  vk
+          check_struct entry_sig      src/signing.cyr  es
+          check_struct merkle_proof   src/merkle.cyr   mp
+          check_struct consistency    src/merkle.cyr   cp
+          if [ "$FAILED" -ne 0 ]; then exit 1; fi
+          echo "No raw-offset struct reads outside defining files."
 
       - name: Format check
         run: cyrfmt --check src/*.cyr

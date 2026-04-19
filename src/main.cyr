@@ -1071,6 +1071,31 @@ fn test_proof_to_json_null_on_zero() {
     assert(str_eq(json, expected) == 1, "proof_to_json(0) = null");
 }
 
+# Structural test — offset-typo regression guard for the iproof accessors.
+# If proof_to_json reads sth / entries / inclusions / anchor from wrong
+# offsets, one of these field-presence asserts fails. Reads across all
+# four derived-accessor slots on iproof (tree_head@0, inclusions@16,
+# entries@24, anchor@32).
+fn test_proof_to_json_fields_present() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a1"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a2"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a3"), det);
+
+    var ip = proof_build_unsigned(c);
+    proof_with_all_inclusions(ip);
+
+    var json = proof_to_json(ip);
+    assert(str_contains(json, str_from("\"tree_head\":")) == 1, "json has tree_head");
+    assert(str_contains(json, str_from("\"root\":")) == 1, "json has root (via sth_root)");
+    assert(str_contains(json, str_from("\"tree_size\":")) == 1, "json has tree_size");
+    assert(str_contains(json, str_from("\"entries\":")) == 1, "json has entries");
+    assert(str_contains(json, str_from("\"inclusions\":")) == 1, "json has inclusions");
+    assert(str_contains(json, str_from("\"anchor\":")) == 1, "json has anchor slot");
+    assert(str_len(json) > 100, "json is non-trivial (>100 bytes)");
+}
+
 fn test_receipt_create() {
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
@@ -2007,6 +2032,7 @@ fn main() {
     test_proof_unsigned();
     test_proof_to_json_unsigned();
     test_proof_to_json_null_on_zero();
+    test_proof_to_json_fields_present();
     test_proof_signed();
     test_proof_with_consistency();
     test_proof_with_anchor();
