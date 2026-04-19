@@ -11,8 +11,15 @@ enum MerkleSide {
 }
 
 # ================================================================
-# ProofNode layout (16 bytes)
+# Merkle structs use manual accessors — `#derive(accessors)` triggers a
+# cc5 parse-state bug (5.4.2 and 5.4.7) in `libro_core.bcyr` only, even
+# though other bench targets + main.cyr accept the same derived forms.
+# Classic cross-module miscompilation; reproduced deterministically at
+# `<source>:52: expected '{', got '('` when merkle.cyr's derived structs
+# are live in the libro_core include graph. File upstream if/when this
+# is diagnosable. Every other struct in libro is on derive.
 # ================================================================
+# ProofNode layout (16 bytes)
 #   +0  hash   Str pointer
 #   +8  side   i64 (SIDE_LEFT or SIDE_RIGHT)
 
@@ -26,9 +33,7 @@ fn proof_node_new(hash, side) {
 fn proof_node_hash(pn) { return load64(pn); }
 fn proof_node_side(pn) { return load64(pn + 8); }
 
-# ================================================================
 # MerkleProof layout (32 bytes)
-# ================================================================
 #   +0   index      i64
 #   +8   leaf_hash  Str pointer
 #   +16  path       vec of ProofNode pointers
@@ -48,14 +53,12 @@ fn merkle_proof_leaf(mp) { return load64(mp + 8); }
 fn merkle_proof_path(mp) { return load64(mp + 16); }
 fn merkle_proof_root(mp) { return load64(mp + 24); }
 
-# ================================================================
 # ConsistencyProof layout (40 bytes)
-# ================================================================
 #   +0   old_size   i64
 #   +8   new_size   i64
 #   +16  old_root   Str pointer
 #   +24  new_root   Str pointer
-#   +32  path       vec of Str (hash strings)
+#   +32  path       vec of Str
 
 fn consistency_proof_new(old_size, new_size, old_root, new_root, path) {
     var cp = fl_alloc(40);
@@ -73,10 +76,8 @@ fn consistency_old_root(cp) { return load64(cp + 16); }
 fn consistency_new_root(cp) { return load64(cp + 24); }
 fn consistency_path(cp) { return load64(cp + 32); }
 
-# ================================================================
 # MerkleTree layout (16 bytes)
-# ================================================================
-#   +0  nodes       vec of Str (all nodes, leaves first, level by level)
+#   +0  nodes       vec of Str
 #   +8  leaf_count  i64
 
 fn merkle_tree_nodes(t) { return load64(t); }
@@ -158,7 +159,7 @@ fn merkle_build(entries) {
 # Inclusion proof — O(log n)
 # ================================================================
 
-fn merkle_proof(tree, index) {
+fn merkle_inclusion_proof(tree, index) {
     var leaf_count = load64(tree + 8);
     if (index >= leaf_count) { return 0; }
 

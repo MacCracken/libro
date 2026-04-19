@@ -22,6 +22,8 @@ verify, bench history).
 - [x] `_sb_csv_field` quote branch direct-emit — one pre-grow + tight loop vs N `_sb_add_byte` calls.
 
 ### Changed / cleanup
+- [x] **Toolchain bumped Cyrius 5.4.2 → 5.4.7** for the derive migration below.
+- [x] **`#derive(accessors)` across 13 of 15 struct modules** — ~95 hand-written `load64(x + N)` accessors replaced by declarative struct layouts; getters + `_set_` setters generated. Offset-typo class of bug eliminated (including the UUID-zeroing bug caught in the nested-JSON tests). Inline-UUID structs (`entry`, `anchor`, `receipt`) reserve the first 16 bytes with `_uuid_hi`/`_uuid_lo`; their `*_id(x)` pointer-returning accessors stay manual. `merkle.cyr`'s 4 structs kept on manual with a documented cc5 parse-state bug — deterministic, reproduces on both 5.4.2 and 5.4.7, only in `libro_core.bcyr`, flagged upstream.
 - [x] FileStore read buffer right-sized via `lseek(fd, 0, SEEK_END)` — one allocation per load.
 - [x] `_filestore_cpath` cached on struct (16→24 bytes) — cstr derived once at `filestore_open`.
 - [x] `_der_parse_tlv` → multi-return `(total, value_ptr)` — kills `_der_value_ptr` / `_der_value_len` globals. `civil_from_days` stays on globals (5.4.2 multi-return caps at 2).
@@ -34,7 +36,6 @@ verify, bench history).
 - [x] 22 benches across 2 binaries. Fuzz clean. Simulated-consumer: `dist/libro.cyr` compiles after stdlib + sigil + patra.
 
 ### Decisions (no code change)
-- [x] `#derive(accessors)` re-reviewed — REJECTED again. AGNOS-wide raw-offset convention + hook-point flexibility.
 - [x] `_sb_csv_field` single-pass — REJECTED. Current two-pass form is one cache-hot check + one direct-write escape; a fused version needs optimistic-write-with-memmove or pre-grow-and-reset, neither cleaner.
 
 ## v1.2.0 — 2026-04-19

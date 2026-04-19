@@ -52,29 +52,18 @@ var MAX_ACTION_LEN = 1024;
 var MAX_DETAILS_SIZE = 1048576;
 
 # ================================================================
-# AuditEntry layout (88 bytes)
-# ================================================================
-#   +0   id[16]          16 raw UUID bytes (inline)
-#   +16  timestamp_str   Str pointer (RFC 3339)
-#   +24  severity        i64 (SEV_* constant)
-#   +32  source          Str pointer
-#   +40  action          Str pointer
-#   +48  details         Str pointer (JSON string)
-#   +56  agent_id        Str pointer (0 = none)
-#   +64  prev_hash       Str pointer
-#   +72  hash            Str pointer (64-char hex)
-#   +80  hash_algorithm  Str pointer
+# AuditEntry — inline 16-byte UUID at offset 0 that derive can't model,
+# so `_uuid_hi` / `_uuid_lo` are named just to reserve the first two
+# slots. Public `entry_id(e)` returns the pointer (not a load) and stays
+# manual. All other accessors come from derive.
+#derive(accessors)
+struct entry {
+    _uuid_hi; _uuid_lo;
+    timestamp; severity; source; action; details;
+    agent_id; prev_hash; hash; hash_algorithm;
+}
 
 fn entry_id(e) { return e; }
-fn entry_timestamp(e) { return load64(e + 16); }
-fn entry_severity(e) { return load64(e + 24); }
-fn entry_source(e) { return load64(e + 32); }
-fn entry_action(e) { return load64(e + 40); }
-fn entry_details(e) { return load64(e + 48); }
-fn entry_agent_id(e) { return load64(e + 56); }
-fn entry_prev_hash(e) { return load64(e + 64); }
-fn entry_hash(e) { return load64(e + 72); }
-fn entry_hash_algorithm(e) { return load64(e + 80); }
 
 # ================================================================
 # UUID v4 generation via /dev/urandom

@@ -1,11 +1,17 @@
 # chain.cyr — AuditChain and ChainArchive
 # Hash-linked chain with auto-rotation, query, pagination, retention.
+#
+# 2.0: `#derive(accessors)` declares struct layouts once; the compiler
+# emits getters/setters. Raw `load64(c + N)` / `store64(c + N, v)` forms
+# still live inside this file for the few call sites that outpace the
+# cost of a function call, but cross-module readers use the generated
+# accessors so offset typos can't pass review.
 
 # ================================================================
-# ChainArchive layout (16 bytes)
+# ChainArchive — generated accessors: archive_entries, archive_head_hash
 # ================================================================
-#   +0  entries     vec pointer
-#   +8  head_hash   Str pointer (last entry's hash)
+#derive(accessors)
+struct archive { entries; head_hash; }
 
 fn archive_new(entries, head_hash) {
     var a = fl_alloc(16);
@@ -14,16 +20,13 @@ fn archive_new(entries, head_hash) {
     return a;
 }
 
-fn archive_entries(a) { return load64(a); }
-fn archive_head_hash(a) { return load64(a + 8); }
-
 # ================================================================
-# AuditChain layout (32 bytes)
+# AuditChain — generated accessors:
+#   chain_entries, chain_prev_hash, chain_max_capacity, chain_overflow
+#   plus chain_set_* setters.
 # ================================================================
-#   +0   entries           vec pointer
-#   +8   prev_chain_hash   Str pointer (0 = none)
-#   +16  max_capacity      i64 (0 = unlimited)
-#   +24  overflow_archives vec pointer
+#derive(accessors)
+struct chain { entries; prev_hash; max_capacity; overflow; }
 
 fn chain_new() {
     var c = fl_alloc(32);
@@ -37,15 +40,10 @@ fn chain_new() {
 fn chain_with_capacity(max_entries) {
     var c = chain_new();
     if (max_entries > 0) {
-        store64(c + 16, max_entries);
+        chain_set_max_capacity(c, max_entries);
     }
     return c;
 }
-
-fn chain_entries(c) { return load64(c); }
-fn chain_prev_hash(c) { return load64(c + 8); }
-fn chain_max_capacity(c) { return load64(c + 16); }
-fn chain_overflow(c) { return load64(c + 24); }
 
 fn chain_len(c) {
     return vec_len(load64(c));

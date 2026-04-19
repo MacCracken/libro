@@ -3,14 +3,12 @@
 # and anchoring into a single verifiable package.
 
 # ================================================================
-# SignedTreeHead layout (48 bytes)
+# SignedTreeHead — generated accessors:
+#   sth_root, sth_tree_size, sth_timestamp,
+#   sth_signature, sth_verifying_key, sth_algorithm
 # ================================================================
-#   +0   root            Str pointer
-#   +8   tree_size       i64
-#   +16  timestamp       Str pointer (RFC 3339)
-#   +24  signature       Str pointer (hex, empty if unsigned)
-#   +32  verifying_key   Str pointer (hex, empty if unsigned)
-#   +40  algorithm       Str pointer (0 = none)
+#derive(accessors)
+struct sth { root; tree_size; timestamp; signature; verifying_key; algorithm; }
 
 fn sth_new(root, tree_size, sig, vk_hex, alg) {
     var s = fl_alloc(48);
@@ -23,22 +21,13 @@ fn sth_new(root, tree_size, sig, vk_hex, alg) {
     return s;
 }
 
-fn sth_root(s) { return load64(s); }
-fn sth_tree_size(s) { return load64(s + 8); }
-fn sth_timestamp(s) { return load64(s + 16); }
-fn sth_signature(s) { return load64(s + 24); }
-fn sth_verifying_key(s) { return load64(s + 32); }
-fn sth_algorithm(s) { return load64(s + 40); }
-
 # ================================================================
-# ProofVerification layout (48 bytes)
+# ProofVerification — generated accessors:
+#   pv_tree_head_valid, pv_entries_valid, pv_tree_matches,
+#   pv_inclusions_valid, pv_consistency_valid, pv_anchor_valid
 # ================================================================
-#   +0   tree_head_valid    i64 (0/1)
-#   +8   entries_valid      i64 (0/1)
-#   +16  tree_matches       i64 (0/1)
-#   +24  inclusions_valid   i64 (0/1)
-#   +32  consistency_valid  i64 (-1 = N/A, 0/1)
-#   +40  anchor_valid       i64 (-1 = N/A, 0/1)
+#derive(accessors)
+struct pv { tree_head_valid; entries_valid; tree_matches; inclusions_valid; consistency_valid; anchor_valid; }
 
 fn pv_new() {
     var p = fl_alloc(48);
@@ -50,13 +39,6 @@ fn pv_new() {
     store64(p + 40, -1);
     return p;
 }
-
-fn pv_tree_head_valid(p) { return load64(p); }
-fn pv_entries_valid(p) { return load64(p + 8); }
-fn pv_tree_matches(p) { return load64(p + 16); }
-fn pv_inclusions_valid(p) { return load64(p + 24); }
-fn pv_consistency_valid(p) { return load64(p + 32); }
-fn pv_anchor_valid(p) { return load64(p + 40); }
 
 fn pv_is_valid(p) {
     if (load64(p) != 1) { return 0; }
@@ -71,21 +53,12 @@ fn pv_is_valid(p) {
 }
 
 # ================================================================
-# IntegrityProof layout (48 bytes)
+# IntegrityProof — generated accessors:
+#   iproof_tree_head, iproof_consistency, iproof_inclusions,
+#   iproof_entries, iproof_anchor, iproof_tree
 # ================================================================
-#   +0   tree_head     SignedTreeHead pointer
-#   +8   consistency   ConsistencyProof pointer (0 = none)
-#   +16  inclusions    vec of MerkleProof pointers
-#   +24  entries       vec of entry pointers
-#   +32  anchor        WitnessAnchor pointer (0 = none)
-#   +40  tree          MerkleTree pointer (for verification)
-
-fn iproof_tree_head(ip) { return load64(ip); }
-fn iproof_consistency(ip) { return load64(ip + 8); }
-fn iproof_inclusions(ip) { return load64(ip + 16); }
-fn iproof_entries(ip) { return load64(ip + 24); }
-fn iproof_anchor(ip) { return load64(ip + 32); }
-fn iproof_tree(ip) { return load64(ip + 40); }
+#derive(accessors)
+struct iproof { tree_head; consistency; inclusions; entries; anchor; tree; }
 
 # ================================================================
 # ProofBuilder — fluent API for constructing proofs
@@ -145,7 +118,7 @@ fn proof_with_consistency(ip, old_size) {
 # Add inclusion proof for entry at index
 fn proof_with_inclusion(ip, index) {
     var tree = load64(ip + 40);
-    var mp = merkle_proof(tree, index);
+    var mp = merkle_inclusion_proof(tree, index);
     if (mp != 0) {
         vec_push(load64(ip + 16), mp);
     }

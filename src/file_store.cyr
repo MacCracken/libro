@@ -3,11 +3,12 @@
 # Each entry is one JSON object per line (JSON Lines format).
 
 # ================================================================
-# FileStore layout (24 bytes)
+# FileStore — generated accessors:
+#   filestore_path, filestore_count (+ setters), filestore_cpath
+# `cpath` is the null-terminated cstr cached once at open.
 # ================================================================
-#   +0   path    Str pointer (file path)
-#   +8   count   i64 (cached entry count, -1 = unknown)
-#   +16  cpath   cstr (cached null-terminated path, derived once at open)
+#derive(accessors)
+struct filestore { path; count; cpath; }
 
 fn filestore_open(path) {
     sakshi_info("filestore: open", 15);
@@ -25,16 +26,13 @@ fn filestore_open(path) {
     return s;
 }
 
-fn filestore_path(s) { return load64(s); }
-fn _filestore_cpath(s) { return load64(s + 16); }
-
 # ================================================================
 # Append — write entry as JSON line with exclusive lock
 # ================================================================
 
 fn filestore_append(s, e) {
     sakshi_debug("filestore: append", 17);
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
 
     # Build JSON line
     var sb = str_builder_new();
@@ -67,7 +65,7 @@ fn _fs_file_size(fd) {
 
 fn filestore_load_all(s) {
     sakshi_info("filestore: load all", 19);
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) {
         sakshi_error("filestore: open failed", 22);
@@ -145,7 +143,7 @@ fn filestore_len(s) {
     if (cached != -1) { return cached; }
 
     # Count lines in file
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) { return 0; }
     file_lock_shared(fd);
@@ -207,7 +205,7 @@ fn filestore_verify_streamed(s, chunk_size) {
     if (chunk_size < 1) { chunk_size = 1; }
     if (_fsvs_buf == 0) { _fsvs_buf = alloc(_fsvs_buf_size); }
 
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) { return 0; }
     file_lock_shared(fd);

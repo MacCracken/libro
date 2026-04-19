@@ -11,9 +11,9 @@ enum IntegrityStat {
     INTEGRITY_INVALID = 2;
 }
 
-# IntegrityStatus layout (16 bytes):
-#   +0  status    i64  INTEGRITY_* constant
-#   +8  message   Str pointer (error message for INVALID, 0 otherwise)
+# IntegrityStatus — generated accessors: integrity_status, integrity_message
+#derive(accessors)
+struct integrity { status; message; }
 
 fn integrity_valid() {
     var s = fl_alloc(16);
@@ -36,9 +36,6 @@ fn integrity_invalid(msg) {
     return s;
 }
 
-fn integrity_status(s) { return load64(s); }
-fn integrity_message(s) { return load64(s + 8); }
-
 fn integrity_as_str(s) {
     var st = load64(s);
     if (st == INTEGRITY_VALID) { return "VALID"; }
@@ -47,27 +44,13 @@ fn integrity_as_str(s) {
 }
 
 # ================================================================
-# ChainReview layout (72 bytes, 9 fields)
+# ChainReview — generated accessors:
+#   review_entry_count, review_integrity, review_earliest, review_latest,
+#   review_sources, review_severities, review_agents,
+#   review_head_hash, review_continued_from
 # ================================================================
-#   +0   entry_count      i64
-#   +8   integrity        IntegrityStatus pointer
-#   +16  earliest         Str pointer (0 if empty)
-#   +24  latest           Str pointer (0 if empty)
-#   +32  sources          hashmap pointer (source -> count)
-#   +40  severities       hashmap pointer (severity_str -> count)
-#   +48  agents           hashmap pointer (agent_id -> count)
-#   +56  head_hash        Str pointer (0 if empty)
-#   +64  continued_from   Str pointer (0 if none)
-
-fn review_entry_count(r) { return load64(r); }
-fn review_integrity(r) { return load64(r + 8); }
-fn review_earliest(r) { return load64(r + 16); }
-fn review_latest(r) { return load64(r + 24); }
-fn review_sources(r) { return load64(r + 32); }
-fn review_severities(r) { return load64(r + 40); }
-fn review_agents(r) { return load64(r + 48); }
-fn review_head_hash(r) { return load64(r + 56); }
-fn review_continued_from(r) { return load64(r + 64); }
+#derive(accessors)
+struct review { entry_count; integrity; earliest; latest; sources; severities; agents; head_hash; continued_from; }
 
 # ================================================================
 # Generate review from chain

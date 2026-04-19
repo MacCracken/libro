@@ -765,7 +765,7 @@ fn test_merkle_inclusion_proof() {
     var tree = merkle_build(chain_entries(c));
     i = 0;
     while (i < 8) {
-        var mp = merkle_proof(tree, i);
+        var mp = merkle_inclusion_proof(tree, i);
         assert(mp != 0, "merkle proof exists");
         assert(merkle_verify_proof(mp) == 1, "merkle proof verifies");
         i += 1;
@@ -776,7 +776,7 @@ fn test_merkle_proof_out_of_bounds() {
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
     var tree = merkle_build(chain_entries(c));
-    var mp = merkle_proof(tree, 5);
+    var mp = merkle_inclusion_proof(tree, 5);
     assert(mp == 0, "merkle proof out of bounds returns null");
 }
 
@@ -793,7 +793,7 @@ fn test_merkle_odd_leaf_count() {
 
     i = 0;
     while (i < 5) {
-        var mp = merkle_proof(tree, i);
+        var mp = merkle_inclusion_proof(tree, i);
         assert(merkle_verify_proof(mp) == 1, "merkle odd proof verifies");
         i += 1;
     }
@@ -1621,7 +1621,7 @@ fn test_merkle_large_tree() {
     "merkle 16 leaves");
     i = 0;
     while (i < 16) {
-        var mp = merkle_proof(tree, i);
+        var mp = merkle_inclusion_proof(tree, i);
         assert(merkle_verify_proof(mp) == 1,
         "merkle 16 proof");
         i += 1;

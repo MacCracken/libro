@@ -133,12 +133,11 @@ fn _der_write_sequence(buf, content, content_len) {
 }
 
 # ================================================================
-# TimestampRequest layout (32 bytes)
+# TimestampRequest — generated accessors:
+#   ts_request_hash_alg, ts_request_hash, ts_request_nonce, ts_request_cert_req
 # ================================================================
-#   +0   hash_algorithm   i64 (TS_SHA*)
-#   +8   message_hash     Str pointer (hex-encoded)
-#   +16  nonce            Str pointer (hex-encoded, 0 = none)
-#   +24  cert_req         i64 (0 or 1)
+#derive(accessors)
+struct ts_request { hash_alg; hash; nonce; cert_req; }
 
 fn ts_request_new(hash_hex) {
     var r = fl_alloc(32);
@@ -148,11 +147,6 @@ fn ts_request_new(hash_hex) {
     store64(r + 24, 1);
     return r;
 }
-
-fn ts_request_hash_alg(r) { return load64(r); }
-fn ts_request_hash(r) { return load64(r + 8); }
-fn ts_request_nonce(r) { return load64(r + 16); }
-fn ts_request_cert_req(r) { return load64(r + 24); }
 
 fn ts_request_set_nonce(r) {
     # Generate 16-byte random nonce
@@ -318,15 +312,11 @@ fn _der_decode_unsigned(data, len) {
 }
 
 # ================================================================
-# TimestampResponse layout (24 bytes)
+# TimestampResponse — generated accessors:
+#   ts_response_status, ts_response_token, ts_response_status_string
 # ================================================================
-#   +0   status         i64 (TS_* constant)
-#   +8   token          Str pointer (hex-encoded DER, 0 = none)
-#   +16  status_string  Str pointer (0 = none)
-
-fn ts_response_status(r) { return load64(r); }
-fn ts_response_token(r) { return load64(r + 8); }
-fn ts_response_status_string(r) { return load64(r + 16); }
+#derive(accessors)
+struct ts_response { status; token; status_string; }
 
 fn ts_response_from_der(data, data_len) {
     var resp = fl_alloc(24);
@@ -379,14 +369,12 @@ fn ts_response_from_der(data, data_len) {
 }
 
 # ================================================================
-# TimestampAttestation layout (48 bytes)
+# TimestampAttestation — generated accessors:
+#   ts_attestation_hash, ts_attestation_subject, ts_attestation_algorithm,
+#   ts_attestation_token, ts_attestation_tsa_url, ts_attestation_created_at
 # ================================================================
-#   +0   hash           Str pointer
-#   +8   hash_subject   i64 (TS_ENTRY_HASH, TS_MERKLE_ROOT, TS_CHAIN_HEAD)
-#   +16  hash_algorithm i64 (TS_SHA*)
-#   +24  token_der      Str pointer (hex-encoded)
-#   +32  tsa_url        Str pointer (0 = none)
-#   +40  created_at     Str pointer (RFC 3339)
+#derive(accessors)
+struct ts_attestation { hash; subject; algorithm; token; tsa_url; created_at; }
 
 fn ts_attestation_new(hash, subject, algorithm, response) {
     if (ts_status_is_granted(ts_response_status(response)) == 0) {
@@ -401,13 +389,6 @@ fn ts_attestation_new(hash, subject, algorithm, response) {
     store64(a + 40, timestamp_rfc3339(get_epoch_secs()));
     return a;
 }
-
-fn ts_attestation_hash(a) { return load64(a); }
-fn ts_attestation_subject(a) { return load64(a + 8); }
-fn ts_attestation_algorithm(a) { return load64(a + 16); }
-fn ts_attestation_token(a) { return load64(a + 24); }
-fn ts_attestation_tsa_url(a) { return load64(a + 32); }
-fn ts_attestation_created_at(a) { return load64(a + 40); }
 
 fn ts_attestation_for_merkle_root(tree, response) {
     return ts_attestation_new(merkle_tree_root(tree), TS_MERKLE_ROOT, TS_SHA256, response);

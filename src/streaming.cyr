@@ -47,8 +47,10 @@ fn _topic_match(topic, pattern) {
 }
 
 # ================================================================
-# Subscription: { pattern, entries_vec, next } = 24 bytes
+# Subscription — generated accessors: _sub_pattern, _sub_entries, _sub_next
 # ================================================================
+#derive(accessors)
+struct _sub { pattern; entries; next; }
 
 fn _sub_new(pattern) {
     var sub = alloc(24);
@@ -58,19 +60,17 @@ fn _sub_new(pattern) {
     return sub;
 }
 
-fn _sub_pattern(sub) { return load64(sub); }
-fn _sub_entries(sub) { return load64(sub + 8); }
-fn _sub_next(sub) { return load64(sub + 16); }
-
 # ================================================================
-# AuditStream: { subs, prefix, published } = 24 bytes
+# AuditStream — generated accessors: stream_subs, stream_prefix, stream_published
 # ================================================================
+#derive(accessors)
+struct stream { subs; prefix; published; }
 
 fn stream_new() {
     var s = alloc(24);
-    store64(s, 0);           # subs linked list head
-    store64(s + 8, "libro"); # prefix
-    store64(s + 16, 0);      # published count
+    store64(s, 0);
+    store64(s + 8, "libro");
+    store64(s + 16, 0);
     return s;
 }
 
@@ -139,8 +139,3 @@ fn stream_pending(sub) {
     return vec_len(_sub_entries(sub));
 }
 
-# Total entries published
-fn stream_published(s) { return load64(s + 16); }
-
-# Prefix string
-fn stream_prefix(s) { return load64(s + 8); }

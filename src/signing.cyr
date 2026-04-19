@@ -2,14 +2,13 @@
 # Delegates to sigil's Ed25519 implementation (RFC 8032).
 
 # ================================================================
-# SigningKey layout (48 bytes)
+# SigningKey — generated accessors:
+#   signing_key_bytes, signing_key_pub_bytes, signing_key_algorithm,
+#   signing_key_key_id, signing_key_zeroized, signing_key_seed
+#   plus `_set_` setters for each.
 # ================================================================
-#   +0   sk_bytes     pointer to 64-byte Ed25519 secret key
-#   +8   pk_bytes     pointer to 32-byte Ed25519 public key
-#   +16  algorithm    i64 (SIG_ALG_ED25519 from sigil)
-#   +24  key_id       Str pointer (0 = none)
-#   +32  zeroized     i64 (1 if key material has been cleared)
-#   +40  seed         pointer to 32-byte seed (for zeroize)
+#derive(accessors)
+struct signing_key { bytes; pub_bytes; algorithm; key_id; zeroized; seed; }
 
 fn signing_key_generate() {
     sakshi_info("signing: key generate", 21);
@@ -45,22 +44,14 @@ fn signing_key_from_seed(seed) {
     return sk;
 }
 
-fn signing_key_bytes(sk) { return load64(sk); }
-fn signing_key_pub_bytes(sk) { return load64(sk + 8); }
-fn signing_key_algorithm(sk) { return load64(sk + 16); }
-fn signing_key_key_id(sk) { return load64(sk + 24); }
-
-fn signing_key_set_key_id(sk, key_id) {
-    store64(sk + 24, key_id);
-    return sk;
-}
-
-# Zeroize key material
+# Zeroize key material. Not a derived accessor — touches both the
+# secret-key buffer and the seed, then flips the zeroized flag via the
+# generated setter.
 fn signing_key_zeroize(sk) {
-    if (load64(sk + 32) == 1) { return 0; }
-    memset(load64(sk), 0, 64);
-    memset(load64(sk + 40), 0, 32);
-    store64(sk + 32, 1);
+    if (signing_key_zeroized(sk) == 1) { return 0; }
+    memset(signing_key_bytes(sk), 0, 64);
+    memset(signing_key_seed(sk), 0, 32);
+    signing_key_set_zeroized(sk, 1);
     return 0;
 }
 
@@ -70,10 +61,11 @@ fn signing_key_verifying_hex(sk) {
 }
 
 # ================================================================
-# VerifyingKey layout (16 bytes)
+# VerifyingKey — generated accessors:
+#   verifying_key_bytes, verifying_key_algorithm
 # ================================================================
-#   +0  pk_bytes    pointer to 32-byte Ed25519 public key
-#   +8  algorithm   i64
+#derive(accessors)
+struct verifying_key { bytes; algorithm; }
 
 fn verifying_key_from_bytes(bytes) {
     var vk = fl_alloc(16);
@@ -88,21 +80,17 @@ fn verifying_key_from_signing(sk) {
     return verifying_key_from_bytes(load64(sk + 8));
 }
 
-fn verifying_key_bytes(vk) { return load64(vk); }
-fn verifying_key_algorithm(vk) { return load64(vk + 8); }
-
 fn verifying_key_to_hex(vk) {
     return hex_encode_str(load64(vk), 32);
 }
 
 # ================================================================
-# EntrySignature layout (40 bytes)
+# EntrySignature — generated accessors:
+#   entry_sig_hash, entry_sig_signature, entry_sig_verifying_key,
+#   entry_sig_key_id, entry_sig_algorithm
 # ================================================================
-#   +0   entry_hash     Str pointer
-#   +8   signature      Str pointer (hex-encoded, 128 chars for 64-byte Ed25519 sig)
-#   +16  verifying_key  Str pointer (hex-encoded)
-#   +24  key_id         Str pointer (0 = none)
-#   +32  algorithm      Str pointer
+#derive(accessors)
+struct entry_sig { hash; signature; verifying_key; key_id; algorithm; }
 
 fn entry_sig_new(ehash, signature, verifying_key, key_id, algorithm) {
     var es = fl_alloc(40);
@@ -113,12 +101,6 @@ fn entry_sig_new(ehash, signature, verifying_key, key_id, algorithm) {
     store64(es + 32, algorithm);
     return es;
 }
-
-fn entry_sig_hash(es) { return load64(es); }
-fn entry_sig_signature(es) { return load64(es + 8); }
-fn entry_sig_verifying_key(es) { return load64(es + 16); }
-fn entry_sig_key_id(es) { return load64(es + 24); }
-fn entry_sig_algorithm(es) { return load64(es + 32); }
 
 # ================================================================
 # Sign an entry — returns EntrySignature

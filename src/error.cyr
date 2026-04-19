@@ -13,13 +13,11 @@ enum LibroErr {
     ERR_DER = 8;
 }
 
-# Error struct layout (48 bytes):
-#   +0  code        i64   ERR_* constant
-#   +8  message     i64   C-string pointer
-#   +16 field_name  i64   C-string pointer (for ERR_FIELD_TOO_LONG)
-#   +24 index       i64   entry index (for ERR_INTEGRITY)
-#   +32 expected    i64   Str pointer
-#   +40 actual      i64   Str pointer
+# Error — generated accessors:
+#   error_code, error_msg, error_field_name, error_index,
+#   error_expected, error_actual (+ setters)
+#derive(accessors)
+struct error { code; msg; field_name; index; expected; actual; }
 
 fn error_new(code, msg) {
     var e = fl_alloc(48);
@@ -54,9 +52,3 @@ fn error_field(field, len, max_val) {
     return e;
 }
 
-fn error_code(err) { return load64(err); }
-fn error_msg(err) { return load64(err + 8); }
-fn error_field_name(err) { return load64(err + 16); }
-fn error_index(err) { return load64(err + 24); }
-fn error_expected(err) { return load64(err + 32); }
-fn error_actual(err) { return load64(err + 40); }

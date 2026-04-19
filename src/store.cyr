@@ -4,17 +4,16 @@
 # FileStore / SqliteStore can follow the same function naming pattern.
 
 # ================================================================
-# MemoryStore layout (8 bytes)
+# MemoryStore — generated accessors: memstore_entries, memstore_set_entries
 # ================================================================
-#   +0  entries   vec pointer
+#derive(accessors)
+struct memstore { entries; }
 
 fn memstore_new() {
     var s = fl_alloc(8);
     store64(s, vec_new());
     return s;
 }
-
-fn memstore_entries(s) { return load64(s); }
 
 fn memstore_len(s) {
     return vec_len(load64(s));

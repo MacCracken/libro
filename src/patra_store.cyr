@@ -3,10 +3,12 @@
 # and SQL queries. Persistent alternative to MemoryStore.
 
 # ================================================================
-# PatraStore layout (16 bytes)
+# PatraStore — internal-only accessors (underscore-prefixed type name
+# keeps the generated fns out of the public surface).
+#   _patrastore_db, _patrastore_inited (+ _set_ setters)
 # ================================================================
-#   +0  db       patra database handle
-#   +8  inited   i64 (1 if table created)
+#derive(accessors)
+struct _patrastore { db; inited; }
 
 fn patrastore_open(path) {
     sakshi_info("patrastore: open", 16);
@@ -28,8 +30,6 @@ fn patrastore_close(s) {
     fl_free(s);
     return 0;
 }
-
-fn _patrastore_db(s) { return load64(s); }
 
 # ================================================================
 # Schema

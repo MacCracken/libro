@@ -11,9 +11,13 @@ enum RetentionType {
     RETAIN_AFTER = 2;
 }
 
-# Layout (16 bytes):
-#   +0  type     i64  RETAIN_* constant
-#   +8  value    i64  count, duration_secs, or epoch_secs
+# Layout — generated accessors: retention_kind, retention_value.
+# Field named `kind` (not `type`; `type` shadows a Cyrius keyword).
+# A `retention_type()` back-compat alias is kept below for 1.x callers.
+#derive(accessors)
+struct retention { kind; value; }
+
+fn retention_type(r) { return retention_kind(r); }
 
 fn retention_keep_count(n) {
     var r = fl_alloc(16);
@@ -35,9 +39,6 @@ fn retention_keep_after(epoch_secs) {
     store64(r + 8, epoch_secs);
     return r;
 }
-
-fn retention_type(r) { return load64(r); }
-fn retention_value(r) { return load64(r + 8); }
 
 # ================================================================
 # Compliance presets

@@ -4,7 +4,7 @@ version = "2.0.0-dev"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.4.2"
+cyrius = "5.4.7"
 repository = "https://github.com/MacCracken/libro"
 
 [build]

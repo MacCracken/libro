@@ -21,13 +21,11 @@ enum LibroErr {
     ERR_DER = 8;
 }
 
-# Error struct layout (48 bytes):
-#   +0  code        i64   ERR_* constant
-#   +8  message     i64   C-string pointer
-#   +16 field_name  i64   C-string pointer (for ERR_FIELD_TOO_LONG)
-#   +24 index       i64   entry index (for ERR_INTEGRITY)
-#   +32 expected    i64   Str pointer
-#   +40 actual      i64   Str pointer
+# Error — generated accessors:
+#   error_code, error_msg, error_field_name, error_index,
+#   error_expected, error_actual (+ setters)
+#derive(accessors)
+struct error { code; msg; field_name; index; expected; actual; }
 
 fn error_new(code, msg) {
     var e = fl_alloc(48);
@@ -62,12 +60,6 @@ fn error_field(field, len, max_val) {
     return e;
 }
 
-fn error_code(err) { return load64(err); }
-fn error_msg(err) { return load64(err + 8); }
-fn error_field_name(err) { return load64(err + 16); }
-fn error_index(err) { return load64(err + 24); }
-fn error_expected(err) { return load64(err + 32); }
-fn error_actual(err) { return load64(err + 40); }
 
 # --- hasher.cyr ---
 
@@ -200,29 +192,18 @@ var MAX_ACTION_LEN = 1024;
 var MAX_DETAILS_SIZE = 1048576;
 
 # ================================================================
-# AuditEntry layout (88 bytes)
-# ================================================================
-#   +0   id[16]          16 raw UUID bytes (inline)
-#   +16  timestamp_str   Str pointer (RFC 3339)
-#   +24  severity        i64 (SEV_* constant)
-#   +32  source          Str pointer
-#   +40  action          Str pointer
-#   +48  details         Str pointer (JSON string)
-#   +56  agent_id        Str pointer (0 = none)
-#   +64  prev_hash       Str pointer
-#   +72  hash            Str pointer (64-char hex)
-#   +80  hash_algorithm  Str pointer
+# AuditEntry — inline 16-byte UUID at offset 0 that derive can't model,
+# so `_uuid_hi` / `_uuid_lo` are named just to reserve the first two
+# slots. Public `entry_id(e)` returns the pointer (not a load) and stays
+# manual. All other accessors come from derive.
+#derive(accessors)
+struct entry {
+    _uuid_hi; _uuid_lo;
+    timestamp; severity; source; action; details;
+    agent_id; prev_hash; hash; hash_algorithm;
+}
 
 fn entry_id(e) { return e; }
-fn entry_timestamp(e) { return load64(e + 16); }
-fn entry_severity(e) { return load64(e + 24); }
-fn entry_source(e) { return load64(e + 32); }
-fn entry_action(e) { return load64(e + 40); }
-fn entry_details(e) { return load64(e + 48); }
-fn entry_agent_id(e) { return load64(e + 56); }
-fn entry_prev_hash(e) { return load64(e + 64); }
-fn entry_hash(e) { return load64(e + 72); }
-fn entry_hash_algorithm(e) { return load64(e + 80); }
 
 # ================================================================
 # UUID v4 generation via /dev/urandom
@@ -971,9 +952,13 @@ enum RetentionType {
     RETAIN_AFTER = 2;
 }
 
-# Layout (16 bytes):
-#   +0  type     i64  RETAIN_* constant
-#   +8  value    i64  count, duration_secs, or epoch_secs
+# Layout — generated accessors: retention_kind, retention_value.
+# Field named `kind` (not `type`; `type` shadows a Cyrius keyword).
+# A `retention_type()` back-compat alias is kept below for 1.x callers.
+#derive(accessors)
+struct retention { kind; value; }
+
+fn retention_type(r) { return retention_kind(r); }
 
 fn retention_keep_count(n) {
     var r = fl_alloc(16);
@@ -995,9 +980,6 @@ fn retention_keep_after(epoch_secs) {
     store64(r + 8, epoch_secs);
     return r;
 }
-
-fn retention_type(r) { return load64(r); }
-fn retention_value(r) { return load64(r + 8); }
 
 # ================================================================
 # Compliance presets
@@ -1068,12 +1050,18 @@ fn _retention_first_after(entries, cutoff_secs) {
 
 # chain.cyr — AuditChain and ChainArchive
 # Hash-linked chain with auto-rotation, query, pagination, retention.
+#
+# 2.0: `#derive(accessors)` declares struct layouts once; the compiler
+# emits getters/setters. Raw `load64(c + N)` / `store64(c + N, v)` forms
+# still live inside this file for the few call sites that outpace the
+# cost of a function call, but cross-module readers use the generated
+# accessors so offset typos can't pass review.
 
 # ================================================================
-# ChainArchive layout (16 bytes)
+# ChainArchive — generated accessors: archive_entries, archive_head_hash
 # ================================================================
-#   +0  entries     vec pointer
-#   +8  head_hash   Str pointer (last entry's hash)
+#derive(accessors)
+struct archive { entries; head_hash; }
 
 fn archive_new(entries, head_hash) {
     var a = fl_alloc(16);
@@ -1082,16 +1070,13 @@ fn archive_new(entries, head_hash) {
     return a;
 }
 
-fn archive_entries(a) { return load64(a); }
-fn archive_head_hash(a) { return load64(a + 8); }
-
 # ================================================================
-# AuditChain layout (32 bytes)
+# AuditChain — generated accessors:
+#   chain_entries, chain_prev_hash, chain_max_capacity, chain_overflow
+#   plus chain_set_* setters.
 # ================================================================
-#   +0   entries           vec pointer
-#   +8   prev_chain_hash   Str pointer (0 = none)
-#   +16  max_capacity      i64 (0 = unlimited)
-#   +24  overflow_archives vec pointer
+#derive(accessors)
+struct chain { entries; prev_hash; max_capacity; overflow; }
 
 fn chain_new() {
     var c = fl_alloc(32);
@@ -1105,15 +1090,10 @@ fn chain_new() {
 fn chain_with_capacity(max_entries) {
     var c = chain_new();
     if (max_entries > 0) {
-        store64(c + 16, max_entries);
+        chain_set_max_capacity(c, max_entries);
     }
     return c;
 }
-
-fn chain_entries(c) { return load64(c); }
-fn chain_prev_hash(c) { return load64(c + 8); }
-fn chain_max_capacity(c) { return load64(c + 16); }
-fn chain_overflow(c) { return load64(c + 24); }
 
 fn chain_len(c) {
     return vec_len(load64(c));
@@ -1423,17 +1403,16 @@ fn chain_apply_retention(c, policy) {
 # FileStore / SqliteStore can follow the same function naming pattern.
 
 # ================================================================
-# MemoryStore layout (8 bytes)
+# MemoryStore — generated accessors: memstore_entries, memstore_set_entries
 # ================================================================
-#   +0  entries   vec pointer
+#derive(accessors)
+struct memstore { entries; }
 
 fn memstore_new() {
     var s = fl_alloc(8);
     store64(s, vec_new());
     return s;
 }
-
-fn memstore_entries(s) { return load64(s); }
 
 fn memstore_len(s) {
     return vec_len(load64(s));
@@ -1779,9 +1758,9 @@ enum IntegrityStat {
     INTEGRITY_INVALID = 2;
 }
 
-# IntegrityStatus layout (16 bytes):
-#   +0  status    i64  INTEGRITY_* constant
-#   +8  message   Str pointer (error message for INVALID, 0 otherwise)
+# IntegrityStatus — generated accessors: integrity_status, integrity_message
+#derive(accessors)
+struct integrity { status; message; }
 
 fn integrity_valid() {
     var s = fl_alloc(16);
@@ -1804,9 +1783,6 @@ fn integrity_invalid(msg) {
     return s;
 }
 
-fn integrity_status(s) { return load64(s); }
-fn integrity_message(s) { return load64(s + 8); }
-
 fn integrity_as_str(s) {
     var st = load64(s);
     if (st == INTEGRITY_VALID) { return "VALID"; }
@@ -1815,27 +1791,13 @@ fn integrity_as_str(s) {
 }
 
 # ================================================================
-# ChainReview layout (72 bytes, 9 fields)
+# ChainReview — generated accessors:
+#   review_entry_count, review_integrity, review_earliest, review_latest,
+#   review_sources, review_severities, review_agents,
+#   review_head_hash, review_continued_from
 # ================================================================
-#   +0   entry_count      i64
-#   +8   integrity        IntegrityStatus pointer
-#   +16  earliest         Str pointer (0 if empty)
-#   +24  latest           Str pointer (0 if empty)
-#   +32  sources          hashmap pointer (source -> count)
-#   +40  severities       hashmap pointer (severity_str -> count)
-#   +48  agents           hashmap pointer (agent_id -> count)
-#   +56  head_hash        Str pointer (0 if empty)
-#   +64  continued_from   Str pointer (0 if none)
-
-fn review_entry_count(r) { return load64(r); }
-fn review_integrity(r) { return load64(r + 8); }
-fn review_earliest(r) { return load64(r + 16); }
-fn review_latest(r) { return load64(r + 24); }
-fn review_sources(r) { return load64(r + 32); }
-fn review_severities(r) { return load64(r + 40); }
-fn review_agents(r) { return load64(r + 48); }
-fn review_head_hash(r) { return load64(r + 56); }
-fn review_continued_from(r) { return load64(r + 64); }
+#derive(accessors)
+struct review { entry_count; integrity; earliest; latest; sources; severities; agents; head_hash; continued_from; }
 
 # ================================================================
 # Generate review from chain
@@ -2029,8 +1991,15 @@ enum MerkleSide {
 }
 
 # ================================================================
-# ProofNode layout (16 bytes)
+# Merkle structs use manual accessors — `#derive(accessors)` triggers a
+# cc5 parse-state bug (5.4.2 and 5.4.7) in `libro_core.bcyr` only, even
+# though other bench targets + main.cyr accept the same derived forms.
+# Classic cross-module miscompilation; reproduced deterministically at
+# `<source>:52: expected '{', got '('` when merkle.cyr's derived structs
+# are live in the libro_core include graph. File upstream if/when this
+# is diagnosable. Every other struct in libro is on derive.
 # ================================================================
+# ProofNode layout (16 bytes)
 #   +0  hash   Str pointer
 #   +8  side   i64 (SIDE_LEFT or SIDE_RIGHT)
 
@@ -2044,9 +2013,7 @@ fn proof_node_new(hash, side) {
 fn proof_node_hash(pn) { return load64(pn); }
 fn proof_node_side(pn) { return load64(pn + 8); }
 
-# ================================================================
 # MerkleProof layout (32 bytes)
-# ================================================================
 #   +0   index      i64
 #   +8   leaf_hash  Str pointer
 #   +16  path       vec of ProofNode pointers
@@ -2066,14 +2033,12 @@ fn merkle_proof_leaf(mp) { return load64(mp + 8); }
 fn merkle_proof_path(mp) { return load64(mp + 16); }
 fn merkle_proof_root(mp) { return load64(mp + 24); }
 
-# ================================================================
 # ConsistencyProof layout (40 bytes)
-# ================================================================
 #   +0   old_size   i64
 #   +8   new_size   i64
 #   +16  old_root   Str pointer
 #   +24  new_root   Str pointer
-#   +32  path       vec of Str (hash strings)
+#   +32  path       vec of Str
 
 fn consistency_proof_new(old_size, new_size, old_root, new_root, path) {
     var cp = fl_alloc(40);
@@ -2091,10 +2056,8 @@ fn consistency_old_root(cp) { return load64(cp + 16); }
 fn consistency_new_root(cp) { return load64(cp + 24); }
 fn consistency_path(cp) { return load64(cp + 32); }
 
-# ================================================================
 # MerkleTree layout (16 bytes)
-# ================================================================
-#   +0  nodes       vec of Str (all nodes, leaves first, level by level)
+#   +0  nodes       vec of Str
 #   +8  leaf_count  i64
 
 fn merkle_tree_nodes(t) { return load64(t); }
@@ -2176,7 +2139,7 @@ fn merkle_build(entries) {
 # Inclusion proof — O(log n)
 # ================================================================
 
-fn merkle_proof(tree, index) {
+fn merkle_inclusion_proof(tree, index) {
     var leaf_count = load64(tree + 8);
     if (index >= leaf_count) { return 0; }
 
@@ -2413,14 +2376,13 @@ fn merkle_verify_consistency(cp) {
 # Delegates to sigil's Ed25519 implementation (RFC 8032).
 
 # ================================================================
-# SigningKey layout (48 bytes)
+# SigningKey — generated accessors:
+#   signing_key_bytes, signing_key_pub_bytes, signing_key_algorithm,
+#   signing_key_key_id, signing_key_zeroized, signing_key_seed
+#   plus `_set_` setters for each.
 # ================================================================
-#   +0   sk_bytes     pointer to 64-byte Ed25519 secret key
-#   +8   pk_bytes     pointer to 32-byte Ed25519 public key
-#   +16  algorithm    i64 (SIG_ALG_ED25519 from sigil)
-#   +24  key_id       Str pointer (0 = none)
-#   +32  zeroized     i64 (1 if key material has been cleared)
-#   +40  seed         pointer to 32-byte seed (for zeroize)
+#derive(accessors)
+struct signing_key { bytes; pub_bytes; algorithm; key_id; zeroized; seed; }
 
 fn signing_key_generate() {
     sakshi_info("signing: key generate", 21);
@@ -2456,22 +2418,14 @@ fn signing_key_from_seed(seed) {
     return sk;
 }
 
-fn signing_key_bytes(sk) { return load64(sk); }
-fn signing_key_pub_bytes(sk) { return load64(sk + 8); }
-fn signing_key_algorithm(sk) { return load64(sk + 16); }
-fn signing_key_key_id(sk) { return load64(sk + 24); }
-
-fn signing_key_set_key_id(sk, key_id) {
-    store64(sk + 24, key_id);
-    return sk;
-}
-
-# Zeroize key material
+# Zeroize key material. Not a derived accessor — touches both the
+# secret-key buffer and the seed, then flips the zeroized flag via the
+# generated setter.
 fn signing_key_zeroize(sk) {
-    if (load64(sk + 32) == 1) { return 0; }
-    memset(load64(sk), 0, 64);
-    memset(load64(sk + 40), 0, 32);
-    store64(sk + 32, 1);
+    if (signing_key_zeroized(sk) == 1) { return 0; }
+    memset(signing_key_bytes(sk), 0, 64);
+    memset(signing_key_seed(sk), 0, 32);
+    signing_key_set_zeroized(sk, 1);
     return 0;
 }
 
@@ -2481,10 +2435,11 @@ fn signing_key_verifying_hex(sk) {
 }
 
 # ================================================================
-# VerifyingKey layout (16 bytes)
+# VerifyingKey — generated accessors:
+#   verifying_key_bytes, verifying_key_algorithm
 # ================================================================
-#   +0  pk_bytes    pointer to 32-byte Ed25519 public key
-#   +8  algorithm   i64
+#derive(accessors)
+struct verifying_key { bytes; algorithm; }
 
 fn verifying_key_from_bytes(bytes) {
     var vk = fl_alloc(16);
@@ -2499,21 +2454,17 @@ fn verifying_key_from_signing(sk) {
     return verifying_key_from_bytes(load64(sk + 8));
 }
 
-fn verifying_key_bytes(vk) { return load64(vk); }
-fn verifying_key_algorithm(vk) { return load64(vk + 8); }
-
 fn verifying_key_to_hex(vk) {
     return hex_encode_str(load64(vk), 32);
 }
 
 # ================================================================
-# EntrySignature layout (40 bytes)
+# EntrySignature — generated accessors:
+#   entry_sig_hash, entry_sig_signature, entry_sig_verifying_key,
+#   entry_sig_key_id, entry_sig_algorithm
 # ================================================================
-#   +0   entry_hash     Str pointer
-#   +8   signature      Str pointer (hex-encoded, 128 chars for 64-byte Ed25519 sig)
-#   +16  verifying_key  Str pointer (hex-encoded)
-#   +24  key_id         Str pointer (0 = none)
-#   +32  algorithm      Str pointer
+#derive(accessors)
+struct entry_sig { hash; signature; verifying_key; key_id; algorithm; }
 
 fn entry_sig_new(ehash, signature, verifying_key, key_id, algorithm) {
     var es = fl_alloc(40);
@@ -2524,12 +2475,6 @@ fn entry_sig_new(ehash, signature, verifying_key, key_id, algorithm) {
     store64(es + 32, algorithm);
     return es;
 }
-
-fn entry_sig_hash(es) { return load64(es); }
-fn entry_sig_signature(es) { return load64(es + 8); }
-fn entry_sig_verifying_key(es) { return load64(es + 16); }
-fn entry_sig_key_id(es) { return load64(es + 24); }
-fn entry_sig_algorithm(es) { return load64(es + 32); }
 
 # ================================================================
 # Sign an entry — returns EntrySignature
@@ -2607,25 +2552,17 @@ enum AnchorVerify {
 }
 
 # ================================================================
-# WitnessAnchor layout (72 bytes)
+# WitnessAnchor — generated accessors:
+#   anchor_merkle_root, anchor_entry_count, anchor_chain_head,
+#   anchor_hash_alg, anchor_created_at, anchor_prev_hash, anchor_hash
+# The inline 16-byte UUID at +0 is reserved with `_uuid_hi`/`_uuid_lo`
+# (can't model a raw blob); public `anchor_id(a)` stays manual and
+# returns the pointer.
 # ================================================================
-#   +0   id[16]            UUID v4 raw bytes
-#   +16  merkle_root       Str pointer
-#   +24  entry_count       i64
-#   +32  chain_head        Str pointer
-#   +40  hash_algorithm    Str pointer
-#   +48  created_at        Str pointer (RFC 3339)
-#   +56  prev_anchor_hash  Str pointer (0 = none)
-#   +64  hash              Str pointer (self-hash)
+#derive(accessors)
+struct anchor { _uuid_hi; _uuid_lo; merkle_root; entry_count; chain_head; hash_alg; created_at; prev_hash; hash; }
 
 fn anchor_id(a) { return a; }
-fn anchor_merkle_root(a) { return load64(a + 16); }
-fn anchor_entry_count(a) { return load64(a + 24); }
-fn anchor_chain_head(a) { return load64(a + 32); }
-fn anchor_hash_alg(a) { return load64(a + 40); }
-fn anchor_created_at(a) { return load64(a + 48); }
-fn anchor_prev_hash(a) { return load64(a + 56); }
-fn anchor_hash(a) { return load64(a + 64); }
 
 # ================================================================
 # Anchor construction
@@ -2739,12 +2676,12 @@ fn anchor_verify_against(a, tree, chain) {
 }
 
 # ================================================================
-# WitnessReceipt layout (40 bytes)
+# WitnessReceipt — generated accessors:
+#   receipt_backend, receipt_received_at, receipt_data
+# Same UUID-at-+0 pattern as anchor; `receipt_anchor_id(r)` stays manual.
 # ================================================================
-#   +0   anchor_id[16]   UUID raw bytes
-#   +16  backend         Str pointer
-#   +24  received_at     Str pointer (RFC 3339)
-#   +32  receipt_data    Str pointer (JSON)
+#derive(accessors)
+struct receipt { _uuid_hi; _uuid_lo; backend; received_at; data; }
 
 fn receipt_new(anchor, backend, receipt_data) {
     var r = fl_alloc(40);
@@ -2756,9 +2693,6 @@ fn receipt_new(anchor, backend, receipt_data) {
 }
 
 fn receipt_anchor_id(r) { return r; }
-fn receipt_backend(r) { return load64(r + 16); }
-fn receipt_received_at(r) { return load64(r + 24); }
-fn receipt_data(r) { return load64(r + 32); }
 
 # --- timestamping.cyr ---
 
@@ -2897,12 +2831,11 @@ fn _der_write_sequence(buf, content, content_len) {
 }
 
 # ================================================================
-# TimestampRequest layout (32 bytes)
+# TimestampRequest — generated accessors:
+#   ts_request_hash_alg, ts_request_hash, ts_request_nonce, ts_request_cert_req
 # ================================================================
-#   +0   hash_algorithm   i64 (TS_SHA*)
-#   +8   message_hash     Str pointer (hex-encoded)
-#   +16  nonce            Str pointer (hex-encoded, 0 = none)
-#   +24  cert_req         i64 (0 or 1)
+#derive(accessors)
+struct ts_request { hash_alg; hash; nonce; cert_req; }
 
 fn ts_request_new(hash_hex) {
     var r = fl_alloc(32);
@@ -2912,11 +2845,6 @@ fn ts_request_new(hash_hex) {
     store64(r + 24, 1);
     return r;
 }
-
-fn ts_request_hash_alg(r) { return load64(r); }
-fn ts_request_hash(r) { return load64(r + 8); }
-fn ts_request_nonce(r) { return load64(r + 16); }
-fn ts_request_cert_req(r) { return load64(r + 24); }
 
 fn ts_request_set_nonce(r) {
     # Generate 16-byte random nonce
@@ -3082,15 +3010,11 @@ fn _der_decode_unsigned(data, len) {
 }
 
 # ================================================================
-# TimestampResponse layout (24 bytes)
+# TimestampResponse — generated accessors:
+#   ts_response_status, ts_response_token, ts_response_status_string
 # ================================================================
-#   +0   status         i64 (TS_* constant)
-#   +8   token          Str pointer (hex-encoded DER, 0 = none)
-#   +16  status_string  Str pointer (0 = none)
-
-fn ts_response_status(r) { return load64(r); }
-fn ts_response_token(r) { return load64(r + 8); }
-fn ts_response_status_string(r) { return load64(r + 16); }
+#derive(accessors)
+struct ts_response { status; token; status_string; }
 
 fn ts_response_from_der(data, data_len) {
     var resp = fl_alloc(24);
@@ -3143,14 +3067,12 @@ fn ts_response_from_der(data, data_len) {
 }
 
 # ================================================================
-# TimestampAttestation layout (48 bytes)
+# TimestampAttestation — generated accessors:
+#   ts_attestation_hash, ts_attestation_subject, ts_attestation_algorithm,
+#   ts_attestation_token, ts_attestation_tsa_url, ts_attestation_created_at
 # ================================================================
-#   +0   hash           Str pointer
-#   +8   hash_subject   i64 (TS_ENTRY_HASH, TS_MERKLE_ROOT, TS_CHAIN_HEAD)
-#   +16  hash_algorithm i64 (TS_SHA*)
-#   +24  token_der      Str pointer (hex-encoded)
-#   +32  tsa_url        Str pointer (0 = none)
-#   +40  created_at     Str pointer (RFC 3339)
+#derive(accessors)
+struct ts_attestation { hash; subject; algorithm; token; tsa_url; created_at; }
 
 fn ts_attestation_new(hash, subject, algorithm, response) {
     if (ts_status_is_granted(ts_response_status(response)) == 0) {
@@ -3165,13 +3087,6 @@ fn ts_attestation_new(hash, subject, algorithm, response) {
     store64(a + 40, timestamp_rfc3339(get_epoch_secs()));
     return a;
 }
-
-fn ts_attestation_hash(a) { return load64(a); }
-fn ts_attestation_subject(a) { return load64(a + 8); }
-fn ts_attestation_algorithm(a) { return load64(a + 16); }
-fn ts_attestation_token(a) { return load64(a + 24); }
-fn ts_attestation_tsa_url(a) { return load64(a + 32); }
-fn ts_attestation_created_at(a) { return load64(a + 40); }
 
 fn ts_attestation_for_merkle_root(tree, response) {
     return ts_attestation_new(merkle_tree_root(tree), TS_MERKLE_ROOT, TS_SHA256, response);
@@ -3188,14 +3103,12 @@ fn ts_attestation_verify_hash(a, hash) {
 # and anchoring into a single verifiable package.
 
 # ================================================================
-# SignedTreeHead layout (48 bytes)
+# SignedTreeHead — generated accessors:
+#   sth_root, sth_tree_size, sth_timestamp,
+#   sth_signature, sth_verifying_key, sth_algorithm
 # ================================================================
-#   +0   root            Str pointer
-#   +8   tree_size       i64
-#   +16  timestamp       Str pointer (RFC 3339)
-#   +24  signature       Str pointer (hex, empty if unsigned)
-#   +32  verifying_key   Str pointer (hex, empty if unsigned)
-#   +40  algorithm       Str pointer (0 = none)
+#derive(accessors)
+struct sth { root; tree_size; timestamp; signature; verifying_key; algorithm; }
 
 fn sth_new(root, tree_size, sig, vk_hex, alg) {
     var s = fl_alloc(48);
@@ -3208,22 +3121,13 @@ fn sth_new(root, tree_size, sig, vk_hex, alg) {
     return s;
 }
 
-fn sth_root(s) { return load64(s); }
-fn sth_tree_size(s) { return load64(s + 8); }
-fn sth_timestamp(s) { return load64(s + 16); }
-fn sth_signature(s) { return load64(s + 24); }
-fn sth_verifying_key(s) { return load64(s + 32); }
-fn sth_algorithm(s) { return load64(s + 40); }
-
 # ================================================================
-# ProofVerification layout (48 bytes)
+# ProofVerification — generated accessors:
+#   pv_tree_head_valid, pv_entries_valid, pv_tree_matches,
+#   pv_inclusions_valid, pv_consistency_valid, pv_anchor_valid
 # ================================================================
-#   +0   tree_head_valid    i64 (0/1)
-#   +8   entries_valid      i64 (0/1)
-#   +16  tree_matches       i64 (0/1)
-#   +24  inclusions_valid   i64 (0/1)
-#   +32  consistency_valid  i64 (-1 = N/A, 0/1)
-#   +40  anchor_valid       i64 (-1 = N/A, 0/1)
+#derive(accessors)
+struct pv { tree_head_valid; entries_valid; tree_matches; inclusions_valid; consistency_valid; anchor_valid; }
 
 fn pv_new() {
     var p = fl_alloc(48);
@@ -3235,13 +3139,6 @@ fn pv_new() {
     store64(p + 40, -1);
     return p;
 }
-
-fn pv_tree_head_valid(p) { return load64(p); }
-fn pv_entries_valid(p) { return load64(p + 8); }
-fn pv_tree_matches(p) { return load64(p + 16); }
-fn pv_inclusions_valid(p) { return load64(p + 24); }
-fn pv_consistency_valid(p) { return load64(p + 32); }
-fn pv_anchor_valid(p) { return load64(p + 40); }
 
 fn pv_is_valid(p) {
     if (load64(p) != 1) { return 0; }
@@ -3256,21 +3153,12 @@ fn pv_is_valid(p) {
 }
 
 # ================================================================
-# IntegrityProof layout (48 bytes)
+# IntegrityProof — generated accessors:
+#   iproof_tree_head, iproof_consistency, iproof_inclusions,
+#   iproof_entries, iproof_anchor, iproof_tree
 # ================================================================
-#   +0   tree_head     SignedTreeHead pointer
-#   +8   consistency   ConsistencyProof pointer (0 = none)
-#   +16  inclusions    vec of MerkleProof pointers
-#   +24  entries       vec of entry pointers
-#   +32  anchor        WitnessAnchor pointer (0 = none)
-#   +40  tree          MerkleTree pointer (for verification)
-
-fn iproof_tree_head(ip) { return load64(ip); }
-fn iproof_consistency(ip) { return load64(ip + 8); }
-fn iproof_inclusions(ip) { return load64(ip + 16); }
-fn iproof_entries(ip) { return load64(ip + 24); }
-fn iproof_anchor(ip) { return load64(ip + 32); }
-fn iproof_tree(ip) { return load64(ip + 40); }
+#derive(accessors)
+struct iproof { tree_head; consistency; inclusions; entries; anchor; tree; }
 
 # ================================================================
 # ProofBuilder — fluent API for constructing proofs
@@ -3330,7 +3218,7 @@ fn proof_with_consistency(ip, old_size) {
 # Add inclusion proof for entry at index
 fn proof_with_inclusion(ip, index) {
     var tree = load64(ip + 40);
-    var mp = merkle_proof(tree, index);
+    var mp = merkle_inclusion_proof(tree, index);
     if (mp != 0) {
         vec_push(load64(ip + 16), mp);
     }
@@ -3491,11 +3379,12 @@ fn log_syscall(action, data, result) {
 # Each entry is one JSON object per line (JSON Lines format).
 
 # ================================================================
-# FileStore layout (24 bytes)
+# FileStore — generated accessors:
+#   filestore_path, filestore_count (+ setters), filestore_cpath
+# `cpath` is the null-terminated cstr cached once at open.
 # ================================================================
-#   +0   path    Str pointer (file path)
-#   +8   count   i64 (cached entry count, -1 = unknown)
-#   +16  cpath   cstr (cached null-terminated path, derived once at open)
+#derive(accessors)
+struct filestore { path; count; cpath; }
 
 fn filestore_open(path) {
     sakshi_info("filestore: open", 15);
@@ -3513,16 +3402,13 @@ fn filestore_open(path) {
     return s;
 }
 
-fn filestore_path(s) { return load64(s); }
-fn _filestore_cpath(s) { return load64(s + 16); }
-
 # ================================================================
 # Append — write entry as JSON line with exclusive lock
 # ================================================================
 
 fn filestore_append(s, e) {
     sakshi_debug("filestore: append", 17);
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
 
     # Build JSON line
     var sb = str_builder_new();
@@ -3555,7 +3441,7 @@ fn _fs_file_size(fd) {
 
 fn filestore_load_all(s) {
     sakshi_info("filestore: load all", 19);
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) {
         sakshi_error("filestore: open failed", 22);
@@ -3633,7 +3519,7 @@ fn filestore_len(s) {
     if (cached != -1) { return cached; }
 
     # Count lines in file
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) { return 0; }
     file_lock_shared(fd);
@@ -3695,7 +3581,7 @@ fn filestore_verify_streamed(s, chunk_size) {
     if (chunk_size < 1) { chunk_size = 1; }
     if (_fsvs_buf == 0) { _fsvs_buf = alloc(_fsvs_buf_size); }
 
-    var cpath = _filestore_cpath(s);
+    var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) { return 0; }
     file_lock_shared(fd);
@@ -3981,10 +3867,12 @@ fn _filestore_parse_uuid(buf, hex_str) {
 # and SQL queries. Persistent alternative to MemoryStore.
 
 # ================================================================
-# PatraStore layout (16 bytes)
+# PatraStore — internal-only accessors (underscore-prefixed type name
+# keeps the generated fns out of the public surface).
+#   _patrastore_db, _patrastore_inited (+ _set_ setters)
 # ================================================================
-#   +0  db       patra database handle
-#   +8  inited   i64 (1 if table created)
+#derive(accessors)
+struct _patrastore { db; inited; }
 
 fn patrastore_open(path) {
     sakshi_info("patrastore: open", 16);
@@ -4006,8 +3894,6 @@ fn patrastore_close(s) {
     fl_free(s);
     return 0;
 }
-
-fn _patrastore_db(s) { return load64(s); }
 
 # ================================================================
 # Schema
@@ -4315,8 +4201,10 @@ fn _topic_match(topic, pattern) {
 }
 
 # ================================================================
-# Subscription: { pattern, entries_vec, next } = 24 bytes
+# Subscription — generated accessors: _sub_pattern, _sub_entries, _sub_next
 # ================================================================
+#derive(accessors)
+struct _sub { pattern; entries; next; }
 
 fn _sub_new(pattern) {
     var sub = alloc(24);
@@ -4326,19 +4214,17 @@ fn _sub_new(pattern) {
     return sub;
 }
 
-fn _sub_pattern(sub) { return load64(sub); }
-fn _sub_entries(sub) { return load64(sub + 8); }
-fn _sub_next(sub) { return load64(sub + 16); }
-
 # ================================================================
-# AuditStream: { subs, prefix, published } = 24 bytes
+# AuditStream — generated accessors: stream_subs, stream_prefix, stream_published
 # ================================================================
+#derive(accessors)
+struct stream { subs; prefix; published; }
 
 fn stream_new() {
     var s = alloc(24);
-    store64(s, 0);           # subs linked list head
-    store64(s + 8, "libro"); # prefix
-    store64(s + 16, 0);      # published count
+    store64(s, 0);
+    store64(s + 8, "libro");
+    store64(s + 16, 0);
     return s;
 }
 
@@ -4407,11 +4293,6 @@ fn stream_pending(sub) {
     return vec_len(_sub_entries(sub));
 }
 
-# Total entries published
-fn stream_published(s) { return load64(s + 16); }
-
-# Prefix string
-fn stream_prefix(s) { return load64(s + 8); }
 
 # --- proof_json.cyr ---
 

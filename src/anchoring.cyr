@@ -13,25 +13,17 @@ enum AnchorVerify {
 }
 
 # ================================================================
-# WitnessAnchor layout (72 bytes)
+# WitnessAnchor — generated accessors:
+#   anchor_merkle_root, anchor_entry_count, anchor_chain_head,
+#   anchor_hash_alg, anchor_created_at, anchor_prev_hash, anchor_hash
+# The inline 16-byte UUID at +0 is reserved with `_uuid_hi`/`_uuid_lo`
+# (can't model a raw blob); public `anchor_id(a)` stays manual and
+# returns the pointer.
 # ================================================================
-#   +0   id[16]            UUID v4 raw bytes
-#   +16  merkle_root       Str pointer
-#   +24  entry_count       i64
-#   +32  chain_head        Str pointer
-#   +40  hash_algorithm    Str pointer
-#   +48  created_at        Str pointer (RFC 3339)
-#   +56  prev_anchor_hash  Str pointer (0 = none)
-#   +64  hash              Str pointer (self-hash)
+#derive(accessors)
+struct anchor { _uuid_hi; _uuid_lo; merkle_root; entry_count; chain_head; hash_alg; created_at; prev_hash; hash; }
 
 fn anchor_id(a) { return a; }
-fn anchor_merkle_root(a) { return load64(a + 16); }
-fn anchor_entry_count(a) { return load64(a + 24); }
-fn anchor_chain_head(a) { return load64(a + 32); }
-fn anchor_hash_alg(a) { return load64(a + 40); }
-fn anchor_created_at(a) { return load64(a + 48); }
-fn anchor_prev_hash(a) { return load64(a + 56); }
-fn anchor_hash(a) { return load64(a + 64); }
 
 # ================================================================
 # Anchor construction
@@ -145,12 +137,12 @@ fn anchor_verify_against(a, tree, chain) {
 }
 
 # ================================================================
-# WitnessReceipt layout (40 bytes)
+# WitnessReceipt — generated accessors:
+#   receipt_backend, receipt_received_at, receipt_data
+# Same UUID-at-+0 pattern as anchor; `receipt_anchor_id(r)` stays manual.
 # ================================================================
-#   +0   anchor_id[16]   UUID raw bytes
-#   +16  backend         Str pointer
-#   +24  received_at     Str pointer (RFC 3339)
-#   +32  receipt_data    Str pointer (JSON)
+#derive(accessors)
+struct receipt { _uuid_hi; _uuid_lo; backend; received_at; data; }
 
 fn receipt_new(anchor, backend, receipt_data) {
     var r = fl_alloc(40);
@@ -162,6 +154,3 @@ fn receipt_new(anchor, backend, receipt_data) {
 }
 
 fn receipt_anchor_id(r) { return r; }
-fn receipt_backend(r) { return load64(r + 16); }
-fn receipt_received_at(r) { return load64(r + 24); }
-fn receipt_data(r) { return load64(r + 32); }
