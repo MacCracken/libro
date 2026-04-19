@@ -33,8 +33,9 @@ cyrius build src/main.cyr build/libro && ./build/libro
 ## Benchmarks
 
 ```bash
-# Build and run benchmarks
-cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
+# Build and run benchmarks (two binaries — cc5 fixup table limit forced the split in 1.2.0)
+cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
+cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
 ```
 
 15 benchmarks covering: SHA-256 hashing, entry hash computation, chain append/verify,

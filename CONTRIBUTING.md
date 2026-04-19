@@ -15,8 +15,9 @@ cyrius build src/main.cyr build/libro
 # Run tests (193 tests, must all pass)
 ./build/libro
 
-# Run benchmarks
-cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
+# Run benchmarks (two binaries)
+cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
+cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
 
 # Format check
 cyrfmt --check src/*.cyr
@@ -39,7 +40,7 @@ cyrius build src/main.cyr build/libro && ./build/libro
 1. Create `src/module_name.cyr`
 2. Add `include "src/module_name.cyr"` to `src/main.cyr` (respect dependency order)
 3. Add tests in `src/main.cyr` (test functions + entries in `main()`)
-4. Add benchmarks in `benches/libro.bcyr` if performance-sensitive
+4. Add benchmarks in `benches/libro_core.bcyr` (crypto/chain/merkle/sign) or `benches/libro_io.bcyr` (export/review/anchor/stream/filestore) if performance-sensitive
 5. Update documentation
 
 ## Testing

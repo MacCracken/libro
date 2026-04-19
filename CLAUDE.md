@@ -42,8 +42,9 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 # Run tests — expect "251 passed, 0 failed"
 ./build/libro
 
-# Benchmarks
-CYRIUS_DCE=1 cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
+# Benchmarks (two binaries — cc5 fixup table limit forced the split in 1.2.0)
+CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
+CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
 
 # Fuzz
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 10 ./build/fuzz_libro
@@ -102,7 +103,8 @@ src/*.cyr               Library modules (18 files: error, hasher, entry, verify,
                         query, retention, chain, store, export, review, merkle,
                         signing, anchoring, timestamping, proof, kernel_audit,
                         file_store, patra_store, streaming)
-benches/libro.bcyr      21 benchmarks
+benches/libro_core.bcyr 13 core benchmarks (crypto/chain/merkle/sign)
+benches/libro_io.bcyr    8 i/o benchmarks (export/review/anchor/stream/filestore)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
 lib/                    Vendored Cyrius stdlib + patra v1.1.1 bundle

@@ -59,8 +59,9 @@ cyrius build src/main.cyr build/libro
 # Run tests (193 tests)
 ./build/libro
 
-# Run benchmarks (15 benchmarks)
-cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
+# Run benchmarks (21 benchmarks across 2 binaries)
+cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
+cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
 ```
 
 ### Usage Example
@@ -127,7 +128,8 @@ file_close(fd);
 ```
 src/main.cyr           Entry point + 193 tests
 src/*.cyr              Library modules (18 files)
-benches/libro.bcyr     15 benchmarks
+benches/libro_core.bcyr 13 core benchmarks (crypto/chain/merkle/sign)
+benches/libro_io.bcyr    8 i/o benchmarks (export/review/anchor/stream/filestore)
 lib/                   Vendored Cyrius stdlib
 build/                 Compiled binaries (gitignored)
 docs/                  Architecture, guides, compliance, ADRs

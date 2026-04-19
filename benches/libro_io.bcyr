@@ -1,0 +1,172 @@
+# libro_io.bcyr — export / review / anchoring / stream / filestore benchmarks.
+# Split from libro.bcyr in 1.2.0: single-file bench exceeded cc5 5.4.2's
+# 16384 fixup-table cap. Paired with libro_core.bcyr.
+#
+# Run: cyrius build benches/libro_io.bcyr build/libro_bench_io
+#      ./build/libro_bench_io
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/freelist.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/fnptr.cyr"
+include "lib/bench.cyr"
+include "lib/sakshi.cyr"
+include "lib/bigint.cyr"
+include "lib/chrono.cyr"
+include "lib/sigil.cyr"
+
+include "src/error.cyr"
+include "src/hasher.cyr"
+include "src/entry.cyr"
+include "src/verify.cyr"
+include "src/query.cyr"
+include "src/retention.cyr"
+include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
+include "src/review.cyr"
+include "src/merkle.cyr"
+include "src/signing.cyr"
+include "src/anchoring.cyr"
+include "src/file_store.cyr"
+include "src/streaming.cyr"
+
+var _b_chain = 0;
+var _b_det = 0;
+var _b_entries = 0;
+var _b_tree = 0;
+var _b_dev_null = 0;
+var _b_anchor = 0;
+var _b_stream = 0;
+var _b_store = 0;
+var _b_fs = 0;
+
+fn bench_export_jsonl(ignored) {
+    export_jsonl(_b_entries, _b_dev_null);
+    return 0;
+}
+
+fn bench_export_csv(ignored) {
+    export_csv(_b_entries, _b_dev_null);
+    return 0;
+}
+
+fn bench_chain_review(ignored) {
+    chain_review(_b_chain);
+    return 0;
+}
+
+fn bench_anchor_create(ignored) {
+    anchor_from_tree(_b_tree, chain_head_hash(_b_chain));
+    return 0;
+}
+
+fn bench_anchor_verify(ignored) {
+    anchor_verify_integrity(_b_anchor);
+    return 0;
+}
+
+fn bench_stream_publish(ignored) {
+    var e = vec_get(_b_entries, 0);
+    stream_publish(_b_stream, e);
+    return 0;
+}
+
+fn bench_streamed_verify(ignored) {
+    memstore_verify_streamed(_b_store, 25);
+    return 0;
+}
+
+fn bench_filestore_load(ignored) {
+    filestore_load_all(_b_fs);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    fl_init();
+    ed25519_init();
+
+    println("=== libro benchmarks — io ===");
+
+    _b_det = str_from("{}");
+    _b_chain = chain_new();
+    var i = 0;
+    while (i < 100) {
+        chain_append(_b_chain, SEV_INFO, str_from("bench-src"), str_from("bench-act"), _b_det);
+        i += 1;
+    }
+    _b_entries = chain_entries(_b_chain);
+    _b_tree = merkle_build(_b_entries);
+    _b_dev_null = file_open("/dev/null", 1, 0);
+    _b_anchor = anchor_from_tree(_b_tree, chain_head_hash(_b_chain));
+
+    _b_stream = stream_new();
+    stream_subscribe(_b_stream, "libro/#");
+
+    _b_store = memstore_new();
+    i = 0;
+    while (i < 100) {
+        memstore_append(_b_store, vec_get(_b_entries, i));
+        i += 1;
+    }
+
+    sys_unlink("/tmp/libro_bench_fs.jsonl");
+    _b_fs = filestore_open(str_from("/tmp/libro_bench_fs.jsonl"));
+    i = 0;
+    while (i < 10) {
+        filestore_append(_b_fs, vec_get(_b_entries, i));
+        i += 1;
+    }
+
+    var benches = vec_new();
+
+    var b1 = bench_new("export_jsonl_100");
+    bench_run(b1, &bench_export_jsonl, 100);
+    vec_push(benches, b1);
+
+    var b2 = bench_new("export_csv_100");
+    bench_run(b2, &bench_export_csv, 100);
+    vec_push(benches, b2);
+
+    var b3 = bench_new("chain_review_100");
+    bench_run(b3, &bench_chain_review, 100);
+    vec_push(benches, b3);
+
+    var b4 = bench_new("anchor_create");
+    bench_run(b4, &bench_anchor_create, 100);
+    vec_push(benches, b4);
+
+    var b5 = bench_new("anchor_verify");
+    bench_run(b5, &bench_anchor_verify, 100);
+    vec_push(benches, b5);
+
+    var b6 = bench_new("stream_publish");
+    bench_run(b6, &bench_stream_publish, 1000);
+    vec_push(benches, b6);
+
+    var b7 = bench_new("streamed_verify_100");
+    bench_run(b7, &bench_streamed_verify, 10);
+    vec_push(benches, b7);
+
+    var b8 = bench_new("filestore_load_10");
+    bench_run(b8, &bench_filestore_load, 100);
+    vec_push(benches, b8);
+
+    println("");
+    bench_report_all(benches);
+
+    file_close(_b_dev_null);
+    sys_unlink("/tmp/libro_bench_fs.jsonl");
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-19
+
+cc3-debt paydown sprint. With Cyrius 5.4.2 (cc5) reliably preserving
+locals across nested call chains, we removed 24 workaround globals
+and the language-era workaround syntax that libro was still carrying
+from the cc3 days. Also: split the benchmark binary in two after it
+overflowed cc5's raised-but-still-finite fixup table.
+
+### Fixed
+- **Bench binary overflowed the cc5 fixup table (16384)** —
+  `benches/libro.bcyr` registered all 21 benches in one compilation
+  unit. Under cc5 5.4.2 the peak live forward-ref count from the
+  reachable src/ graph exceeded 16384 and the build failed with
+  `error: fixup table full (16384)`. Split into `libro_core.bcyr`
+  (13 crypto/chain/merkle/sign benches) and `libro_io.bcyr` (8
+  export/review/anchor/stream/filestore benches). Both build and run
+  clean; CI iterates `benches/*.bcyr`. `lib/fmt.cyr` was also
+  missing from the include list (silent under cc3 forward-stub
+  behaviour; a live-fixup source under cc5).
+
+### Changed
+- **24 workaround globals removed** across 5 modules:
+  | File                  | Globals removed                                                                                     | Count |
+  |-----------------------|-----------------------------------------------------------------------------------------------------|-------|
+  | `src/patra_store.cyr` | `_ps_sb` `_ps_id` `_ps_ts` `_ps_sev` `_ps_src` `_ps_act` `_ps_det` `_ps_aid2` `_ps_ph` `_ps_hash` `_ps_halg` `_ps_db` | 12 |
+  | `src/entry.cyr`       | `_cjh_hasher` `_cjh_pairs` `_cjh_keys` `_en_entry` `_ech_hasher` `_ech_entry`                       | 6  |
+  | `src/anchoring.cyr`   | `_anch_ptr` `_ach_hasher` `_ach_anchor`                                                             | 3  |
+  | `src/review.cyr`      | `_rev_chain`                                                                                        | 1  |
+  | `src/chain.cyr`       | `_chain_c`                                                                                          | 1  |
+  | `src/merkle.cyr`      | `_csh_nodes` (dead code)                                                                            | 1  |
+
+  All were cc3-era workarounds for locals clobbered across nested
+  `str_builder_*` / `hasher_update` call chains. cc5 5.4.2 preserves
+  them reliably. No regressions on the PatraStore cumulative-state
+  tests — the exact class of failure the globals were originally
+  defending against.
+- **Negative literals + compound assignment sweep** — `(0 - N)` → `-N`
+  (13 sites) and `i = i + 1` → `i += 1` in pure counter loops (~50
+  sites). Native in Cyrius 3.10.3+.
+- **`cyrius.cyml` enriched** — added `repository`, `[deps] stdlib =
+  […]` (13 modules), `[deps.sigil]` (tag 2.8.3), `[deps.patra]` (tag
+  1.1.1). Matches first-party convention.
+- **Roadmap consolidated** — folded `docs/development/sprint-1.2.0.md`
+  decision log into `docs/development/roadmap.md` (Unreleased and
+  Hardening backlog sections) and deleted the sprint file. Stale
+  "Blocked on patra (SQL storage)" subsection removed — patra 1.1.1
+  is integrated via `lib/patra.cyr` symlink + `src/patra_store.cyr`.
+
+### Added
+- **`severity_len(sev)` in `src/entry.cyr`** — constant-time lookup on
+  a `SEV_LEN[]` table. `entry_compute_hash` no longer calls `strlen`
+  on the severity cstr on every entry hash.
+
+### Decisions (no code change)
+- `secret var` (Cyrius 5.3.5) — **NOT APPLICABLE**. Libro key material
+  is heap-allocated; `secret var` only zeroises stack-local arrays.
+  `signing_key_zeroize(sk)` already handles heap zeroization.
+- `ct_select` / `lib/ct.cyr` (Cyrius 5.3.5) — **NO MIGRATION NEEDED**.
+  Every security-critical compare already routes through
+  `constant_time_eq_str` → sigil's branchless `ct_eq`. Remaining
+  `str_eq` calls are on public metadata (source / action / agent_id),
+  not secrets.
+- `#derive(accessors)` (Cyrius 3.7.1) — **REJECT**. Would require
+  `struct` declarations across 18 modules. AGNOS-wide convention
+  (libro, patra, sigil, ark) is raw-offset accessors; consistency +
+  hook-point flexibility outweighs the ~30-line boilerplate saving.
+
+### Performance
+- `sign_entry`: 6.147 → 5.786 ms (**−5.9 %**) — from the patra_store
+  local refactor (fewer global loads on the signing-key path).
+- Every other bench within ±2 % noise.
+
+### Validation
+- **255 passed, 0 failed.** Both bench binaries build and report;
+  fuzz harness clean (no crashes); format + lint clean (3 pre-existing
+  line-length warnings on literal strings remain).
+
 ## [1.1.1] - 2026-04-19
 
 CI/release modernization and a round of quick-win refactors from the

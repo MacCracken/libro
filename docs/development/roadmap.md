@@ -1,28 +1,15 @@
 # Roadmap
 
-## Unreleased — ready to ship (you pick the version)
+## v1.2.0 — 2026-04-19
 
-cc3-debt paydown sprint. All changes landed in the working tree,
-255/255 tests green, benches within noise. See
-`docs/development/sprint-1.2.0.md` for the full plan + decision log.
-
-**Source changes (already in working tree, not yet tagged):**
-
-- [x] **24 workaround globals removed** — patra_store 12, entry 6, anchoring 3, review 1, chain 1, merkle 1 dead. All were cc3-era workarounds for locals clobbered across nested `str_builder_*` / `hasher_update` call chains; cc5 5.4.2 preserves them reliably.
-- [x] **Negative literals + compound assignment sweep** — `(0 - N)` → `-N` (13 sites) and `i = i + 1` → `i += 1` in simple counter loops (~50 sites). Native in Cyrius 3.10.3+.
-- [x] **`severity_len(sev)` added** in `src/entry.cyr`; `entry_compute_hash` no longer calls `strlen` on the constant severity cstr every entry.
-- [x] **`cyrius.cyml` enriched** — added `repository`, `[deps] stdlib = […]` (13 modules), `[deps.sigil]` (tag 2.8.3), `[deps.patra]` (tag 1.1.1). Matches patra / first-party convention.
-- [x] **Sprint 1.2.0 plan captured** in `docs/development/sprint-1.2.0.md` — every idea from the 1.1.x reviews is recorded there so nothing is lost across sessions.
-
-**Decisions recorded (no code change):**
-
-- [x] `secret var` (Cyrius 5.3.5) — NOT APPLICABLE. Libro key material is heap-allocated; `secret var` only zeroises stack-local arrays. `signing_key_zeroize(sk)` already handles heap zeroization.
-- [x] `ct_select` / `lib/ct.cyr` (Cyrius 5.3.5) — NO MIGRATION NEEDED. Every security-critical compare already routes through `constant_time_eq_str` → sigil's branchless `ct_eq`. Remaining `str_eq` calls are metadata, not secrets.
-- [x] `#derive(accessors)` (Cyrius 3.7.1) — REJECT. Would require `struct` declarations across 18 modules. AGNOS-wide convention (libro, patra, sigil, ark) is raw-offset accessors; consistency + hook-point flexibility outweighs the ~30-line boilerplate saving.
-
-**Validation:** 255 passed, 0 failed. `sign_entry` 6.147 → 5.786 ms (−5.9 %) from the patra_store local refactor; every other bench within ±2 % noise. Fuzz clean.
-
-**Version bump is yours to call** — none of this has touched `VERSION` / `cyrius.cyml` version / CHANGELOG yet.
+- [x] 24 workaround globals removed — patra_store 12, entry 6, anchoring 3, review 1, chain 1, merkle 1 (dead). cc3-era workarounds for locals clobbered across nested `str_builder_*` / `hasher_update` call chains; cc5 5.4.2 preserves them reliably.
+- [x] Negative literals + compound assignment sweep — `(0 - N)` → `-N` (13 sites) and `i = i + 1` → `i += 1` in pure counter loops (~50 sites).
+- [x] `severity_len(sev)` added in `src/entry.cyr`; `entry_compute_hash` no longer `strlen`s the severity cstr per entry.
+- [x] `cyrius.cyml` enriched — `repository`, `[deps] stdlib = […]` (13 modules), `[deps.sigil]` 2.8.3, `[deps.patra]` 1.1.1.
+- [x] **Bench binary split** — single `benches/libro.bcyr` overflowed cc5's 16384 fixup-table cap. Now `libro_core.bcyr` (13 crypto/chain/merkle/sign benches) + `libro_io.bcyr` (8 export/review/anchor/stream/filestore benches); CI iterates `benches/*.bcyr`. Added missing `lib/fmt.cyr` include.
+- [x] Roadmap consolidated — `docs/development/sprint-1.2.0.md` folded in and deleted; stale "Blocked on patra" subsection removed.
+- [x] Decisions recorded: `secret var` NOT APPLICABLE (heap-only key material), `ct_select` NO MIGRATION (already via sigil's `ct_eq`), `#derive(accessors)` REJECTED (AGNOS raw-offset convention).
+- [x] `sign_entry` 6.147 → 5.786 ms (−5.9 %). 255 tests, 0 failed. Fuzz clean.
 
 ## v1.1.1 — 2026-04-19
 
@@ -82,18 +69,19 @@ cc3-debt paydown sprint. All changes landed in the working tree,
 - [ ] `to_proof_json()` export (pretty-print integrity proof as JSON)
 - [ ] `SqliteStore` — deferred to patra integration
 
-## v1.1 — Hardening (not blocked)
+## Hardening backlog (not blocked)
 
 - [ ] Nested JSON canonical hashing (depth > 1)
 - [ ] Benchmark history tracking (CSV append per run)
 - [ ] Chain export/import (full chain serialization to file)
 - [ ] Streaming verification for FileStore
 - [ ] `append_batch()` port from Rust
+- [ ] FileStore large-file buffer sizing — `_fs_buf` doubles from 64 KB; on a 100 MB file we alloc several giant buffers and orphan them (bump allocator never frees). mmap, pre-allocate at max expected size, or document max-store-size assumption.
+- [ ] `_sb_csv_field` single-pass — currently scans once to decide if quoting is needed, then again to escape. Payoff marginal (CSV already sub-ms); clarity win.
+- [ ] Cache `_entry_to_cstr` on the store struct — `filestore_open` / `filestore_append` / `filestore_len` each re-derive the cstr from the same path.
+- [ ] Resolve `chain_verify` / `verify_chain` duplication — minor overlap between `src/chain.cyr` and `src/verify.cyr`. Document the split or merge.
 
 ## Blocked — Waiting on Ecosystem
-
-#### Blocked on patra (SQL storage)
-- [ ] **Patra SQL backend** — both libro and patra depend on sigil for SHA-256 via stdlib. Once patra drops its bundled SHA-256 and uses sigil from stdlib (same as libro), the conflict resolves and libro can include patra for indexed SQL storage, transactions, and WAL crash recovery.
 
 #### Future
 - [ ] Post-quantum signatures (ML-DSA) via sigil

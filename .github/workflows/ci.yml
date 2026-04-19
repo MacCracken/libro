@@ -76,8 +76,11 @@ jobs:
 
       - name: Benchmarks
         run: |
-          CYRIUS_DCE=1 cyrius build benches/libro.bcyr build/libro_bench
-          ./build/libro_bench
+          for f in benches/*.bcyr; do
+            name=$(basename "$f" .bcyr)
+            CYRIUS_DCE=1 cyrius build "$f" "build/$name"
+            "build/$name"
+          done
 
   security:
     name: Security Scan

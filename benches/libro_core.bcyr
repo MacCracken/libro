@@ -1,16 +1,15 @@
-# libro.bcyr — libro benchmarks
-# Chain operations, Merkle trees, signing, export, verification.
+# libro_core.bcyr — core crypto/chain/merkle/signing benchmarks.
+# Split from libro.bcyr in 1.2.0: single-file bench exceeded cc5 5.4.2's
+# 16384 fixup-table cap. Paired with libro_io.bcyr.
 #
-# Run: cyrius bench benches/libro.bcyr
-#   or: cyrius build benches/libro.bcyr build/libro_bench && ./build/libro_bench
+# Run: cyrius build benches/libro_core.bcyr build/libro_bench_core
+#      ./build/libro_bench_core
 
-# ================================================================
-# Standard library
-# ================================================================
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
+include "lib/fmt.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
 include "lib/freelist.cyr"
@@ -23,9 +22,6 @@ include "lib/bigint.cyr"
 include "lib/chrono.cyr"
 include "lib/sigil.cyr"
 
-# ================================================================
-# Libro modules
-# ================================================================
 include "src/error.cyr"
 include "src/hasher.cyr"
 include "src/entry.cyr"
@@ -34,20 +30,9 @@ include "src/query.cyr"
 include "src/retention.cyr"
 include "src/chain.cyr"
 include "src/store.cyr"
-include "src/export.cyr"
-include "src/review.cyr"
 include "src/merkle.cyr"
 include "src/signing.cyr"
-include "src/anchoring.cyr"
-include "src/timestamping.cyr"
 include "src/proof.cyr"
-include "src/kernel_audit.cyr"
-include "src/file_store.cyr"
-include "src/streaming.cyr"
-
-# ================================================================
-# Benchmark state (globals for fn-pointer callbacks)
-# ================================================================
 
 var _b_chain = 0;
 var _b_det = 0;
@@ -56,19 +41,13 @@ var _b_tree = 0;
 var _b_sk = 0;
 var _b_vk = 0;
 var _b_sig = 0;
-var _b_proof_ip = 0;
-var _b_dev_null = 0;
-
-# ================================================================
-# Benchmark functions
-# ================================================================
 
 fn bench_chain_append(ignored) {
     var c = chain_new();
     var i = 0;
     while (i < 100) {
         chain_append(c, SEV_INFO, str_from("bench-src"), str_from("bench-act"), _b_det);
-        i = i + 1;
+        i += 1;
     }
     return 0;
 }
@@ -125,21 +104,6 @@ fn bench_query_filter(ignored) {
     return 0;
 }
 
-fn bench_export_jsonl(ignored) {
-    export_jsonl(_b_entries, _b_dev_null);
-    return 0;
-}
-
-fn bench_export_csv(ignored) {
-    export_csv(_b_entries, _b_dev_null);
-    return 0;
-}
-
-fn bench_chain_review(ignored) {
-    chain_review(_b_chain);
-    return 0;
-}
-
 fn bench_sha256_64b(ignored) {
     var msg = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!!";
     var digest = alloc(32);
@@ -159,94 +123,25 @@ fn bench_hex_encode(ignored) {
     return 0;
 }
 
-var _b_anchor = 0;
-
-fn bench_anchor_create(ignored) {
-    anchor_from_tree(_b_tree, chain_head_hash(_b_chain));
-    return 0;
-}
-
-fn bench_anchor_verify(ignored) {
-    anchor_verify_integrity(_b_anchor);
-    return 0;
-}
-
-fn bench_stream_publish(ignored) {
-    var e = vec_get(_b_entries, 0);
-    stream_publish(_b_stream, e);
-    return 0;
-}
-
-var _b_stream = 0;
-var _b_store = 0;
-
-fn bench_streamed_verify(ignored) {
-    memstore_verify_streamed(_b_store, 25);
-    return 0;
-}
-
-fn bench_filestore_append(ignored) {
-    var e = vec_get(_b_entries, 0);
-    filestore_append(_b_fs, e);
-    return 0;
-}
-
-var _b_fs = 0;
-
-fn bench_filestore_load(ignored) {
-    filestore_load_all(_b_fs);
-    return 0;
-}
-
-# ================================================================
-# Main — setup and run
-# ================================================================
-
 fn main() {
     alloc_init();
     fl_init();
     ed25519_init();
 
-    println("=== libro benchmarks ===");
+    println("=== libro benchmarks — core ===");
 
-    # Setup: build a 100-entry chain for benchmarking
     _b_det = str_from("{}");
     _b_chain = chain_new();
     var i = 0;
     while (i < 100) {
         chain_append(_b_chain, SEV_INFO, str_from("bench-src"), str_from("bench-act"), _b_det);
-        i = i + 1;
+        i += 1;
     }
     _b_entries = chain_entries(_b_chain);
     _b_tree = merkle_build(_b_entries);
     _b_sk = signing_key_generate();
     _b_vk = verifying_key_from_signing(_b_sk);
     _b_sig = sign_entry(_b_sk, vec_get(_b_entries, 0));
-    _b_dev_null = file_open("/dev/null", 1, 0);
-
-    # Setup anchoring
-    _b_anchor = anchor_from_tree(_b_tree, chain_head_hash(_b_chain));
-
-    # Setup streaming
-    _b_stream = stream_new();
-    stream_subscribe(_b_stream, "libro/#");
-
-    # Setup memstore for streamed verify
-    _b_store = memstore_new();
-    i = 0;
-    while (i < 100) {
-        memstore_append(_b_store, vec_get(_b_entries, i));
-        i = i + 1;
-    }
-
-    # Setup filestore
-    sys_unlink("/tmp/libro_bench_fs.jsonl");
-    _b_fs = filestore_open(str_from("/tmp/libro_bench_fs.jsonl"));
-    i = 0;
-    while (i < 10) {
-        filestore_append(_b_fs, vec_get(_b_entries, i));
-        i = i + 1;
-    }
 
     var benches = vec_new();
 
@@ -294,51 +189,16 @@ fn main() {
     bench_run(b11, &bench_query_filter, 1000);
     vec_push(benches, b11);
 
-    var b12 = bench_new("export_jsonl_100");
-    bench_run(b12, &bench_export_jsonl, 100);
+    var b12 = bench_new("proof_unsigned_100");
+    bench_run(b12, &bench_proof_unsigned, 10);
     vec_push(benches, b12);
 
-    var b13 = bench_new("export_csv_100");
-    bench_run(b13, &bench_export_csv, 100);
+    var b13 = bench_new("hex_encode_32b");
+    bench_run(b13, &bench_hex_encode, 10000);
     vec_push(benches, b13);
-
-    var b14 = bench_new("chain_review_100");
-    bench_run(b14, &bench_chain_review, 100);
-    vec_push(benches, b14);
-
-    var b15 = bench_new("proof_unsigned_100");
-    bench_run(b15, &bench_proof_unsigned, 10);
-    vec_push(benches, b15);
-
-    var b16 = bench_new("hex_encode_32b");
-    bench_run(b16, &bench_hex_encode, 10000);
-    vec_push(benches, b16);
-
-    var b17 = bench_new("anchor_create");
-    bench_run(b17, &bench_anchor_create, 100);
-    vec_push(benches, b17);
-
-    var b18 = bench_new("anchor_verify");
-    bench_run(b18, &bench_anchor_verify, 100);
-    vec_push(benches, b18);
-
-    var b19 = bench_new("stream_publish");
-    bench_run(b19, &bench_stream_publish, 1000);
-    vec_push(benches, b19);
-
-    var b20 = bench_new("streamed_verify_100");
-    bench_run(b20, &bench_streamed_verify, 10);
-    vec_push(benches, b20);
-
-    var b21 = bench_new("filestore_load_10");
-    bench_run(b21, &bench_filestore_load, 100);
-    vec_push(benches, b21);
 
     println("");
     bench_report_all(benches);
-
-    file_close(_b_dev_null);
-    sys_unlink("/tmp/libro_bench_fs.jsonl");
     return 0;
 }
 
