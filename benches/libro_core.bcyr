@@ -82,12 +82,12 @@ fn bench_merkle_build(ignored) {
 }
 
 fn bench_merkle_proof(ignored) {
-    merkle_proof(_b_tree, 0);
+    merkle_inclusion_proof(_b_tree, 0);
     return 0;
 }
 
 fn bench_merkle_verify(ignored) {
-    var mp = merkle_proof(_b_tree, 0);
+    var mp = merkle_inclusion_proof(_b_tree, 0);
     merkle_verify_proof(mp);
     return 0;
 }

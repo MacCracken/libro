@@ -23,7 +23,7 @@ verify, bench history).
 
 ### Changed / cleanup
 - [x] **Toolchain bumped Cyrius 5.4.2 → 5.4.7** for the derive migration below.
-- [x] **`#derive(accessors)` across 13 of 15 struct modules** — ~95 hand-written `load64(x + N)` accessors replaced by declarative struct layouts; getters + `_set_` setters generated. Offset-typo class of bug eliminated (including the UUID-zeroing bug caught in the nested-JSON tests). Inline-UUID structs (`entry`, `anchor`, `receipt`) reserve the first 16 bytes with `_uuid_hi`/`_uuid_lo`; their `*_id(x)` pointer-returning accessors stay manual. `merkle.cyr`'s 4 structs kept on manual with a documented cc5 parse-state bug — deterministic, reproduces on both 5.4.2 and 5.4.7, only in `libro_core.bcyr`, flagged upstream.
+- [x] **`#derive(accessors)` across all 15 struct modules** — ~108 hand-written `load64(x + N)` accessors replaced by declarative struct layouts; getters + `_set_` setters generated. Offset-typo class of bug eliminated (including the UUID-zeroing bug caught in the nested-JSON tests). Inline-UUID structs (`entry`, `anchor`, `receipt`) reserve the first 16 bytes with `_uuid_hi`/`_uuid_lo`; their `*_id(x)` pointer-returning accessors stay manual. `merkle_proof(tree, idx)` renamed to `merkle_inclusion_proof(tree, idx)` — the struct name `merkle_proof` reserves the identifier as a type.
 - [x] FileStore read buffer right-sized via `lseek(fd, 0, SEEK_END)` — one allocation per load.
 - [x] `_filestore_cpath` cached on struct (16→24 bytes) — cstr derived once at `filestore_open`.
 - [x] `_der_parse_tlv` → multi-return `(total, value_ptr)` — kills `_der_value_ptr` / `_der_value_len` globals. `civil_from_days` stays on globals (5.4.2 multi-return caps at 2).

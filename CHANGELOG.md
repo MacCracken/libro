@@ -91,30 +91,27 @@ FileStore verification, bench history).
   multi-return caps at 2 values.
 - **Toolchain pinned to Cyrius 5.4.7** (was 5.4.2) for the
   `#derive(accessors)` migration below.
-- **`#derive(accessors)` adopted across 13 of 15 struct modules** —
-  95 hand-written `load64(x + N)` accessors replaced by declarative
-  struct layouts. Generated getters + `_set_` setters live where offset
-  typos used to. The UUID-zeroing bug caught during the nested-JSON
-  test work (where `store64(probe, 0)` zeroed only 8 of 16 UUID bytes)
-  is exactly the class this eliminates. Structs migrated: archive,
-  chain, memstore, _patrastore, filestore, retention, error, entry,
-  sth, pv, iproof, integrity, review, signing_key, verifying_key,
-  entry_sig, ts_request, ts_response, ts_attestation, anchor, receipt,
-  _sub, stream. Inline-UUID structs (entry, anchor, receipt) use
+- **`#derive(accessors)` adopted across all 15 struct modules** —
+  ~108 hand-written `load64(x + N)` accessors replaced by declarative
+  struct layouts. Generated getters + `_set_` setters live where
+  offset typos used to. The UUID-zeroing bug caught during the
+  nested-JSON test work (where `store64(probe, 0)` zeroed only 8 of
+  16 UUID bytes) is exactly the class this eliminates. Structs:
+  archive, chain, memstore, _patrastore, filestore, retention, error,
+  entry, proof_node, merkle_proof, consistency, merkle_tree, sth, pv,
+  iproof, integrity, review, signing_key, verifying_key, entry_sig,
+  ts_request, ts_response, ts_attestation, anchor, receipt, _sub,
+  stream. Inline-UUID structs (entry, anchor, receipt) use
   `_uuid_hi`/`_uuid_lo` placeholders to reserve the first 16 bytes;
   their `*_id(x)` accessors stay hand-written and return the pointer.
-  `merkle.cyr` (ProofNode, MerkleProof, ConsistencyProof, MerkleTree)
-  kept on manual accessors — `#derive` on those four triggers a cc5
-  parse-state bug in `libro_core.bcyr` (error at `<source>:52`,
-  reproducible on both 5.4.2 and 5.4.7). Deterministic, reproduced by
-  bisecting the include list. Every other bench target and main.cyr
-  accept the same derived forms without issue. Flagged for upstream.
-  The previous "ecosystem convention + hook-point flexibility"
-  rejection turned out to be shallow: libro had **zero** hook-point
-  uses across its ~108 accessors before this refactor, and grepping
-  agnosys/patra/sigil/ark confirms no adoption elsewhere only because
-  none of them have started; the agnosys CHANGELOG flags it as a
-  deliberate post-1.0 follow-up. Libro's 2.0 is that follow-up.
+  One name collision had to be resolved: the existing
+  `merkle_proof(tree, idx)` function was renamed to
+  `merkle_inclusion_proof(tree, idx)` because `struct merkle_proof`
+  reserves the identifier as a type. The previous
+  "ecosystem convention + hook-point flexibility" rejection was
+  shallow: libro had **zero** hook-point uses across its ~108
+  accessors before this refactor, and agnosys flags derive adoption
+  as a deliberate post-1.0 follow-up — libro's 2.0 is that follow-up.
 - **CI gates on `dist/libro.cyr` freshness** — PRs that edit `src/*`
   without regenerating `dist/libro.cyr` fail CI.
 - **Benches regrouped** — `benches/libro_core.bcyr` grew one bench
@@ -136,8 +133,8 @@ FileStore verification, bench history).
 ### Validation
 - **286 tests, 0 failed** (up from 255 in 1.2.0: +4 `append_batch`,
   +4 `proof_to_json`, +5 nested canonical JSON, +9 ChainIO round-trip,
-  +5 streamed FileStore verify). 13 modules on `#derive(accessors)`,
-  1 (merkle) on manual with documented compiler-bug note.
+  +5 streamed FileStore verify). All 15 struct modules on
+  `#derive(accessors)`.
 - **22 benches** across 2 binaries, all report. Bench history opt-in
   via `LIBRO_BENCH_HISTORY` env var.
 - Fuzz harness clean (no crashes).

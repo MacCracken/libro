@@ -1991,17 +1991,10 @@ enum MerkleSide {
 }
 
 # ================================================================
-# Merkle structs use manual accessors — `#derive(accessors)` triggers a
-# cc5 parse-state bug (5.4.2 and 5.4.7) in `libro_core.bcyr` only, even
-# though other bench targets + main.cyr accept the same derived forms.
-# Classic cross-module miscompilation; reproduced deterministically at
-# `<source>:52: expected '{', got '('` when merkle.cyr's derived structs
-# are live in the libro_core include graph. File upstream if/when this
-# is diagnosable. Every other struct in libro is on derive.
+# ProofNode — generated accessors: proof_node_hash, proof_node_side
 # ================================================================
-# ProofNode layout (16 bytes)
-#   +0  hash   Str pointer
-#   +8  side   i64 (SIDE_LEFT or SIDE_RIGHT)
+#derive(accessors)
+struct proof_node { hash; side; }
 
 fn proof_node_new(hash, side) {
     var pn = fl_alloc(16);
@@ -2010,14 +2003,14 @@ fn proof_node_new(hash, side) {
     return pn;
 }
 
-fn proof_node_hash(pn) { return load64(pn); }
-fn proof_node_side(pn) { return load64(pn + 8); }
-
-# MerkleProof layout (32 bytes)
-#   +0   index      i64
-#   +8   leaf_hash  Str pointer
-#   +16  path       vec of ProofNode pointers
-#   +24  root       Str pointer
+# ================================================================
+# MerkleProof — generated accessors:
+#   merkle_proof_index, merkle_proof_leaf, merkle_proof_path, merkle_proof_root
+# The struct name shadows what was the `merkle_proof(tree, idx)` function
+# in 1.x; that function is now `merkle_inclusion_proof`.
+# ================================================================
+#derive(accessors)
+struct merkle_proof { index; leaf; path; root; }
 
 fn merkle_proof_new(index, leaf_hash, path, root) {
     var mp = fl_alloc(32);
@@ -2028,17 +2021,13 @@ fn merkle_proof_new(index, leaf_hash, path, root) {
     return mp;
 }
 
-fn merkle_proof_index(mp) { return load64(mp); }
-fn merkle_proof_leaf(mp) { return load64(mp + 8); }
-fn merkle_proof_path(mp) { return load64(mp + 16); }
-fn merkle_proof_root(mp) { return load64(mp + 24); }
-
-# ConsistencyProof layout (40 bytes)
-#   +0   old_size   i64
-#   +8   new_size   i64
-#   +16  old_root   Str pointer
-#   +24  new_root   Str pointer
-#   +32  path       vec of Str
+# ================================================================
+# ConsistencyProof — generated accessors:
+#   consistency_old_size, consistency_new_size,
+#   consistency_old_root, consistency_new_root, consistency_path
+# ================================================================
+#derive(accessors)
+struct consistency { old_size; new_size; old_root; new_root; path; }
 
 fn consistency_proof_new(old_size, new_size, old_root, new_root, path) {
     var cp = fl_alloc(40);
@@ -2050,18 +2039,11 @@ fn consistency_proof_new(old_size, new_size, old_root, new_root, path) {
     return cp;
 }
 
-fn consistency_old_size(cp) { return load64(cp); }
-fn consistency_new_size(cp) { return load64(cp + 8); }
-fn consistency_old_root(cp) { return load64(cp + 16); }
-fn consistency_new_root(cp) { return load64(cp + 24); }
-fn consistency_path(cp) { return load64(cp + 32); }
-
-# MerkleTree layout (16 bytes)
-#   +0  nodes       vec of Str
-#   +8  leaf_count  i64
-
-fn merkle_tree_nodes(t) { return load64(t); }
-fn merkle_tree_leaf_count(t) { return load64(t + 8); }
+# ================================================================
+# MerkleTree — generated accessors: merkle_tree_nodes, merkle_tree_leaf_count
+# ================================================================
+#derive(accessors)
+struct merkle_tree { nodes; leaf_count; }
 
 fn merkle_tree_root(t) {
     var nodes = load64(t);
