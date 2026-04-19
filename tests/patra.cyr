@@ -1,0 +1,85 @@
+# patra.cyr — PatraStore isolated test suite
+# Run separately from main suite. Some test patterns trigger a layout-dependent
+# codegen bug (SIGSEGV) when combined — adding/removing functions shifts binary
+# layout past a threshold that causes a specific jump to misfire.
+# Core coverage here; full suite pending codegen investigation.
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/freelist.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
+include "lib/sakshi.cyr"
+include "lib/chrono.cyr"
+include "lib/bigint.cyr"
+include "lib/json.cyr"
+include "lib/sigil.cyr"
+include "lib/patra.cyr"
+
+include "src/error.cyr"
+include "src/hasher.cyr"
+include "src/entry.cyr"
+include "src/verify.cyr"
+include "src/query.cyr"
+include "src/retention.cyr"
+include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
+include "src/review.cyr"
+include "src/merkle.cyr"
+include "src/signing.cyr"
+include "src/anchoring.cyr"
+include "src/timestamping.cyr"
+include "src/proof.cyr"
+include "src/kernel_audit.cyr"
+include "src/file_store.cyr"
+include "src/patra_store.cyr"
+include "src/streaming.cyr"
+
+fn test_ps_open() {
+    sys_unlink("/tmp/libro_test_ps.patra");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps.patra"));
+    assert(ps != 0, "ps open");
+    assert(patrastore_is_empty(ps) == 1, "ps empty");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps.patra");
+}
+
+fn test_ps_append() {
+    sys_unlink("/tmp/libro_test_ps2.patra");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps2.patra"));
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"), str_from("login"), det, str_from(""));
+    patrastore_append(ps, e1);
+    assert(patrastore_len(ps) == 1, "ps len 1");
+    var e2 = entry_new(SEV_WARNING, str_from("audit"), str_from("read"), det, entry_hash(e1));
+    patrastore_append(ps, e2);
+    assert(patrastore_len(ps) == 2, "ps len 2");
+    var loaded = patrastore_load_all(ps);
+    assert(vec_len(loaded) == 2, "ps loaded 2");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps2.patra");
+}
+
+fn main() {
+    alloc_init();
+    fl_init();
+    ed25519_init();
+    patra_init();
+
+    test_group("PatraStore");
+    test_ps_open();
+    test_ps_append();
+
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

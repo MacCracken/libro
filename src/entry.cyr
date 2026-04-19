@@ -68,9 +68,20 @@ fn entry_hash_algorithm(e) { return load64(e + 80); }
 # ================================================================
 
 fn uuid_v4(buf) {
+    # Fail-closed on /dev/urandom unavailability: a predictable UUID would
+    # make the libro audit chain forgeable. Upstream libro 1.0.3 silently
+    # ignored short reads; t-ron's vendored copy aborts instead.
     var fd = file_open("/dev/urandom", 0, 0);
-    file_read(fd, buf, 16);
+    if (fd < 0) {
+        syscall(1, 2, "libro: /dev/urandom unavailable (fail-closed)\n", 46);
+        syscall(60, 74);   # EX_IOERR
+    }
+    var got = file_read(fd, buf, 16);
     file_close(fd);
+    if (got != 16) {
+        syscall(1, 2, "libro: short read from /dev/urandom (fail-closed)\n", 50);
+        syscall(60, 74);
+    }
     # Version 4: byte 6 high nibble = 0100
     var b6 = load8(buf + 6) & 0xFF;
     store8(buf + 6, (b6 & 0x0F) | 0x40);
@@ -293,9 +304,11 @@ fn _cjh_hash_object(json_str) {
             hasher_update(_cjh_hasher, "\"", 1);
             hasher_update(_cjh_hasher, str_data(k), str_len(k));
             hasher_update(_cjh_hasher, "\":", 2);
-            # Find value for this key and emit as quoted string
-            var ckey = _entry_to_cstr(k);
-            var v = json_get(_cjh_pairs, ckey);
+            # Find value for this key and emit as quoted string.
+            # Upstream libro 1.0.3 passed a cstring where json_get wants a
+            # Str, causing SEGV on any non-empty details object. k is
+            # already a Str so we pass it directly.
+            var v = json_get(_cjh_pairs, k);
             hasher_update(_cjh_hasher, "\"", 1);
             hasher_update(_cjh_hasher, str_data(v), str_len(v));
             hasher_update(_cjh_hasher, "\"", 1);

@@ -1,7 +1,11 @@
+[package]
 name = "libro"
 version = "1.0.3"
+description = "libro — cryptographic audit chain"
 license = "GPL-3.0-only"
-cyrius-version = "3.4.20"
+language = "cyrius"
+cyrius = "4.5.0"
+
+[build]
 entry = "src/main.cyr"
 output = "libro"
-description = "libro — cryptographic audit chain"
