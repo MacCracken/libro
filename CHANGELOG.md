@@ -5,7 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0-dev] - unreleased
+## [2.0.1-dev] - unreleased
+
+Follow-up cycle after the 2.0.0 cut. Pickups from the P(-1) hardening
+pass audit (`docs/audit/2026-04-19-audit-2.0.md` — findings fixed in
+2.0.0; recommendations filed here):
+
+### Planned
+- CI dist-freshness gate upgrade — additionally assert that every
+  `include "src/*.cyr"` in `src/main.cyr` has a matching entry in
+  `cyrius.cyml` `[lib] modules`. Prevents Finding-1-class drift
+  (manifest out of sync with main, distlib silently shipping a
+  stripped `dist/libro.cyr`).
+- Raw-offset guard — lightweight lint/test asserting no
+  `load64(c + N)` / `store64(c + N, …)` on `struct chain` outside
+  `src/chain.cyr`. Prevents Finding-2-class accessor-sweep regressions
+  (and extends naturally to the other `#derive(accessors)` structs).
+- `docs/guides/integration.md` — add a `chain_export` / `chain_import`
+  snippet so the round-trip pattern has a consumer-visible example.
+
+## [2.0.0] - 2026-04-19
 
 Major-version sprint and the last stop for all backlog items before 1.x
 is frozen. Opens up breaking cleanups shelved in the 1.x line, ports
@@ -634,6 +653,8 @@ previously-gated tests.
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
+[2.0.1-dev]: https://github.com/MacCracken/libro/compare/2.0.0...HEAD
+[2.0.0]: https://github.com/MacCracken/libro/compare/1.2.0...2.0.0
 [Unreleased]: https://github.com/MacCracken/libro/compare/v0.91.0...HEAD
 [0.91.0]: https://github.com/MacCracken/libro/compare/v0.90.0...v0.91.0
 [0.90.0]: https://github.com/MacCracken/libro/compare/v0.25.3...v0.90.0
