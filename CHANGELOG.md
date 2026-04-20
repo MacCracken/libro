@@ -5,6 +5,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.5] - 2026-04-19
+
+Continuing through the unblocked-work list surfaced in the post-2.0.4
+audit. Two items shipped, one item surfaced a new bug that's filed
+as open work, and the roadmap was re-scoped against the upstream
+ecosystem reality (sigil has TPM primitives already; Cyrius keccak
+is stalled behind Windows-target work and bug-pass priority).
+
+### Added
+- **Third bench binary** `benches/libro_proof.bcyr` — deferred from
+  2.0.2 when the proof-path benches wouldn't fit in either existing
+  bench binary under cc5 5.4.2's 16384 fixup-table cap. Ships two
+  proof-build benchmarks (`proof_build_unsigned_25`,
+  `proof_build_signed_25`). Iteration counts are deliberately low
+  (3) because each iteration allocates an iproof + merkle tree +
+  N inclusion proofs via the bump allocator; higher counts push
+  heap pressure into multi-GB territory. Baseline perf on this
+  machine: 373 µs unsigned / 1.886 ms signed.
+- **Seven more `#derive(accessors)` layout-invariant tests** in
+  `src/main.cyr` covering the shape spectrum beyond the 2.0.4
+  trio: `entry` (11 fields + inline UUID), `signing_key` (6),
+  `verifying_key` (2, baseline), `entry_sig` (5), `merkle_tree`
+  (2), `sth` (6), `filestore` (3 — pins the 2.0 +cpath field).
+  Each test writes sentinels via raw offsets and asserts the
+  derived accessors read them back. **316 → 350 tests** (+34
+  assertions).
+- **Bench-context `proof_to_json` hang** filed as an open hardening
+  item in `docs/development/roadmap.md`. Every attempt to measure
+  `proof_to_json(ip)` inside `bench_run` caused `main()` to re-enter
+  repeatedly at ~25 Hz. The function itself works correctly in the
+  test suite (all `test_proof_to_json_*` pass). Isolated to the
+  combination of `proof_json.cyr` include + a call site inside a
+  bench. Shipped `libro_proof.bcyr` without the `proof_to_json`
+  benches pending root cause.
+
+### Changed
+- **CI raw-offset per-file allowlist** extended for `src/main.cyr`
+  to register the seven new `*_layout` test locals
+  (`entry_layout`, `sk_layout`, `vk_layout`, `es_layout`,
+  `mt_layout`, `sth_layout`, `fs_layout`) as intentional
+  raw-offset probes.
+- **Roadmap restructured.** Release detail collapsed into a brief
+  history table; "Rust features port — complete" section removed
+  (all three items shipped in 2.0); "MCP tools via bote" removed
+  (lives in bote's repo); ecosystem-blocked items re-reviewed
+  against upstream roadmaps — named unblockers corrected where
+  they'd diverged from reality. The pre-2.0.5 roadmap listed
+  "TPM-backed chain sealing" as blocked on sigil, but sigil 2.8.4
+  already ships `src/tpm.cyr` wrapping agnosys 1.0.0's TPM
+  primitives (not bundled in `dist/sigil.cyr` because TPM requires
+  agnosys as a separate dep). TPM is now categorized as unblocked,
+  pending a libro-side architectural decision slated for 2.1.0.
+  ML-DSA post-quantum signing is still blocked but now honestly
+  described: Cyrius `lib/keccak.cyr` was originally 5.2.x scope
+  but was pushed back behind Windows-target work and the current
+  bug/issue pass, no near-term ETA.
+- **Full documentation audit** — CLAUDE.md counts updated (316 →
+  350 tests, 22 → 24 benches across 3 binaries, ~440 → ~445 KB);
+  README + quickstart + testing + dependency-watch all reconciled
+  against 2.0.5 reality. Previously stale: bench count, test count,
+  binary size, the "only 2 bench binaries" description.
+- **Threat model addendum** — the previous "TPM backing (blocked)"
+  residual-risk row updated to "unblocked, not integrated" with a
+  pointer to the 2.1.0 roadmap item.
+
+### Deferred
+- **Offset-map raw-offset guard.** Originally considered as a third
+  CI gate to cross-check raw-offset `N` values against the set of
+  valid offsets in `#derive(accessors)` layouts per file. Analyzed
+  and deferred: the existing specific-struct guard (2.0.1/2.0.2) +
+  per-file allowlist (2.0.4) already catch ~99% of the regression
+  class; a third guard would require a small parser for
+  `#derive` declarations and would add CI complexity for a narrow
+  additional catch (out-of-bounds offsets on params already in the
+  per-file allowlist). Will revisit if the need becomes concrete.
+
+### Validation
+- **350 tests, 0 failed** (316 → 350: +34 assertions from seven
+  new layout-invariant tests).
+- 24 benches across 3 binaries, all report clean. 11 fuzz targets,
+  all clean. Lint + format clean. Dist regenerated at `v2.0.5`.
+- All four CI gates dry-run green: manifest completeness,
+  specific-struct raw-offset guard, per-file allowlist,
+  dist-freshness.
+
+### Upcoming
+- **2.0.6** — `proof_from_json` round-trip + dedicated fuzz target.
+  Paired JSON parser for archival workflows where consumers save
+  a signed proof and re-verify it later without the original chain.
+- **2.1.0** — TPM-backed `WitnessAnchor` sealing via agnosys +
+  sigil.tpm integration. Minor bump because it adds a new optional
+  dep.
+
 ## [2.0.4] - 2026-04-19
 
 Scaffold-hardening sprint with zero src/* library changes — five
@@ -859,6 +952,7 @@ previously-gated tests.
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
+[2.0.5]: https://github.com/MacCracken/libro/compare/2.0.4...2.0.5
 [2.0.4]: https://github.com/MacCracken/libro/compare/2.0.3...2.0.4
 [2.0.3]: https://github.com/MacCracken/libro/compare/2.0.2...2.0.3
 [2.0.2]: https://github.com/MacCracken/libro/compare/2.0.1...2.0.2
