@@ -28,12 +28,34 @@ CHANGELOG for archaeological interest.
 These are hardening-adjacent threads that could be picked up without
 any upstream dependency. Listed in rough order of leverage.
 
-- [ ] **Third bench binary `benches/libro_proof.bcyr`.** Deferred in
-  2.0.2 when `proof_to_json` wouldn't fit in either existing bench
-  binary under cc5's 16384 fixup-table cap. A minimal third binary
-  (just `error` / `hasher` / `entry` / `verify` / `chain` / `merkle` /
-  `signing` / `proof` / `proof_json`) would unblock perf tracking for
-  the proof-building and JSON-emission paths.
+- [ ] **TPM-backed `WitnessAnchor` sealing (agnosys / sigil-tpm
+  integration).** Sigil 2.8.4 already ships `src/tpm.cyr` as a thin
+  wrapper over `agnosys 1.0.0`'s TPM primitives
+  (`tpm_available`, `tpm_seal_data`, `tpm_unseal_data`, `tpm_random`).
+  It's not bundled into `dist/sigil.cyr` because the dist is
+  self-contained and TPM requires pulling agnosys as a separate
+  dep. The libro-side design question is whether to (a) ship an
+  opt-in `src/tpm_anchor.cyr` that pulls agnosys + sigil.tpm and
+  wraps TPM-sealing into `WitnessAnchor`, or (b) stay slim and let
+  consumers compose libro + sigil.tpm + agnosys at their own
+  level. The integrity-proof structure (signed tree head +
+  `WitnessAnchor`) is already factored to accept a hardware
+  attestation as an additional proof field, so option (a) is
+  mostly a new module + CI-dep-pin update. Previously listed as
+  ecosystem-blocked — that was wrong; sigil has the primitives.
+- [ ] **Investigate bench-context `proof_to_json` control-flow hijack.**
+  Calling `proof_to_json(ip)` inside `bench_run` causes `main()` to
+  re-enter repeatedly (observed ~25 Hz — banner prints thousands of
+  times, no benchmark ever completes). Ruled out: the function
+  itself (tests pass), the include of `proof_json.cyr` alone (builds
+  clean with DCE dropping the unused function), the underlying
+  proof-build path (`proof_build_unsigned` / `_signed` benches in
+  `libro_proof.bcyr` run fine). Triggered specifically by combining
+  `proof_json.cyr` include + a call site from inside a bench. Could
+  be stack corruption in the JSON string builder, a DCE interaction
+  stripping a transitive helper, or a Cyrius codegen issue with the
+  bench-harness call pattern. Real bug — the `proof_to_json` bench
+  was dropped from `libro_proof.bcyr` pending root cause.
 - [ ] **Extend the raw-offset guard to the remaining ambiguous-param
   structs.** 2.0.4's per-file allowlist closes the "any new
   raw-offset param name" regression class; 2.0.1/2.0.2's specific-
@@ -61,27 +83,33 @@ any upstream dependency. Listed in rough order of leverage.
 ## Open — ecosystem-blocked
 
 These items are on the roadmap for visibility but blocked on
-upstream capability. Each has a named unblocker.
+upstream capability. Each has a named unblocker chain that's been
+verified against the upstream's own roadmap — if sigil (or another
+named dep) doesn't have it scheduled, it doesn't belong here.
 
-- [ ] **Post-quantum signatures (ML-DSA / CRYSTALS-Dilithium).**
-  Unblocks when: sigil exposes ML-DSA primitives. Libro's
-  `EntrySignature.algorithm` field + `key_id` already support
-  algorithm dispatch, so the signing-side migration is local.
-- [ ] **Hybrid signing (Ed25519 + PQ).** Unblocks with the above.
-  Would produce entries with two signatures for the transition
-  period.
-- [ ] **Remote attestation (TPM-backed chain sealing).** Unblocks
-  when: sigil or a sibling crate exposes TPM attestation primitives
-  in Cyrius. Libro's integrity-proof structure (signed tree head +
-  WitnessAnchor) is already factored to accept a hardware attestation
-  as an additional proof field.
-- [ ] **Multi-node chain sync (federated audit).** Unblocks when: an
-  AGNOS-level federation protocol lands. Libro would layer a second
+- [ ] **Post-quantum signatures (ML-DSA-65, NIST FIPS 204).**
+  Unblocker chain: Cyrius stdlib → sigil 3.0 → libro. Cyrius needs
+  `lib/keccak.cyr` (SHAKE-128/256 for ML-DSA's XOF step). Sigil
+  2.8.4 already stubs the enum values (`SIG_ALG_ML_DSA_65`,
+  `SIG_ALG_HYBRID`) ready for the crypto to land. **Status:** stalled
+  upstream — keccak was originally slated for Cyrius 5.2.x but has
+  been pushed back behind Windows-target support work and an
+  ongoing bug/issue pass. No near-term ETA. Libro's
+  `EntrySignature.algorithm` + `key_id` already support algorithm
+  dispatch, so the libro-side migration remains a one-sprint job
+  once sigil ships `src/mldsa.cyr`.
+- [ ] **Hybrid signing (Ed25519 + ML-DSA-65).** Same unblocker chain
+  as above. Sigil has this explicitly scheduled for 3.0 as a
+  `TrustPolicy` with `required_signature_algorithms` — libro would
+  produce entries with two signatures during the transition period,
+  matching sigil's `SigilVerifier` hybrid policy.
+- [ ] **Multi-node chain sync (federated audit).** Unblocker: an
+  AGNOS-level federation protocol. Libro would layer a second
   meta-chain over the existing `WitnessAnchor` primitive for
   cross-node consistency.
-- [ ] **Conflict resolution for concurrent appends.** Unblocks with
-  multi-node sync. Currently libro is single-writer; FileStore's
-  `flock` and PatraStore's patra-level locking are sufficient for
+- [ ] **Conflict resolution for concurrent appends.** Follows
+  multi-node sync. Currently libro is single-writer per chain;
+  FileStore's `flock` and PatraStore's patra-level locking handle
   single-node multi-process.
 
 ## Out of libro scope (tracked elsewhere)
@@ -93,14 +121,14 @@ upstream capability. Each has a named unblocker.
 
 ## Future (speculative)
 
-Items without a clear owner or timeline. Drop or promote to "Open"
-if they reach actionable state.
+Items without a clear owner or scheduled unblocker. Drop or
+promote to "Open" if they reach actionable state.
 
-- Structured-audit query DSL (current `QueryFilter` is composable but
+- Structured-audit query DSL. `QueryFilter` is composable but
   code-only; a parseable string form could enable CLI tools or
-  config-driven retention policies).
-- Column-family-style secondary indexes in PatraStore (currently one
-  index per query shape; a generic column-family model would support
-  arbitrary consumer-defined indexes).
-- An explicit compaction tool that drives `chain_apply_retention` +
+  config-driven retention policies.
+- Column-family-style secondary indexes in PatraStore. Currently
+  one index per query shape; a generic column-family model would
+  support arbitrary consumer-defined indexes.
+- Explicit compaction tool driving `chain_apply_retention` +
   `chain_export` together for offline archival.

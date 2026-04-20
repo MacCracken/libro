@@ -3,18 +3,21 @@
 ## Running the Full Suite
 
 ```bash
-# Build and run all tests (316 assertions expected, 0 failures)
+# Build and run all tests (350 assertions expected, 0 failures)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro && ./build/libro
 
 # Fuzz harness (11 targets, no-crash asserts, ~10 s)
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && \
     timeout 30 ./build/fuzz_libro
 
-# Benchmarks (two binaries — cc5 5.4.2 fixup-table cap forced the 1.2.0 split)
-CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core && \
+# Benchmarks (three binaries — cc5 5.4.2 fixup-table cap forced the core/io
+# split in 1.2.0; libro_proof.bcyr added later for proof-path coverage)
+CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && \
     ./build/libro_bench_core
-CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr   build/libro_bench_io   && \
+CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && \
     ./build/libro_bench_io
+CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && \
+    ./build/libro_bench_proof
 
 # Bench history (opt-in: LIBRO_BENCH_HISTORY=<path>, LIBRO_BENCH_TAG=<label>)
 LIBRO_BENCH_HISTORY=/tmp/libro_bench.csv LIBRO_BENCH_TAG=dev \
@@ -57,15 +60,17 @@ The group list, in declaration order:
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 316 assertions across these groups.** Count moves with every
+**Total: 350 assertions across these groups.** Count moves with every
 sprint; the source of truth is the output of `./build/libro`, not this
 document.
 
 ## Benchmarks
 
-Two bench binaries ship 22 benchmarks total. The split exists because
-cc5 5.4.2's 16384 fixup-table cap couldn't hold a single combined binary
-after the 2.0 canonical-JSON walker landed.
+Three bench binaries ship 24 benchmarks total. The original core/io
+split landed in 1.2.0 because cc5 5.4.2's 16384 fixup-table cap
+couldn't hold a single combined binary after the 2.0 canonical-JSON
+walker landed. A third binary (`libro_proof.bcyr`) was added for
+proof-build benches.
 
 ### libro_core (14 benchmarks)
 
@@ -85,6 +90,30 @@ after the 2.0 canonical-JSON walker landed.
 | `query_filter_100` | 1000 | `chain_query` over 100 entries |
 | `proof_unsigned_100` | 10 | unsigned integrity-proof build |
 | `hex_encode_32b` | 10000 | 32-byte hex encode |
+
+### libro_proof (2 benchmarks)
+
+| Benchmark | Iterations | Target |
+|-----------|------------|--------|
+| `proof_build_unsigned_25` | 3 | `proof_build_unsigned` + `proof_with_all_inclusions` over 25 entries |
+| `proof_build_signed_25`   | 3 | signed variant (Ed25519 tree head) |
+
+Iteration counts are deliberately low — each proof-build iteration
+allocates an iproof + merkle tree + N inclusion proofs via the bump
+allocator. At 100 entries × higher iterations the bump allocator
+grows without bound (there's no `alloc_reset` mid-bench), so heap
+pressure pushes into multi-GB territory. 25 entries × 3 iters keeps
+the run bounded while still exercising the O(N log N) path.
+
+**`proof_to_json` benches are intentionally not shipped here.** Every
+attempt to measure `proof_to_json(ip)` inside `bench_run` triggers
+what looks like stack corruption or a similar control-flow hijack:
+`main()` re-enters repeatedly at ~25 Hz, emitting the banner over
+and over with no real progress. The same call works correctly in
+the test suite (`test_proof_to_json_*` all pass, 350 tests green),
+so the bug is bench-context-specific to `proof_json.cyr` rather
+than `proof_to_json` itself. Filed as an open hardening item in
+`docs/development/roadmap.md`.
 
 ### libro_io (8 benchmarks)
 

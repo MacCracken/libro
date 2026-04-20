@@ -57,8 +57,8 @@ Consumers:
 
 ## Coverage
 
-- **316 inline tests** across unit / integration / layout-invariant / gap coverage
-- **22 benchmarks** across two bench binaries (`libro_core` 14 + `libro_io` 8)
+- **350 inline tests** across unit / integration / layout-invariant / gap coverage
+- **24 benchmarks** across three bench binaries (`libro_core` 14 + `libro_io` 8 + `libro_proof` 2)
 - **11 fuzz targets** in a single harness (sha256, hex decode, DER, entry create, chain ops, sig verify, JSON parse, topic match, chain_import, filestore_verify_streamed, canonical_json_hash)
 - **CI history** — each run emits bench rows to `bench-history.csv` tagged with commit SHA, retained as a workflow artifact
 
@@ -71,12 +71,13 @@ cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests (316 tests, 0 failures expected)
+# Run tests (350 tests, 0 failures expected)
 ./build/libro
 
 # Run benchmarks
-CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
-CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
+CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./build/libro_bench_core
+CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
+CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
 
 # Run fuzz (11 targets, no-crash assertions, ~10 s)
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 30 ./build/fuzz_libro
@@ -144,10 +145,11 @@ assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 ## Project structure
 
 ```
-src/main.cyr            Entry point + 316 inline tests
-src/*.cyr               21 library modules (see above; list lives in cyrius.cyml [lib] modules)
-benches/libro_core.bcyr 14 core benchmarks (crypto / chain / merkle / sign)
-benches/libro_io.bcyr   8 i/o benchmarks (export / review / anchor / stream / filestore)
+src/main.cyr             Entry point + 350 inline tests
+src/*.cyr                21 library modules (see above; list lives in cyrius.cyml [lib] modules)
+benches/libro_core.bcyr  14 core benchmarks (crypto / chain / merkle / sign)
+benches/libro_io.bcyr     8 i/o benchmarks (export / review / anchor / stream / filestore)
+benches/libro_proof.bcyr  2 proof-build benchmarks (unsigned + signed)
 benches/bench_history.cyr Opt-in CSV history emitter (LIBRO_BENCH_HISTORY env var)
 fuzz/fuzz_libro.fcyr    1 harness, 11 fuzz targets
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib, committed)

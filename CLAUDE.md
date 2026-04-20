@@ -26,10 +26,10 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 ## Current State
 
 - **Source**: 21 library modules under `src/` (list lives in `cyrius.cyml` `[lib] modules`) plus `src/main.cyr`; stdlib + sigil + patra resolved via `cyrius deps`
-- **Tests**: 316 assertions (all pass)
-- **Benchmarks**: 22 across two binaries (`libro_core.bcyr` 14 + `libro_io.bcyr` 8 — split because cc5's 16384 fixup-table cap)
+- **Benchmarks**: 24 across three binaries (`libro_core.bcyr` 14 + `libro_io.bcyr` 8 + `libro_proof.bcyr` 2 — split because cc5's 16384 fixup-table cap)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 11 targets)
-- **Binary**: ~440 KB (DCE-built)
+- **Tests**: 350 assertions (all pass)
+- **Binary**: ~444 KB (DCE-built)
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~4.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -46,12 +46,15 @@ No external deps beyond the Cyrius toolchain.
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "316 passed, 0 failed"
+# Run tests — expect "350 passed, 0 failed"
 ./build/libro
 
-# Benchmarks (two binaries — cc5 fixup table limit forced the split in 1.2.0)
-CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
-CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
+# Benchmarks (three binaries — cc5 fixup table limit forced the core/io split
+# in 1.2.0; libro_proof.bcyr was added to host proof-path benches without
+# pushing the others over the cap)
+CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./build/libro_bench_core
+CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
+CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
 
 # Fuzz
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 10 ./build/fuzz_libro

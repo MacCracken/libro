@@ -89,10 +89,11 @@ jobs:
           ALLOW[src/export.cyr]="sb"
           ALLOW[src/file_store.cyr]="e s"
           ALLOW[src/hasher.cyr]="h _hf_lebuf"
-          # main.cyr: test locals. chain_layout/iproof_layout/anchor_layout
-          # are intentional raw-offset probes in the #derive(accessors)
-          # layout-invariant tests (test_layout_* — see ADR 0005).
-          ALLOW[src/main.cyr]="a c e e1 ip probe1 probe2 chain_layout iproof_layout anchor_layout"
+          # main.cyr: test locals. *_layout names are intentional
+          # raw-offset probes in the #derive(accessors) layout-invariant
+          # tests (test_layout_* — see ADR 0005). Added per-struct as
+          # the test battery expanded in 2.0.4+.
+          ALLOW[src/main.cyr]="a c e e1 ip probe1 probe2 chain_layout iproof_layout anchor_layout entry_layout sk_layout vk_layout es_layout mt_layout sth_layout fs_layout"
           ALLOW[src/merkle.cyr]="cp mp pn t tree"
           ALLOW[src/patra_store.cyr]="e s"
           ALLOW[src/proof.cyr]="ip p pv s"

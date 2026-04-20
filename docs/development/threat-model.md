@@ -172,8 +172,9 @@ call `zeroize` in a `defer`-equivalent or on shutdown.
 
 **Residual:** libro does not memlock the key pages; the OS may
 swap them. libro does not defend against pre-zeroize memory reads.
-Hardware-backed key storage (TPM / HSM) is on the roadmap but
-ecosystem-blocked. See `docs/development/roadmap.md`.
+Hardware-backed key storage (TPM sealing via agnosys + sigil.tpm)
+is unblocked but not yet integrated — see
+`docs/development/roadmap.md` "Open — unblocked".
 
 ### T7 — Side-channel leakage (OUT OF SCOPE for 2.x)
 
@@ -184,8 +185,8 @@ is constant-time by construction (RFC 8032). SHA-256 is generally
 considered side-channel resistant under software implementation.
 
 **Residual:** All software side channels below the crypto-primitive
-level. Hardware-primary deployments (TPM-backed chain sealing) are
-the future mitigation — ecosystem-blocked.
+level. Hardware-backed deployments (TPM sealing via agnosys +
+sigil.tpm) are unblocked but not yet integrated — see the roadmap.
 
 ### T8 — Chain rollback / replay (CONSUMER-MITIGATED)
 
@@ -264,7 +265,7 @@ anything.
 | Class                              | Status          | Next step                 |
 |------------------------------------|-----------------|---------------------------|
 | Post-compromise key use            | Mitigated       | Rotation discipline       |
-| Pre-zeroize memory read            | Unmitigated     | TPM backing (blocked)     |
+| Pre-zeroize memory read            | Unmitigated     | TPM backing (unblocked, not integrated) |
 | Cache / power side channels        | Out of scope    | Hardware-backed (blocked) |
 | Multi-node consistency             | Not implemented | Future (blocked)          |
 | PQ resistance                      | Not implemented | ML-DSA via sigil (blocked)|

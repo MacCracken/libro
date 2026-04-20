@@ -46,7 +46,7 @@ Fuzz/bench binaries additionally pull `bench.cyr` (nanosecond benchmarking).
 - CI reads the pin from `cyrius.cyml`, so bumping the field + running
   `cyriusup install` locally is enough to change the toolchain.
 - Every toolchain bump needs a full test + fuzz + bench pass (316
-  tests, 11 fuzz targets, 22 benches) because codegen changes can
+  tests, 11 fuzz targets, 26 benches) because codegen changes can
   surface subtle behavioral deltas. The 2.0 sprint bumped 5.4.2 →
   5.4.7 specifically for `#derive(accessors)` stability.
 - Watch the **fixup-table cap** — cc5 5.4.2 raised it to 16384 (from
@@ -101,13 +101,22 @@ Fuzz/bench binaries additionally pull `bench.cyr` (nanosecond benchmarking).
 Items the roadmap tracks as blocked on upstream capability (from
 `docs/development/roadmap.md`):
 
-- **Post-quantum signatures (ML-DSA)** — blocked on sigil exposing
-  CRYSTALS-Dilithium. Will ship as a second signing algorithm alongside
-  Ed25519; `key_id` + `algorithm` fields on `EntrySignature` already
-  support algorithm dispatch.
-- **Hybrid signing (Ed25519 + PQ)** — blocked on same.
-- **TPM-backed chain sealing** — blocked on sigil (or a sibling crate)
-  exposing TPM attestation primitives.
+- **Post-quantum signatures (ML-DSA-65, FIPS 204)** — unblocker chain
+  is Cyrius stdlib `lib/keccak.cyr` (SHAKE-128/256) → sigil 3.0
+  `src/mldsa.cyr` → libro. Sigil 2.8.4 already defines
+  `SIG_ALG_ML_DSA_65` / `SIG_ALG_HYBRID` enum placeholders. Cyrius
+  keccak was originally slated for 5.2.x but has been pushed back
+  behind Windows-target support and an ongoing bug/issue pass; no
+  near-term ETA.
+- **Hybrid signing (Ed25519 + ML-DSA-65)** — same chain as above;
+  sigil has a `TrustPolicy.required_signature_algorithms` shape
+  staged for 3.0.
+- **TPM-backed chain sealing** — **unblocked** as of sigil 2.8.4 +
+  agnosys 1.0.0. Sigil ships `src/tpm.cyr` (thin wrapper over
+  agnosys TPM primitives); agnosys ships the tpm2-tools backend.
+  Remaining work is a libro-side design decision: opt-in
+  `src/tpm_anchor.cyr` module vs. consumer-side composition. See
+  `docs/development/roadmap.md` "Open — unblocked".
 - **Multi-node chain sync** — blocked on an AGNOS-level federation
-  protocol; libro would gain a second layer of meta-chain over the
+  protocol; libro would gain a second meta-chain layer over the
   existing WitnessAnchor primitive.

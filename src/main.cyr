@@ -1122,6 +1122,113 @@ fn test_layout_iproof() {
     assert(iproof_tree(iproof_layout)        == 0x6666666666666666, "iproof.tree at +40");
 }
 
+fn test_layout_entry() {
+    # 11 fields × 8 bytes = 88 bytes; first 16 bytes are inline-UUID
+    # placeholders (_uuid_hi / _uuid_lo). entry_id returns the head
+    # pointer, same pattern as anchor.
+    var entry_layout = fl_alloc(88);
+    store64(entry_layout,      0x0101010101010101);    # _uuid_hi
+    store64(entry_layout + 8,  0x0202020202020202);    # _uuid_lo
+    store64(entry_layout + 16, 0x1010101010101010);    # timestamp
+    store64(entry_layout + 24, 0x1818181818181818);    # severity
+    store64(entry_layout + 32, 0x2020202020202020);    # source
+    store64(entry_layout + 40, 0x2828282828282828);    # action
+    store64(entry_layout + 48, 0x3030303030303030);    # details
+    store64(entry_layout + 56, 0x3838383838383838);    # agent_id
+    store64(entry_layout + 64, 0x4040404040404040);    # prev_hash
+    store64(entry_layout + 72, 0x4848484848484848);    # hash
+    store64(entry_layout + 80, 0x5050505050505050);    # hash_algorithm
+    assert(entry_timestamp(entry_layout)      == 0x1010101010101010, "entry.timestamp at +16");
+    assert(entry_severity(entry_layout)       == 0x1818181818181818, "entry.severity at +24");
+    assert(entry_source(entry_layout)         == 0x2020202020202020, "entry.source at +32");
+    assert(entry_action(entry_layout)         == 0x2828282828282828, "entry.action at +40");
+    assert(entry_details(entry_layout)        == 0x3030303030303030, "entry.details at +48");
+    assert(entry_agent_id(entry_layout)       == 0x3838383838383838, "entry.agent_id at +56");
+    assert(entry_prev_hash(entry_layout)      == 0x4040404040404040, "entry.prev_hash at +64");
+    assert(entry_hash(entry_layout)           == 0x4848484848484848, "entry.hash at +72");
+    assert(entry_hash_algorithm(entry_layout) == 0x5050505050505050, "entry.hash_algorithm at +80");
+    assert(entry_id(entry_layout) == entry_layout, "entry_id returns head pointer");
+}
+
+fn test_layout_signing_key() {
+    # 6 fields × 8 bytes = 48 bytes.
+    var sk_layout = fl_alloc(48);
+    store64(sk_layout,      0x1111111111111111);    # bytes
+    store64(sk_layout + 8,  0x2222222222222222);    # pub_bytes
+    store64(sk_layout + 16, 0x3333333333333333);    # algorithm
+    store64(sk_layout + 24, 0x4444444444444444);    # key_id
+    store64(sk_layout + 32, 0x5555555555555555);    # zeroized
+    store64(sk_layout + 40, 0x6666666666666666);    # seed
+    assert(signing_key_bytes(sk_layout)      == 0x1111111111111111, "signing_key.bytes at +0");
+    assert(signing_key_pub_bytes(sk_layout)  == 0x2222222222222222, "signing_key.pub_bytes at +8");
+    assert(signing_key_algorithm(sk_layout)  == 0x3333333333333333, "signing_key.algorithm at +16");
+    assert(signing_key_key_id(sk_layout)     == 0x4444444444444444, "signing_key.key_id at +24");
+    assert(signing_key_zeroized(sk_layout)   == 0x5555555555555555, "signing_key.zeroized at +32");
+    assert(signing_key_seed(sk_layout)       == 0x6666666666666666, "signing_key.seed at +40");
+}
+
+fn test_layout_verifying_key() {
+    # 2 fields × 8 bytes = 16 bytes — smallest struct shape.
+    var vk_layout = fl_alloc(16);
+    store64(vk_layout,     0xAAAAAAAAAAAAAAAA);     # bytes
+    store64(vk_layout + 8, 0xBBBBBBBBBBBBBBBB);     # algorithm
+    assert(verifying_key_bytes(vk_layout)     == 0xAAAAAAAAAAAAAAAA, "verifying_key.bytes at +0");
+    assert(verifying_key_algorithm(vk_layout) == 0xBBBBBBBBBBBBBBBB, "verifying_key.algorithm at +8");
+}
+
+fn test_layout_entry_sig() {
+    # 5 fields × 8 bytes = 40 bytes.
+    var es_layout = fl_alloc(40);
+    store64(es_layout,      0x1111111111111111);    # hash
+    store64(es_layout + 8,  0x2222222222222222);    # signature
+    store64(es_layout + 16, 0x3333333333333333);    # verifying_key
+    store64(es_layout + 24, 0x4444444444444444);    # key_id
+    store64(es_layout + 32, 0x5555555555555555);    # algorithm
+    assert(entry_sig_hash(es_layout)          == 0x1111111111111111, "entry_sig.hash at +0");
+    assert(entry_sig_signature(es_layout)     == 0x2222222222222222, "entry_sig.signature at +8");
+    assert(entry_sig_verifying_key(es_layout) == 0x3333333333333333, "entry_sig.verifying_key at +16");
+    assert(entry_sig_key_id(es_layout)        == 0x4444444444444444, "entry_sig.key_id at +24");
+    assert(entry_sig_algorithm(es_layout)     == 0x5555555555555555, "entry_sig.algorithm at +32");
+}
+
+fn test_layout_merkle_tree() {
+    # 2 fields × 8 bytes = 16 bytes.
+    var mt_layout = fl_alloc(16);
+    store64(mt_layout,     0xCCCCCCCCCCCCCCCC);     # nodes
+    store64(mt_layout + 8, 0xDDDDDDDDDDDDDDDD);     # leaf_count
+    assert(merkle_tree_nodes(mt_layout)      == 0xCCCCCCCCCCCCCCCC, "merkle_tree.nodes at +0");
+    assert(merkle_tree_leaf_count(mt_layout) == 0xDDDDDDDDDDDDDDDD, "merkle_tree.leaf_count at +8");
+}
+
+fn test_layout_sth() {
+    # 6 fields × 8 bytes = 48 bytes.
+    var sth_layout = fl_alloc(48);
+    store64(sth_layout,      0x1111111111111111);    # root
+    store64(sth_layout + 8,  0x2222222222222222);    # tree_size
+    store64(sth_layout + 16, 0x3333333333333333);    # timestamp
+    store64(sth_layout + 24, 0x4444444444444444);    # signature
+    store64(sth_layout + 32, 0x5555555555555555);    # verifying_key
+    store64(sth_layout + 40, 0x6666666666666666);    # algorithm
+    assert(sth_root(sth_layout)          == 0x1111111111111111, "sth.root at +0");
+    assert(sth_tree_size(sth_layout)     == 0x2222222222222222, "sth.tree_size at +8");
+    assert(sth_timestamp(sth_layout)     == 0x3333333333333333, "sth.timestamp at +16");
+    assert(sth_signature(sth_layout)     == 0x4444444444444444, "sth.signature at +24");
+    assert(sth_verifying_key(sth_layout) == 0x5555555555555555, "sth.verifying_key at +32");
+    assert(sth_algorithm(sth_layout)     == 0x6666666666666666, "sth.algorithm at +40");
+}
+
+fn test_layout_filestore() {
+    # 3 fields × 8 bytes = 24 bytes. filestore added the cpath field
+    # in 2.0 (16 → 24 bytes) — this test pins that expansion.
+    var fs_layout = fl_alloc(24);
+    store64(fs_layout,      0x7777777777777777);    # path
+    store64(fs_layout + 8,  0x8888888888888888);    # count
+    store64(fs_layout + 16, 0x9999999999999999);    # cpath
+    assert(filestore_path(fs_layout)  == 0x7777777777777777, "filestore.path at +0");
+    assert(filestore_count(fs_layout) == 0x8888888888888888, "filestore.count at +8");
+    assert(filestore_cpath(fs_layout) == 0x9999999999999999, "filestore.cpath at +16");
+}
+
 fn test_layout_anchor() {
     # 9 fields × 8 bytes = 72 bytes, first 16 are inline-UUID
     # placeholders (_uuid_hi / _uuid_lo). The pointer-returning
@@ -2143,6 +2250,13 @@ fn main() {
     test_layout_chain();
     test_layout_iproof();
     test_layout_anchor();
+    test_layout_entry();
+    test_layout_signing_key();
+    test_layout_verifying_key();
+    test_layout_entry_sig();
+    test_layout_merkle_tree();
+    test_layout_sth();
+    test_layout_filestore();
 
     test_group("Integrity proof");
     test_proof_unsigned();
