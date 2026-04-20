@@ -5,16 +5,19 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 [![Language: Cyrius](https://img.shields.io/badge/language-Cyrius-orange.svg)](https://github.com/MacCracken/cyrius)
 
-Libro provides an append-only, SHA-256 hash-linked audit chain where every event is chained to the previous entry's hash. Any modification to any entry breaks the chain, making tampering detectable. Zero external dependencies — Cyrius stdlib only.
+Libro provides an append-only, SHA-256 hash-linked audit chain where every event is chained to the previous entry's hash. Any modification to any entry breaks the chain, making tampering detectable. Cyrius-native with no third-party deps — crypto comes from [sigil](https://github.com/MacCracken/sigil), SQL storage from [patra](https://github.com/MacCracken/patra), structured tracing from sakshi.
 
 ## Architecture
 
 ```
-libro (Cyrius library)
-  ├── 19 modules, single-file compilation via include
-  ├── SHA-256 (FIPS 180-4, implemented from scratch)
-  ├── HMAC-SHA256 signing (Ed25519 deferred)
-  └── zero external dependencies
+libro (Cyrius library, single-file compilation)
+  ├── 21 library modules under src/ (list in cyrius.cyml [lib] modules)
+  ├── SHA-256 (FIPS 180-4) + Ed25519 (RFC 8032) via sigil
+  ├── SQL persistence via patra (v1.1.1 bundled)
+  ├── Nested scalar-aware canonical JSON hashing
+  ├── Distribution artifact: committed dist/libro.cyr per DEPS-PATTERN.md
+  └── CI-enforced gates: manifest completeness, raw-offset guards,
+                         per-file allowlist, dist freshness, version parity
 
 Consumers:
   daimon ──→ libro (agent lifecycle audit)
@@ -28,48 +31,60 @@ Consumers:
 
 - **Hash-linked entries** — SHA-256 chain with length-prefixed field hashing
 - **Append-only** — no update, no delete; immutable audit trail
-- **Chain verification** — constant-time hash comparison, linkage checks
+- **Chain verification** — constant-time hash comparison via sigil's `ct_eq`
 - **Severity levels** — Debug, Info, Warning, Error, Critical, Security (ordered)
-- **Agent tracking** — optional agent_id per entry
-- **Storage backend** — `MemoryStore` with streaming verification (O(chunk_size) memory)
+- **Agent tracking** — optional `agent_id` per entry
+- **Storage backends**
+  - `MemoryStore` — in-memory with streaming verification
+  - `FileStore` — append-only JSON Lines with flock locking
+  - `PatraStore` — SQL-backed via patra, indexed queries
 - **Chain rotation** — archive old entries, link new chain to previous head
 - **Auto-rotation** — capacity-based rotation with overflow archive tracking
+- **Batch append** — `chain_append_batch` for N entries in one rotation check
 - **Composable queries** — filter by source, severity, agent, action, time range (ANDed)
 - **Export** — JSON Lines and CSV to any file descriptor
+- **Chain import/export** — portable JSONL snapshot round-trip (`chain_export` / `chain_import`)
+- **Streamed verification** — `filestore_verify_streamed` bounded-memory over large files
 - **Retention policies** — keep N, keep by duration, keep after timestamp; PCI DSS / HIPAA / SOX / GDPR presets
 - **Merkle tree** — O(log N) inclusion proofs, RFC 9162 consistency proofs, canonical roots
-- **Digital signatures** — HMAC-SHA256 signing with key rotation support
-- **Integrity proofs** — signed tree heads, inclusion/consistency proofs, anchor bundles
+- **Ed25519 signatures** — per-entry signing via sigil, key rotation via `key_id`
+- **Integrity proofs** — signed tree heads, inclusion/consistency proofs, anchor bundles; JSON export via `proof_to_json`
 - **Witness anchoring** — self-hashing anchors with meta-chain support
-- **RFC 3161 timestamping** — DER encoding/decoding for trusted timestamps
-- **Streaming** — MQTT-style pub/sub with wildcard topic matching
+- **RFC 3161 timestamping** — hand-rolled DER encode/decode for trusted timestamps
+- **Streaming** — MQTT-style pub/sub with wildcard topic matching (`*`, `#`)
 - **Kernel audit** — AGNOS `/proc/agnos/audit` integration
 - **Structured tracing** — sakshi instrumentation on all key operations
-- **193 tests, 15 benchmarks** — comprehensive coverage
+
+## Coverage
+
+- **316 inline tests** across unit / integration / layout-invariant / gap coverage
+- **22 benchmarks** across two bench binaries (`libro_core` 14 + `libro_io` 8)
+- **11 fuzz targets** in a single harness (sha256, hex decode, DER, entry create, chain ops, sig verify, JSON parse, topic match, chain_import, filestore_verify_streamed, canonical_json_hash)
+- **CI history** — each run emits bench rows to `bench-history.csv` tagged with commit SHA, retained as a workflow artifact
 
 ## Quick Start
 
 ```bash
-# Install Cyrius (if not already installed)
-cyriusup install 2.7.2 && cyriusup use 2.7.2
+# Cyrius toolchain (read pin from cyrius.cyml)
+cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
 
-# Build
-cyrius build src/main.cyr build/libro
+# Build (DCE matches CI/release)
+CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests (193 tests)
+# Run tests (316 tests, 0 failures expected)
 ./build/libro
 
-# Run benchmarks (21 benchmarks across 2 binaries)
-cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
-cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
+# Run benchmarks
+CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core && ./build/libro_bench_core
+CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr   build/libro_bench_io   && ./build/libro_bench_io
+
+# Run fuzz (11 targets, no-crash assertions, ~10 s)
+CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 30 ./build/fuzz_libro
 ```
 
 ### Usage Example
 
 ```cyrius
-# Include libro modules (via single-file compilation)
-include "src/chain.cyr"    # brings all dependencies
-
 # Create an audit chain
 var c = chain_new();
 
@@ -91,59 +106,87 @@ var alerts = chain_query(c, q);
 
 # Build Merkle tree + inclusion proof
 var tree = merkle_build(chain_entries(c));
-var proof = merkle_proof(tree, 0);
+var proof = merkle_inclusion_proof(tree, 0);
 assert(merkle_verify_proof(proof) == 1, "proof valid");
 
-# Export to CSV
-var fd = file_open("audit.csv", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-export_csv(chain_entries(c), fd);
-file_close(fd);
+# Portable chain snapshot
+chain_export(c, str_from("audit.jsonl"));
+var restored = chain_import(str_from("audit.jsonl"));
+assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 ```
 
-## Modules
+## Library modules (21)
 
-| Module | Description |
-|--------|-------------|
-| `entry` | `AuditEntry` — UUID v4, RFC 3339 timestamps, severity, canonical JSON hashing |
-| `chain` | `AuditChain` — append, rotate, auto-rotate, verify, query, pagination |
-| `verify` | Chain integrity verification with constant-time comparison |
-| `store` | `MemoryStore` — in-memory backend with streaming verification |
-| `query` | `QueryFilter` — composable multi-field filtering (source, severity, agent, action, time) |
-| `export` | JSON Lines and CSV export with field escaping |
-| `retention` | `RetentionPolicy` — count, duration, absolute; PCI DSS / HIPAA / SOX / GDPR presets |
-| `review` | `ChainReview` — structured summary with integrity status and distributions |
-| `merkle` | `MerkleTree` — inclusion proofs, RFC 9162 consistency proofs, canonical roots |
-| `signing` | HMAC-SHA256 signing, key generation, entry signatures, key rotation |
-| `anchoring` | `WitnessAnchor` — self-hashing snapshots, anchor chaining, verification |
-| `timestamping` | RFC 3161 DER encoding/decoding, timestamp requests/responses/attestations |
-| `proof` | `IntegrityProof` — signed tree heads, inclusion/consistency proofs, anchor bundles |
-| `streaming` | MQTT-style pub/sub with `*` and `#` wildcards |
-| `kernel_audit` | AGNOS kernel audit interface (`/proc/agnos/audit`) |
-| `sha256` | FIPS 180-4 SHA-256 (from scratch, 32-bit masked arithmetic) |
-| `hasher` | ChainHasher wrapper, hex encode/decode, length-prefixed field hashing |
-| `error` | Error types and structured error objects |
+| Module           | Description |
+|------------------|-------------|
+| `error`          | Structured error types with field / index / expected-vs-actual |
+| `hasher`         | SHA-256 wrapper, hex encode/decode, length-prefixed field hashing (delegates to sigil) |
+| `entry`          | `AuditEntry` — UUID v4, RFC 3339 timestamps, severity, nested-scalar canonical JSON |
+| `verify`         | Standalone `verify_chain(entries, base_index)` for loose entries / streams / archives |
+| `query`          | `QueryFilter` — composable multi-field filtering |
+| `retention`      | `RetentionPolicy` — count / duration / absolute; PCI / HIPAA / SOX / GDPR presets |
+| `chain`          | `AuditChain` — append, batch append, rotate, auto-rotate, verify, query, pagination |
+| `store`          | `MemoryStore` — in-memory backend with streaming verification |
+| `export`         | JSON Lines and CSV export with field escaping |
+| `review`         | `ChainReview` — structured summary with integrity status, source/severity/agent distributions |
+| `merkle`         | `MerkleTree`, `MerkleProof`, `ConsistencyProof` — RFC 9162 + inclusion proofs |
+| `signing`        | Ed25519 signing via sigil, key generation, entry signatures, `key_id` rotation |
+| `anchoring`      | `WitnessAnchor` — self-hashing snapshots, anchor meta-chain |
+| `timestamping`   | RFC 3161 DER encode/decode, timestamp requests / responses / attestations |
+| `proof`          | `IntegrityProof` — signed tree heads, inclusion/consistency proofs, anchor bundles |
+| `kernel_audit`   | AGNOS `/proc/agnos/audit` read interface |
+| `file_store`     | Append-only JSON Lines backend with flock, streaming verify |
+| `chain_io`       | Portable chain snapshot — `chain_export` / `chain_import` JSONL round-trip |
+| `patra_store`    | SQL-backed backend via patra with indexed queries |
+| `streaming`      | MQTT-style pub/sub with `*` and `#` wildcards |
+| `proof_json`     | JSON emitter for `IntegrityProof` — separate module so bench binaries can exclude |
 
-## Project Structure
+## Project structure
 
 ```
-src/main.cyr           Entry point + 193 tests
-src/*.cyr              Library modules (18 files)
-benches/libro_core.bcyr 13 core benchmarks (crypto/chain/merkle/sign)
-benches/libro_io.bcyr    8 i/o benchmarks (export/review/anchor/stream/filestore)
-lib/                   Vendored Cyrius stdlib
-build/                 Compiled binaries (gitignored)
-docs/                  Architecture, guides, compliance, ADRs
+src/main.cyr            Entry point + 316 inline tests
+src/*.cyr               21 library modules (see above; list lives in cyrius.cyml [lib] modules)
+benches/libro_core.bcyr 14 core benchmarks (crypto / chain / merkle / sign)
+benches/libro_io.bcyr   8 i/o benchmarks (export / review / anchor / stream / filestore)
+benches/bench_history.cyr Opt-in CSV history emitter (LIBRO_BENCH_HISTORY env var)
+fuzz/fuzz_libro.fcyr    1 harness, 11 fuzz targets
+dist/libro.cyr          Consumer distribution artifact (cyrius distlib, committed)
+lib/                    Vendored stdlib copies + sigil + patra bundles
+scripts/version-bump.sh Syncs VERSION + cyrius.cyml version field
+docs/                   Architecture, guides, threat model, compliance, ADRs, audits
 ```
 
 ## Documentation
 
+**Getting started**
 - [Quick Start Guide](docs/guides/quickstart.md)
 - [Testing Guide](docs/guides/testing.md)
 - [Integration Patterns](docs/guides/integration.md)
+
+**Design**
 - [Architecture Overview](docs/architecture/overview.md)
 - [Threat Model](docs/development/threat-model.md)
 - [Compliance Mapping](docs/compliance/standards-mapping.md)
 - [Roadmap](docs/development/roadmap.md)
+- [Distribution contract (DEPS-PATTERN.md)](DEPS-PATTERN.md)
+
+**Architecture Decision Records**
+- [ADR 0001 — Cyrius port from Rust](docs/adr/0001-cyrius-port.md)
+- [ADR 0002 — SHA-256 only (BLAKE3 dropped)](docs/adr/0002-sha256-only.md)
+- [ADR 0003 — HMAC signing (superseded by 1.0.2 Ed25519 via sigil)](docs/adr/0003-hmac-signing.md)
+- [ADR 0004 — MemoryStore as primary backend](docs/adr/0004-memorystore-primary.md)
+- [ADR 0005 — `#derive(accessors)` adoption (2.0)](docs/adr/0005-derive-accessors.md)
+- [ADR 0006 — dist artifact contract (2.0)](docs/adr/0006-dist-artifact-contract.md)
+- [ADR 0007 — Nested scalar-aware canonical-JSON hashing (2.0)](docs/adr/0007-canonical-json-hashing.md)
+
+**Security audits**
+- [2026-04-19 — Pre-1.1.0 audit](docs/audit/2026-04-19-audit.md)
+- [2026-04-19 — 2.0 hardening audit + post-release addenda](docs/audit/2026-04-19-audit-2.0.md)
+
+**Policies**
+- [Security Policy](SECURITY.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

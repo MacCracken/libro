@@ -1,122 +1,106 @@
 # Roadmap
 
-## v2.0.0 — 2026-04-19
+Release detail lives in [CHANGELOG.md](../../CHANGELOG.md). This
+document is the forward-looking plan — open threads, unblocked
+hardening candidates, and ecosystem-blocked items.
 
-Major-version sprint. Last stop for 1.x-era backlog before the line is frozen.
-Breaking cleanups shelved in 1.x, two deferred Rust-port APIs landed, missing
-`dist/libro.cyr` distribution artifact wired per `DEPS-PATTERN.md`, hardening
-backlog drained (nested JSON hash, chain export/import, streamed FileStore
-verify, bench history).
+## Release history (brief)
 
-### Breaking
-- [x] `verify_chain(entries)` → `verify_chain(entries, base_index)`; `verify_chain_offset` folded in. `chain_verify(c)` unchanged. Consumers pass `0` for whole-chain verification.
-- [x] Canonical JSON hashing rewritten as a recursive byte-walker — depth-unlimited, scalar-aware. 1.x flat canonicalizer quoted every value regardless of type and broke on nested objects/arrays. Flat all-string objects still hash identically; non-string values, arrays, and nested objects now hash differently (and correctly).
+| Version | Focus | Headline |
+|---------|-------|----------|
+| **2.0.4** | Docs + CI + hardening | ADRs 0005–0007, threat-model rewrite, bench-history in CI, per-file raw-offset allowlist, struct-layout invariant tests (chain / iproof / anchor). 316 tests. |
+| **2.0.3** | Fuzz + HIGH bug fix | `fuzz_chain_import` / `fuzz_filestore_verify_streamed` / `fuzz_canonical_json_hash` added. Streaming verifier infinite-loop on unterminated input fixed (Finding 4). |
+| **2.0.2** | Accessor-sweep tail + CI extension | `src/proof_json.cyr` raw-offset migration. Specific-struct CI guard extended from 1 to 7 (struct, param) pairs. +7 assertions, 293 tests. |
+| **2.0.1** | Audit follow-ups | CI manifest-completeness gate, raw-offset guard (chain), `chain_export`/`chain_import` integration snippet. |
+| **2.0.0** | Major sprint | Breaking: `verify_chain(entries, base_index)`, nested scalar-aware canonical JSON. Added: `chain_append_batch`, `proof_to_json`, `chain_export`/`chain_import`, `filestore_verify_streamed`, bench history, `#derive(accessors)` across all structs. Toolchain 5.4.2 → 5.4.7. 286 tests. |
+| 1.2.0 | cc3-debt paydown | 24 workaround globals removed. Bench binary split (cc5 16384 fixup cap). |
+| 1.1.1 | CI modernization | Dist-freshness gate, `cyrius.toml` → `cyrius.cyml`, FileStore UAF fix. |
+| 1.1.0 | P(-1) + patra | Cyrius 5.4.2 pin, patra 1.1.1 refresh, PatraStore UAF fix (unblocks 19 gated tests). |
+| 1.0.2 | Sigil migration | SHA-256 + Ed25519 delegated to sigil. `src/sha256.cyr` deleted. 8 fuzz harnesses added. |
+| 1.0.1 | FileStore | Append-only JSONL backend with flock. |
+| 1.0.0 | Cyrius port | Full rewrite from Rust (8513 → ~5000 LOC). |
 
-### Added
-- [x] `chain_append_batch(c, severities, sources, actions, details_vec)` — N entries, one rotation check. Returns vec of created entry pointers. Over-capacity batches tolerated for the call's duration.
-- [x] `proof_to_json(ip)` in `src/proof_json.cyr` — ports `to_proof_json()` from Rust. Separate module so `libro_core.bcyr` can exclude it and stay under the cc5 16384 fixup cap.
-- [x] `chain_export(c, path)` / `chain_import(path)` in `src/chain_io.cyr` — full-chain JSON Lines serialization. Preserves entries, `prev_chain_hash`, `max_capacity`. Overflow archives intentionally not serialized.
-- [x] `filestore_verify_streamed(s, chunk_size)` — byte-streamed verify over a 64KB read buffer, keeps only `chunk_size` entries live at a time. Cross-chunk linkage propagated via tail-hash.
-- [x] Bench history CSV via `benches/bench_history.cyr` — `LIBRO_BENCH_HISTORY=<path>` writes one row per bench; `LIBRO_BENCH_TAG` for run labels. No-op when env unset.
-- [x] `dist/libro.cyr` (4,488 lines) — produced by `cyrius distlib`, committed. `[lib] modules = […]` in `cyrius.cyml`; CI gates on freshness.
-- [x] `_sb_csv_field` quote branch direct-emit — one pre-grow + tight loop vs N `_sb_add_byte` calls.
+The Rust-era history (0.90.0 ← 0.22.4 ← 0.21.x ← …) lives in
+CHANGELOG for archaeological interest.
 
-### Changed / cleanup
-- [x] **Toolchain bumped Cyrius 5.4.2 → 5.4.7** for the derive migration below.
-- [x] **`#derive(accessors)` across all 15 struct modules** — ~108 hand-written `load64(x + N)` accessors replaced by declarative struct layouts; getters + `_set_` setters generated. Offset-typo class of bug eliminated (including the UUID-zeroing bug caught in the nested-JSON tests). Inline-UUID structs (`entry`, `anchor`, `receipt`) reserve the first 16 bytes with `_uuid_hi`/`_uuid_lo`; their `*_id(x)` pointer-returning accessors stay manual. `merkle_proof(tree, idx)` renamed to `merkle_inclusion_proof(tree, idx)` — the struct name `merkle_proof` reserves the identifier as a type.
-- [x] FileStore read buffer right-sized via `lseek(fd, 0, SEEK_END)` — one allocation per load.
-- [x] `_filestore_cpath` cached on struct (16→24 bytes) — cstr derived once at `filestore_open`.
-- [x] `_der_parse_tlv` → multi-return `(total, value_ptr)` — kills `_der_value_ptr` / `_der_value_len` globals. `civil_from_days` stays on globals (5.4.2 multi-return caps at 2).
-- [x] `chain_verify` / `verify_chain` layering documented in `src/chain.cyr`.
-- [x] `benches/libro_io.bcyr` trimmed — dropped unused `retention.cyr` after nested canonical JSON pushed live fixups back near the 16384 cap.
-- [x] Lint clean — 3 pre-existing 120-char-line warnings fixed (SHA-256 test vector + zero-hash prev_hash built via `str_builder`; patra-store CREATE SQL assembled at runtime).
-- [x] P(-1) hardening pass — distlib manifest repair + accessor-migration tail. `src/chain_io.cyr` added to `cyrius.cyml` `[lib] modules` (dist was shipping without `chain_export`/`chain_import`); six raw-offset `chain`-struct reads in `chain_io.cyr` (5) and `review.cyr` (1) migrated to derived accessors; CLAUDE.md / roadmap counts reconciled. See `docs/audit/2026-04-19-audit-2.0.md`.
+## Open — unblocked (hardening candidates)
 
-### Validation
-- [x] **286 tests, 0 failed** (255 → 286: +4 append_batch, +4 proof_to_json, +5 nested canonical JSON, +9 ChainIO, +5 streamed FileStore verify).
-- [x] 22 benches across 2 binaries. Fuzz clean. Simulated-consumer: `dist/libro.cyr` compiles after stdlib + sigil + patra.
+These are hardening-adjacent threads that could be picked up without
+any upstream dependency. Listed in rough order of leverage.
 
-### Decisions (no code change)
-- [x] `_sb_csv_field` single-pass — REJECTED. Current two-pass form is one cache-hot check + one direct-write escape; a fused version needs optimistic-write-with-memmove or pre-grow-and-reset, neither cleaner.
+- [ ] **Third bench binary `benches/libro_proof.bcyr`.** Deferred in
+  2.0.2 when `proof_to_json` wouldn't fit in either existing bench
+  binary under cc5's 16384 fixup-table cap. A minimal third binary
+  (just `error` / `hasher` / `entry` / `verify` / `chain` / `merkle` /
+  `signing` / `proof` / `proof_json`) would unblock perf tracking for
+  the proof-building and JSON-emission paths.
+- [ ] **Extend the raw-offset guard to the remaining ambiguous-param
+  structs.** 2.0.4's per-file allowlist closes the "any new
+  raw-offset param name" regression class; 2.0.1/2.0.2's specific-
+  struct guard covers 7 unambiguous (struct, param) pairs. Roughly
+  15 more derived structs use single-letter parameter names (`a`,
+  `e`, `r`, `s`, `t`) that overlap across files. Unlocking guard
+  coverage on those needs either (a) codebase-wide parameter-name
+  rename to disambiguate, or (b) a per-file allowed-offsets map that
+  the guard can cross-check against each struct's `#derive`
+  declaration. Option (b) is the right fix but needs more tooling
+  than a shell grep.
+- [ ] **Struct-layout invariant tests for more structs.** 2.0.4
+  shipped three (chain / iproof / anchor — covering the shape
+  spectrum). Expanding to the other ~24 derived structs would mean
+  ~100 more assertions; low effort, diminishing returns beyond the
+  shape-spectrum trio but useful for confidence after toolchain
+  bumps.
+- [ ] **`proof_from_json` round-trip.** 2.0 ships
+  `proof_to_json(ip)` but there's no parser to re-hydrate a saved
+  proof. Would close the loop for archival workflows (consumer
+  saves a signed proof as JSON, later re-verifies it without access
+  to the original chain). Pairs naturally with a fuzz target on the
+  new parser.
 
-## v1.2.0 — 2026-04-19
+## Open — ecosystem-blocked
 
-- [x] 24 workaround globals removed — patra_store 12, entry 6, anchoring 3, review 1, chain 1, merkle 1 (dead). cc3-era workarounds for locals clobbered across nested `str_builder_*` / `hasher_update` call chains; cc5 5.4.2 preserves them reliably.
-- [x] Negative literals + compound assignment sweep — `(0 - N)` → `-N` (13 sites) and `i = i + 1` → `i += 1` in pure counter loops (~50 sites).
-- [x] `severity_len(sev)` added in `src/entry.cyr`; `entry_compute_hash` no longer `strlen`s the severity cstr per entry.
-- [x] `cyrius.cyml` enriched — `repository`, `[deps] stdlib = […]` (13 modules), `[deps.sigil]` 2.8.3, `[deps.patra]` 1.1.1.
-- [x] **Bench binary split** — single `benches/libro.bcyr` overflowed cc5's 16384 fixup-table cap. Now `libro_core.bcyr` (13 crypto/chain/merkle/sign benches) + `libro_io.bcyr` (8 export/review/anchor/stream/filestore benches); CI iterates `benches/*.bcyr`. Added missing `lib/fmt.cyr` include.
-- [x] Roadmap consolidated — `docs/development/sprint-1.2.0.md` folded in and deleted; stale "Blocked on patra" subsection removed.
-- [x] Decisions recorded: `secret var` NOT APPLICABLE (heap-only key material), `ct_select` NO MIGRATION (already via sigil's `ct_eq`), `#derive(accessors)` REJECTED (AGNOS raw-offset convention).
-- [x] `sign_entry` 6.147 → 5.786 ms (−5.9 %). 255 tests, 0 failed. Fuzz clean.
+These items are on the roadmap for visibility but blocked on
+upstream capability. Each has a named unblocker.
 
-## v1.1.1 — 2026-04-19
+- [ ] **Post-quantum signatures (ML-DSA / CRYSTALS-Dilithium).**
+  Unblocks when: sigil exposes ML-DSA primitives. Libro's
+  `EntrySignature.algorithm` field + `key_id` already support
+  algorithm dispatch, so the signing-side migration is local.
+- [ ] **Hybrid signing (Ed25519 + PQ).** Unblocks with the above.
+  Would produce entries with two signatures for the transition
+  period.
+- [ ] **Remote attestation (TPM-backed chain sealing).** Unblocks
+  when: sigil or a sibling crate exposes TPM attestation primitives
+  in Cyrius. Libro's integrity-proof structure (signed tree head +
+  WitnessAnchor) is already factored to accept a hardware attestation
+  as an additional proof field.
+- [ ] **Multi-node chain sync (federated audit).** Unblocks when: an
+  AGNOS-level federation protocol lands. Libro would layer a second
+  meta-chain over the existing `WitnessAnchor` primitive for
+  cross-node consistency.
+- [ ] **Conflict resolution for concurrent appends.** Unblocks with
+  multi-node sync. Currently libro is single-writer; FileStore's
+  `flock` and PatraStore's patra-level locking are sufficient for
+  single-node multi-process.
 
-- [x] CI/release modernized (reads toolchain pin from `cyrius.cyml` `cyrius = "..."` field, DCE, semver-only tags, lint + fuzz + bench in CI)
-- [x] Manifest `cyrius.toml` → `cyrius.cyml` (first-party convention)
-- [x] FileStore UAF across loads (audit Finding 3) fixed + regression test
-- [x] CSV/JSON escape per-char alloc eliminated (export jsonl −14.8 %, csv −15.9 %)
-- [x] `uuid_format` single-pass (chain_append −5 %)
-- [x] CLAUDE.md refreshed — dropped 5 obsolete cc3-era Cyrius quirk notes
-- [x] 255 tests, 0 failed
+## Out of libro scope (tracked elsewhere)
 
-## v1.1.0 — 2026-04-19
+- **MCP tools (`libro_query`, `libro_verify`, `libro_export`) via
+  bote.** Lives in the bote repo — libro's API is stable; the MCP
+  surface is a wrapper concern and shouldn't grow libro's module
+  count.
 
-- [x] P(-1) scaffold-hardening pass (clean build, lint, bench baseline, audit)
-- [x] Cyrius 5.4.2 toolchain pin (cc5)
-- [x] Patra bundle refresh — v0.14.0 → v1.1.1 (api-compatible)
-- [x] **Fixed use-after-free in `_patrastore_row_to_entry`** — root cause of the long-standing cumulative-state crash in `test_patrastore_append_load`. See `docs/audit/2026-04-19-audit.md` Finding 1.
-- [x] Ungated all 7 PatraStore tests
-- [x] Ungated all 12 Gap coverage tests
-- [x] 251 tests pass (up from 204)
+## Future (speculative)
 
-## v1.0.2 — 2026-04-11
+Items without a clear owner or timeline. Drop or promote to "Open"
+if they reach actionable state.
 
-- [x] Sigil migration — SHA-256 and Ed25519 from sigil stdlib (dropped `src/sha256.cyr`)
-- [x] Real Ed25519 signing via sigil (replaced HMAC-SHA256 placeholder)
-- [x] `src/hasher.cyr` delegates to sigil's hex, ct_eq, SHA-256
-- [x] 8 fuzz harnesses (SHA-256, hex decode, DER parse, entry create, chain ops, sig verify, JSON parse, topic match)
-- [x] 240 tests (up from 202), 21 benchmarks (up from 15)
-- [x] Gap coverage: retention KeepDuration/KeepAfter, time-range queries, agent_id query, CSV special chars, entry validation, compliance presets, merkle 16-leaf, stream recv/drain, filestore multi-append
-- [x] Cyrius 3.4.0 compatibility verified
-- [x] CI/CD updated for Cyrius 3.4.0
-
-## v1.0.1 — 2026-04-09
-
-- [x] FileStore — append-only JSON Lines backend with flock locking
-- [x] Cyrius toolchain pinned to cc3 compiler
-- [x] 202 tests, 15 benchmarks
-- [x] CI/CD updated for cc3
-
-## v1.0.0 — 2026-04-09
-
-- [x] Full Cyrius port from Rust v0.92.0 (8,513 LOC → ~5,000 LOC)
-- [x] 19 modules: error, sha256, hasher, entry, verify, query, retention, chain, store, export, review, merkle, signing, anchoring, timestamping, proof, kernel_audit, file_store, streaming
-- [x] SHA-256 (FIPS 180-4), length-prefixed field hashing
-- [x] Merkle tree — inclusion proofs, RFC 9162 consistency proofs, canonical roots
-- [x] Integrity proofs — signed tree heads, inclusion/consistency bundles, anchor support
-- [x] Witness anchoring — self-hashing anchors, meta-chain
-- [x] RFC 3161 timestamping — DER encoding/decoding
-- [x] Streaming pub/sub — MQTT-style topic wildcards
-- [x] Kernel audit — AGNOS /proc/agnos/audit interface
-- [x] Structured tracing — sakshi instrumentation
-- [x] CI/CD — GitHub Actions for build, test, bench, security scan, release
-
-## Rust features port — complete
-
-- [x] `append_batch()` on AuditChain — shipped in 2.0 as `chain_append_batch(c, severities, sources, actions, details_vec)`.
-- [x] `to_proof_json()` — shipped in 2.0 as `proof_to_json(ip)` in `src/proof_json.cyr`.
-- [x] `SqliteStore` — delivered as `PatraStore` (SQL-backed) in `src/patra_store.cyr`, backed by patra 1.1.1.
-
-## Hardening backlog (not blocked)
-
-- [ ] MCP tools via bote (≥ 2.5.1): `libro_query`, `libro_verify`, `libro_export` — bote is no longer blocked. Deferred to post-2.0 (lives in its own repo/PR).
-
-## Blocked — Waiting on Ecosystem
-
-#### Future
-- [ ] Post-quantum signatures (ML-DSA) via sigil
-- [ ] Hybrid signing: Ed25519 + PQ for transition period
-- [ ] Remote attestation (TPM-backed chain sealing)
-- [ ] Multi-node chain sync (federated audit across fleet)
-- [ ] Conflict resolution for concurrent appends
+- Structured-audit query DSL (current `QueryFilter` is composable but
+  code-only; a parseable string form could enable CLI tools or
+  config-driven retention policies).
+- Column-family-style secondary indexes in PatraStore (currently one
+  index per query shape; a generic column-family model would support
+  arbitrary consumer-defined indexes).
+- An explicit compaction tool that drives `chain_apply_retention` +
+  `chain_export` together for offline archival.
