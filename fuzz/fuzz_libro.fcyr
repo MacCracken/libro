@@ -44,6 +44,7 @@ include "src/kernel_audit.cyr"
 include "src/file_store.cyr"
 include "src/chain_io.cyr"
 include "src/streaming.cyr"
+include "src/proof_json.cyr"
 
 # ================================================================
 # Random data generation
@@ -303,6 +304,23 @@ fn fuzz_canonical_json_hash(iterations) {
     return 0;
 }
 
+# ================================================================
+# Fuzz: proof_from_json with random bytes
+# ================================================================
+# Covers the 2.0.6 parser — a nested byte-walker over the multi-line
+# proof JSON shape. Must not crash on adversarial or malformed input.
+
+fn fuzz_proof_from_json(iterations) {
+    var i = 0;
+    while (i < iterations) {
+        var s = fuzz_str(512);
+        # Should never crash; returning 0 is the normal malformed result.
+        proof_from_json(s);
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn fuzz_topic_match(iterations) {
     var s = stream_new();
     var i = 0;
@@ -378,6 +396,10 @@ fn main() {
 
     println("  fuzz_canonical_json_hash...");
     fuzz_canonical_json_hash(iters / 5);
+    println("  OK");
+
+    println("  fuzz_proof_from_json...");
+    fuzz_proof_from_json(iters / 5);
     println("  OK");
 
     println("");

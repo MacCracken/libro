@@ -60,7 +60,7 @@ The group list, in declaration order:
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 350 assertions across these groups.** Count moves with every
+**Total: 373 assertions across these groups.** Count moves with every
 sprint; the source of truth is the output of `./build/libro`, not this
 document.
 
@@ -155,8 +155,9 @@ no-crash on random input; a target that returns normally is a pass.
 | `fuzz_chain_import` | random JSONL bytes via tempfile | `chain_import` parser |
 | `fuzz_filestore_verify_streamed` | random JSONL bytes via tempfile | 64KB-streaming verify |
 | `fuzz_canonical_json_hash` | random `details` payloads | 2.0 nested byte-walker in `entry_compute_hash` |
+| `fuzz_proof_from_json` | random bytes | 2.0.6 proof-JSON byte-walker in `proof_from_json` |
 
-The last three were added in 2.0.3; `fuzz_filestore_verify_streamed`
+Three fuzz targets were added in 2.0.3, one more in 2.0.6. `fuzz_filestore_verify_streamed`
 caught a HIGH-severity infinite-loop bug on its first run
 (see `docs/audit/2026-04-19-audit-2.0.md` Finding 4).
 

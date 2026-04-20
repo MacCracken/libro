@@ -27,7 +27,7 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 
 - **Source**: 21 library modules under `src/` (list lives in `cyrius.cyml` `[lib] modules`) plus `src/main.cyr`; stdlib + sigil + patra resolved via `cyrius deps`
 - **Benchmarks**: 24 across three binaries (`libro_core.bcyr` 14 + `libro_io.bcyr` 8 + `libro_proof.bcyr` 2 — split because cc5's 16384 fixup-table cap)
-- **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 11 targets)
+- **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 350 assertions (all pass)
 - **Binary**: ~444 KB (DCE-built)
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~4.5k lines. See `DEPS-PATTERN.md` for the contract.
@@ -46,7 +46,7 @@ No external deps beyond the Cyrius toolchain.
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "350 passed, 0 failed"
+# Run tests — expect "373 passed, 0 failed"
 ./build/libro
 
 # Benchmarks (three binaries — cc5 fixup table limit forced the core/io split

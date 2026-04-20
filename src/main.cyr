@@ -1265,6 +1265,116 @@ fn test_proof_to_json_null_on_zero() {
 # offsets, one of these field-presence asserts fails. Reads across all
 # four derived-accessor slots on iproof (tree_head@0, inclusions@16,
 # entries@24, anchor@32).
+fn test_proof_from_json_null() {
+    # Top-level "null" parses back to 0.
+    var ip = proof_from_json(str_from("null"));
+    assert(ip == 0, "proof_from_json(null) → 0");
+}
+
+fn test_proof_from_json_empty_string() {
+    var ip = proof_from_json(str_from(""));
+    assert(ip == 0, "proof_from_json(\"\") → 0");
+}
+
+fn test_proof_from_json_malformed() {
+    # Malformed input should fail safely, not crash.
+    var ip = proof_from_json(str_from("{"));
+    assert(ip == 0, "proof_from_json({) → 0");
+
+    var ip2 = proof_from_json(str_from("not-json"));
+    assert(ip2 == 0, "proof_from_json(not-json) → 0");
+
+    var ip3 = proof_from_json(str_from("{\"tree_head\":{}}"));
+    # Missing root key in tree_head — tree-head parse fails.
+    assert(ip3 == 0, "proof_from_json(incomplete tree_head) → 0");
+}
+
+fn test_proof_from_json_roundtrip_unsigned() {
+    # Build a chain with nested details (exercises the custom details
+    # byte-walker rather than flat string parsing), emit JSON, parse
+    # back, verify structural equivalence.
+    var c = chain_new();
+    var det_flat = str_from("{}");
+    var det_nested = str_from("{\"agent\":\"web-01\",\"load\":{\"p50\":12,\"p99\":480}}");
+    chain_append(c, SEV_INFO, str_from("auth"), str_from("login"), det_flat);
+    chain_append(c, SEV_SECURITY, str_from("aegis"),
+        str_from("intrusion.detected"), det_nested);
+    chain_append(c, SEV_INFO, str_from("ark"), str_from("pkg.install"), det_flat);
+
+    var ip = proof_build_unsigned(c);
+    proof_with_all_inclusions(ip);
+
+    var json = proof_to_json(ip);
+    assert(str_len(json) > 100, "emitted JSON non-trivial");
+
+    var ip2 = proof_from_json(json);
+    assert(ip2 != 0, "proof_from_json returns non-null");
+
+    # Tree head recovered
+    var sth1 = iproof_tree_head(ip);
+    var sth2 = iproof_tree_head(ip2);
+    assert(constant_time_eq_str(sth_root(sth1), sth_root(sth2)) == 1,
+        "tree head root round-trips");
+    assert(sth_tree_size(sth1) == sth_tree_size(sth2),
+        "tree_size round-trips");
+    assert(constant_time_eq_str(sth_timestamp(sth1), sth_timestamp(sth2)) == 1,
+        "timestamp round-trips");
+
+    # Entries round-trip with hashes preserved
+    var e1 = iproof_entries(ip);
+    var e2 = iproof_entries(ip2);
+    assert(vec_len(e1) == vec_len(e2), "entries count matches");
+    assert(vec_len(e2) == 3, "3 entries parsed");
+
+    var i = 0;
+    while (i < vec_len(e1)) {
+        var a = vec_get(e1, i);
+        var b = vec_get(e2, i);
+        assert(constant_time_eq_str(entry_hash(a), entry_hash(b)) == 1,
+            "entry hash round-trips");
+        assert(constant_time_eq_str(entry_source(a), entry_source(b)) == 1,
+            "entry source round-trips");
+        i += 1;
+    }
+
+    # Inclusion count
+    var inc1 = iproof_inclusions(ip);
+    var inc2 = iproof_inclusions(ip2);
+    assert(vec_len(inc1) == vec_len(inc2), "inclusions count matches");
+    assert(vec_len(inc2) == 3, "3 inclusion proofs");
+}
+
+fn test_proof_from_json_roundtrip_partial_verify() {
+    # Round-trip verify of what the 2.0.x JSON shape actually
+    # preserves. Known lossy: `path` entries in inclusions are
+    # emitted as hash-only strings (no side bit), so
+    # merkle_verify_proof can't run on parsed inclusions. The
+    # sth + entries + tree-matches checks DO pass.
+    # Filed as a 2.1.0 fix (lossless inclusion path serialization).
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
+        str_from("{\"v\":1}"));
+    chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
+        str_from("{\"v\":2}"));
+
+    var ip = proof_build_unsigned(c);
+    proof_with_all_inclusions(ip);
+
+    var json = proof_to_json(ip);
+    var ip2 = proof_from_json(json);
+    assert(ip2 != 0, "parsed iproof non-null");
+
+    # Entry chain still verifies (entries round-trip faithfully).
+    var err = verify_chain(iproof_entries(ip2), 0);
+    assert(err == 0, "parsed entries still chain-verify");
+
+    # Tree rebuilt from parsed entries matches the stored sth.root.
+    var rebuilt = merkle_build(iproof_entries(ip2));
+    assert(constant_time_eq_str(merkle_tree_root(rebuilt),
+        sth_root(iproof_tree_head(ip2))) == 1,
+        "rebuilt root matches parsed tree_head.root");
+}
+
 fn test_proof_to_json_fields_present() {
     var c = chain_new();
     var det = str_from("{}");
@@ -2263,6 +2373,11 @@ fn main() {
     test_proof_to_json_unsigned();
     test_proof_to_json_null_on_zero();
     test_proof_to_json_fields_present();
+    test_proof_from_json_null();
+    test_proof_from_json_empty_string();
+    test_proof_from_json_malformed();
+    test_proof_from_json_roundtrip_unsigned();
+    test_proof_from_json_roundtrip_partial_verify();
     test_proof_signed();
     test_proof_with_consistency();
     test_proof_with_anchor();

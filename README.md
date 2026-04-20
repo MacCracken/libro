@@ -57,9 +57,9 @@ Consumers:
 
 ## Coverage
 
-- **350 inline tests** across unit / integration / layout-invariant / gap coverage
+- **373 inline tests** across unit / integration / layout-invariant / gap coverage
 - **24 benchmarks** across three bench binaries (`libro_core` 14 + `libro_io` 8 + `libro_proof` 2)
-- **11 fuzz targets** in a single harness (sha256, hex decode, DER, entry create, chain ops, sig verify, JSON parse, topic match, chain_import, filestore_verify_streamed, canonical_json_hash)
+- **12 fuzz targets** in a single harness (sha256, hex decode, DER, entry create, chain ops, sig verify, JSON parse, topic match, chain_import, filestore_verify_streamed, canonical_json_hash, proof_from_json)
 - **CI history** — each run emits bench rows to `bench-history.csv` tagged with commit SHA, retained as a workflow artifact
 
 ## Quick Start
@@ -145,7 +145,7 @@ assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 ## Project structure
 
 ```
-src/main.cyr             Entry point + 350 inline tests
+src/main.cyr             Entry point + 373 inline tests
 src/*.cyr                21 library modules (see above; list lives in cyrius.cyml [lib] modules)
 benches/libro_core.bcyr  14 core benchmarks (crypto / chain / merkle / sign)
 benches/libro_io.bcyr     8 i/o benchmarks (export / review / anchor / stream / filestore)

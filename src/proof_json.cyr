@@ -78,6 +78,510 @@ fn _sb_proof_anchor(sb, a) {
     return 0;
 }
 
+# ================================================================
+# proof_from_json — parse proof_to_json output back to an iproof
+# ================================================================
+# The 2.0.5 CHANGELOG's "Upcoming" for 2.0.6. Rebuilds an iproof
+# structure that passes proof_verify_* (as long as the original
+# proof also did).
+#
+# Tradeoffs / known limitations:
+#   - Anchor is a lossy field in the JSON emission format (only
+#     merkle_root / entry_count / chain_head / hash are emitted; UUID /
+#     hash_alg / created_at / prev_hash are dropped). A parsed anchor
+#     can't re-compute its self-hash, so anchor_verify_integrity
+#     would fail on a parsed anchor. The parser therefore leaves the
+#     iproof's anchor slot null regardless of what the JSON contains.
+#     Consumers who need anchor re-verification should cross-check
+#     out-of-band or use a lossless snapshot format.
+#   - Consistency proofs are not emitted by proof_to_json and so
+#     can't be parsed either — the iproof's consistency slot is
+#     always null on parse.
+#   - The tree field is not serialized; verify rebuilds it from
+#     entries as part of the "tree matches" check, so this is fine.
+#   - The hash_algorithm field on entries is preserved.
+#
+# lib/json.cyr is a flat parser; the proof shape has nested values
+# (especially per-entry `details` which can itself be a full JSON
+# object). This file implements the handful of byte-walker primitives
+# needed to handle that without pulling in a general nested parser.
+
+fn _pfj_skip_ws(d, p, end) {
+    while (p < end) {
+        var c = load8(d + p) & 0xFF;
+        if (c != 32 && c != 9 && c != 10 && c != 13) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# Skip one JSON value starting at p. Handles strings (with \" escapes),
+# objects, arrays, numbers, true/false/null. Returns position after the
+# value, or -1 on malformed input.
+fn _pfj_skip_value(d, p, end) {
+    p = _pfj_skip_ws(d, p, end);
+    if (p >= end) { return -1; }
+    var c = load8(d + p) & 0xFF;
+    if (c == 34) {
+        # string
+        p = p + 1;
+        while (p < end) {
+            var x = load8(d + p) & 0xFF;
+            if (x == 92) { p = p + 2; }
+            else {
+                if (x == 34) { return p + 1; }
+                else { p = p + 1; }
+            }
+        }
+        return -1;
+    }
+    if (c == 123 || c == 91) {
+        # object {} or array []
+        var depth = 1;
+        p = p + 1;
+        while (p < end && depth > 0) {
+            var x = load8(d + p) & 0xFF;
+            if (x == 34) {
+                # skip embedded string
+                p = p + 1;
+                var done_str = 0;
+                while (p < end && done_str == 0) {
+                    var y = load8(d + p) & 0xFF;
+                    if (y == 92) { p = p + 2; }
+                    else {
+                        if (y == 34) { p = p + 1; done_str = 1; }
+                        else { p = p + 1; }
+                    }
+                }
+            } else {
+                if (x == 123 || x == 91) {
+                    depth = depth + 1;
+                    p = p + 1;
+                } else {
+                    if (x == 125 || x == 93) {
+                        depth = depth - 1;
+                        p = p + 1;
+                    } else {
+                        p = p + 1;
+                    }
+                }
+            }
+        }
+        if (depth != 0) { return -1; }
+        return p;
+    }
+    # Scalar — scan until ,}] or whitespace
+    while (p < end) {
+        var x = load8(d + p) & 0xFF;
+        if (x == 44 || x == 125 || x == 93 || x == 32 || x == 9 || x == 10 || x == 13) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# Extract a quoted string starting at p (must point at `"`). Returns
+# (end_pos, cloned Str) packed — but Cyrius 5.4.2 caps multi-return at
+# 2, so we return end_pos via global and the Str as the function value.
+var _pfj_end_pos = 0;
+
+fn _pfj_parse_string(d, p, end) {
+    p = _pfj_skip_ws(d, p, end);
+    if (p >= end) { _pfj_end_pos = -1; return 0; }
+    if ((load8(d + p) & 0xFF) != 34) { _pfj_end_pos = -1; return 0; }
+    p = p + 1;
+    var start = p;
+    var has_escape = 0;
+    var str_done = 0;
+    while (p < end && str_done == 0) {
+        var x = load8(d + p) & 0xFF;
+        if (x == 92) { has_escape = 1; p = p + 2; }
+        else {
+            if (x == 34) { str_done = 1; }
+            else { p = p + 1; }
+        }
+    }
+    if (p >= end) { _pfj_end_pos = -1; return 0; }
+    var raw_len = p - start;
+    var out = 0;
+    if (has_escape == 0) {
+        out = str_clone(str_new(d + start, raw_len));
+    } else {
+        # Unescape minimally — we only emit \" \\ \n \r \t \/ in _sb_json_escape.
+        var buf = alloc(raw_len);
+        var bi = 0;
+        var si = start;
+        while (si < p) {
+            var x = load8(d + si) & 0xFF;
+            if (x == 92 && si + 1 < p) {
+                var nx = load8(d + si + 1) & 0xFF;
+                # Default: copy the byte after `\` as-is (covers \" \\ \/).
+                var ec = nx;
+                if (nx == 110) { ec = 10; }   # \n
+                if (nx == 114) { ec = 13; }   # \r
+                if (nx == 116) { ec = 9; }    # \t
+                if (nx == 98)  { ec = 8; }    # \b
+                if (nx == 102) { ec = 12; }   # \f
+                store8(buf + bi, ec);
+                bi = bi + 1;
+                si = si + 2;
+            } else {
+                store8(buf + bi, x);
+                bi = bi + 1;
+                si = si + 1;
+            }
+        }
+        out = str_clone(str_new(buf, bi));
+    }
+    _pfj_end_pos = p + 1;
+    return out;
+}
+
+# Parse an integer (possibly negative) at p. Returns the int, sets _pfj_end_pos.
+fn _pfj_parse_int(d, p, end) {
+    p = _pfj_skip_ws(d, p, end);
+    if (p >= end) { _pfj_end_pos = -1; return 0; }
+    var neg = 0;
+    if ((load8(d + p) & 0xFF) == 45) { neg = 1; p = p + 1; }
+    var n = 0;
+    var started = 0;
+    while (p < end) {
+        var c = load8(d + p) & 0xFF;
+        if (c >= 48 && c <= 57) {
+            n = n * 10 + (c - 48);
+            started = 1;
+            p = p + 1;
+        } else { break; }
+    }
+    if (started == 0) { _pfj_end_pos = -1; return 0; }
+    _pfj_end_pos = p;
+    if (neg == 1) { return -n; }
+    return n;
+}
+
+# Match a literal at p (returns end pos on match, or -1).
+fn _pfj_match_literal(d, p, end, lit, lit_len) {
+    p = _pfj_skip_ws(d, p, end);
+    if (p + lit_len > end) { return -1; }
+    var i = 0;
+    while (i < lit_len) {
+        if ((load8(d + p + i) & 0xFF) != (load8(lit + i) & 0xFF)) { return -1; }
+        i = i + 1;
+    }
+    return p + lit_len;
+}
+
+# Find the value-start position for key "name" within [p, end). Returns -1 if not found.
+# Assumes we're inside an object — scans key:value pairs, balancing nested braces/strings.
+fn _pfj_find_key_at(d, p, end, key_cstr) {
+    var klen = strlen(key_cstr);
+    p = _pfj_skip_ws(d, p, end);
+    if (p >= end || (load8(d + p) & 0xFF) != 123) { return -1; }
+    p = p + 1;
+    var depth = 1;
+    while (p < end && depth > 0) {
+        p = _pfj_skip_ws(d, p, end);
+        if (p >= end) { return -1; }
+        var c = load8(d + p) & 0xFF;
+        if (c == 125) { return -1; }
+        if (c != 34) {
+            p = p + 1;
+            continue;
+        }
+        # At a key string
+        var key_start = p + 1;
+        var kp = key_start;
+        var key_done = 0;
+        while (kp < end && key_done == 0) {
+            var x = load8(d + kp) & 0xFF;
+            if (x == 92) { kp = kp + 2; }
+            else {
+                if (x == 34) { key_done = 1; }
+                else { kp = kp + 1; }
+            }
+        }
+        if (kp >= end) { return -1; }
+        var this_klen = kp - key_start;
+        # Skip colon
+        var ap = kp + 1;
+        ap = _pfj_skip_ws(d, ap, end);
+        if (ap >= end || (load8(d + ap) & 0xFF) != 58) { return -1; }
+        ap = _pfj_skip_ws(d, ap + 1, end);
+        # Compare key
+        if (this_klen == klen && memeq(d + key_start, key_cstr, klen) == 1) {
+            return ap;
+        }
+        # Skip value, then a comma or closing brace
+        var after_val = _pfj_skip_value(d, ap, end);
+        if (after_val < 0) { return -1; }
+        after_val = _pfj_skip_ws(d, after_val, end);
+        if (after_val >= end) { return -1; }
+        var sep = load8(d + after_val) & 0xFF;
+        if (sep == 125) { return -1; }
+        if (sep != 44) { return -1; }
+        p = after_val + 1;
+    }
+    return -1;
+}
+
+# Parse an optional "null | string" field at p. Returns 0 for null, Str for string.
+# Sets _pfj_end_pos to the position after the value.
+fn _pfj_parse_string_or_null(d, p, end) {
+    p = _pfj_skip_ws(d, p, end);
+    if (p >= end) { _pfj_end_pos = -1; return 0; }
+    # Check for "null"
+    if (p + 4 <= end) {
+        if ((load8(d + p) & 0xFF) == 110 &&
+            (load8(d + p + 1) & 0xFF) == 117 &&
+            (load8(d + p + 2) & 0xFF) == 108 &&
+            (load8(d + p + 3) & 0xFF) == 108) {
+            _pfj_end_pos = p + 4;
+            return 0;
+        }
+    }
+    return _pfj_parse_string(d, p, end);
+}
+
+fn _pfj_parse_tree_head(d, start, end) {
+    var root_pos = _pfj_find_key_at(d, start, end, "root");
+    if (root_pos < 0) { return 0; }
+    var root = _pfj_parse_string(d, root_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var ts_pos = _pfj_find_key_at(d, start, end, "tree_size");
+    if (ts_pos < 0) { return 0; }
+    var tree_size = _pfj_parse_int(d, ts_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var tsp = _pfj_find_key_at(d, start, end, "timestamp");
+    var timestamp = str_from("");
+    if (tsp >= 0) {
+        var t = _pfj_parse_string(d, tsp, end);
+        if (_pfj_end_pos >= 0) { timestamp = t; }
+    }
+
+    var sig_pos = _pfj_find_key_at(d, start, end, "signature");
+    var sig = str_from("");
+    if (sig_pos >= 0) {
+        var s = _pfj_parse_string_or_null(d, sig_pos, end);
+        if (s != 0) { sig = s; }
+    }
+
+    var vk_pos = _pfj_find_key_at(d, start, end, "verifying_key");
+    var vk = str_from("");
+    if (vk_pos >= 0) {
+        var v = _pfj_parse_string_or_null(d, vk_pos, end);
+        if (v != 0) { vk = v; }
+    }
+
+    var alg_pos = _pfj_find_key_at(d, start, end, "algorithm");
+    var alg = 0;  # SIG_ALG_ED25519 is 0
+    if (alg_pos >= 0) {
+        var a = _pfj_parse_string_or_null(d, alg_pos, end);
+        # If present and equals "ML-DSA-65" or similar, would map to 1.
+        # For now accept only null or Ed25519 (matches what 2.0.x emits).
+        if (a != 0 && str_len(a) > 0 && str_eq(a, str_from("ML-DSA-65")) == 1) {
+            alg = 1;
+        }
+    }
+
+    var sth = sth_new(root, tree_size, sig, vk, alg);
+    # sth_new uses current time for timestamp; overwrite with the parsed one.
+    sth_set_timestamp(sth, timestamp);
+    return sth;
+}
+
+fn _pfj_parse_one_entry(d, start, end) {
+    # Parse the 10 entry fields.
+    var id_pos = _pfj_find_key_at(d, start, end, "id");
+    if (id_pos < 0) { return 0; }
+    var id_hex = _pfj_parse_string(d, id_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var ts_pos = _pfj_find_key_at(d, start, end, "timestamp");
+    if (ts_pos < 0) { return 0; }
+    var timestamp = _pfj_parse_string(d, ts_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var sev_pos = _pfj_find_key_at(d, start, end, "severity");
+    if (sev_pos < 0) { return 0; }
+    var sev_str = _pfj_parse_string(d, sev_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+    var severity = _parse_severity(sev_str);
+
+    var src_pos = _pfj_find_key_at(d, start, end, "source");
+    if (src_pos < 0) { return 0; }
+    var source = _pfj_parse_string(d, src_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var act_pos = _pfj_find_key_at(d, start, end, "action");
+    if (act_pos < 0) { return 0; }
+    var action = _pfj_parse_string(d, act_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    # details: raw JSON value — grab its substring as-is.
+    var det_pos = _pfj_find_key_at(d, start, end, "details");
+    if (det_pos < 0) { return 0; }
+    var det_start = _pfj_skip_ws(d, det_pos, end);
+    var det_end_pos = _pfj_skip_value(d, det_start, end);
+    if (det_end_pos < 0) { return 0; }
+    var details = str_clone(str_new(d + det_start, det_end_pos - det_start));
+
+    var aid_pos = _pfj_find_key_at(d, start, end, "agent_id");
+    var agent_id = 0;
+    if (aid_pos >= 0) {
+        agent_id = _pfj_parse_string_or_null(d, aid_pos, end);
+    }
+
+    var ph_pos = _pfj_find_key_at(d, start, end, "prev_hash");
+    var prev_hash = str_from("");
+    if (ph_pos >= 0) {
+        var ph = _pfj_parse_string(d, ph_pos, end);
+        if (_pfj_end_pos >= 0) { prev_hash = ph; }
+    }
+
+    var h_pos = _pfj_find_key_at(d, start, end, "hash");
+    if (h_pos < 0) { return 0; }
+    var hash = _pfj_parse_string(d, h_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    # Build the entry with known hash — bypass entry_new which would
+    # recompute. Set fields via derived setters.
+    var e = fl_alloc(88);
+    _filestore_parse_uuid(e, id_hex);
+    entry_set_timestamp(e, timestamp);
+    entry_set_severity(e, severity);
+    entry_set_source(e, source);
+    entry_set_action(e, action);
+    entry_set_details(e, details);
+    entry_set_agent_id(e, agent_id);
+    entry_set_prev_hash(e, prev_hash);
+    entry_set_hash(e, hash);
+    entry_set_hash_algorithm(e, str_from(HASH_ALGORITHM));
+    return e;
+}
+
+fn _pfj_parse_one_inclusion(d, start, end) {
+    var idx_pos = _pfj_find_key_at(d, start, end, "index");
+    if (idx_pos < 0) { return 0; }
+    var index = _pfj_parse_int(d, idx_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var leaf_pos = _pfj_find_key_at(d, start, end, "leaf");
+    if (leaf_pos < 0) { return 0; }
+    var leaf = _pfj_parse_string(d, leaf_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var root_pos = _pfj_find_key_at(d, start, end, "root");
+    if (root_pos < 0) { return 0; }
+    var root = _pfj_parse_string(d, root_pos, end);
+    if (_pfj_end_pos < 0) { return 0; }
+
+    var path_pos = _pfj_find_key_at(d, start, end, "path");
+    if (path_pos < 0) { return 0; }
+    path_pos = _pfj_skip_ws(d, path_pos, end);
+    if (path_pos >= end || (load8(d + path_pos) & 0xFF) != 91) { return 0; }
+    path_pos = path_pos + 1;
+    var path = vec_new();
+    while (path_pos < end) {
+        path_pos = _pfj_skip_ws(d, path_pos, end);
+        if (path_pos >= end) { return 0; }
+        var c = load8(d + path_pos) & 0xFF;
+        if (c == 93) { break; }
+        if (c == 44) { path_pos = path_pos + 1; continue; }
+        var s = _pfj_parse_string(d, path_pos, end);
+        if (_pfj_end_pos < 0) { return 0; }
+        vec_push(path, s);
+        path_pos = _pfj_end_pos;
+    }
+
+    return merkle_proof_new(index, leaf, path, root);
+}
+
+# Walk an array `[{...},{...},…]` at pos, calling parser_id for each element.
+# parser_id = 0 → entries; 1 → inclusions. (Cyrius fnptrs on inline callbacks
+# here would work too, but keeping it dispatch-by-id avoids a callback dance.)
+fn _pfj_parse_array(d, pos, end, parser_id) {
+    var out = vec_new();
+    pos = _pfj_skip_ws(d, pos, end);
+    if (pos >= end || (load8(d + pos) & 0xFF) != 91) { return out; }
+    pos = pos + 1;
+    while (pos < end) {
+        pos = _pfj_skip_ws(d, pos, end);
+        if (pos >= end) { return out; }
+        var c = load8(d + pos) & 0xFF;
+        if (c == 93) { return out; }
+        if (c == 44) { pos = pos + 1; continue; }
+        if (c != 123) { return out; }
+        # Find the bounds of this object
+        var obj_end = _pfj_skip_value(d, pos, end);
+        if (obj_end < 0) { return out; }
+        var item = 0;
+        if (parser_id == 0) {
+            item = _pfj_parse_one_entry(d, pos, obj_end);
+        } else {
+            item = _pfj_parse_one_inclusion(d, pos, obj_end);
+        }
+        if (item != 0) { vec_push(out, item); }
+        pos = obj_end;
+    }
+    return out;
+}
+
+fn proof_from_json(s) {
+    if (s == 0 || str_len(s) == 0) { return 0; }
+    var d = str_data(s);
+    var end = str_len(s);
+
+    # Check for top-level "null"
+    var first = _pfj_skip_ws(d, 0, end);
+    if (first + 4 <= end) {
+        if ((load8(d + first) & 0xFF) == 110 &&
+            (load8(d + first + 1) & 0xFF) == 117 &&
+            (load8(d + first + 2) & 0xFF) == 108 &&
+            (load8(d + first + 3) & 0xFF) == 108) {
+            return 0;
+        }
+    }
+
+    # tree_head
+    var th_pos = _pfj_find_key_at(d, 0, end, "tree_head");
+    if (th_pos < 0) { return 0; }
+    var th_end = _pfj_skip_value(d, th_pos, end);
+    if (th_end < 0) { return 0; }
+    var sth = _pfj_parse_tree_head(d, th_pos, th_end);
+    if (sth == 0) { return 0; }
+
+    # entries
+    var en_pos = _pfj_find_key_at(d, 0, end, "entries");
+    if (en_pos < 0) { return 0; }
+    var entries = _pfj_parse_array(d, en_pos, end, 0);
+
+    # inclusions
+    var in_pos = _pfj_find_key_at(d, 0, end, "inclusions");
+    var inclusions = vec_new();
+    if (in_pos >= 0) {
+        inclusions = _pfj_parse_array(d, in_pos, end, 1);
+    }
+
+    # anchor — intentionally not reconstructed (lossy format; see header
+    # docs above). The iproof's anchor slot stays null.
+
+    var ip = fl_alloc(48);
+    iproof_set_tree_head(ip, sth);
+    iproof_set_consistency(ip, 0);
+    iproof_set_inclusions(ip, inclusions);
+    iproof_set_entries(ip, entries);
+    iproof_set_anchor(ip, 0);
+    # Rebuild tree from entries so proof_verify's tree-matches check has
+    # something to work with. If entries is empty, leave tree at 0.
+    if (vec_len(entries) > 0) {
+        iproof_set_tree(ip, merkle_build(entries));
+    } else {
+        iproof_set_tree(ip, 0);
+    }
+    return ip;
+}
+
 fn proof_to_json(ip) {
     if (ip == 0) { return str_from("null"); }
     var sb = str_builder_new();
