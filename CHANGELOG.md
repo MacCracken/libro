@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4] - 2026-04-19
+
+Scaffold-hardening sprint with zero src/* library changes — five
+threads, all concentrated in CI gates, tests, and long-lived
+documentation. The goal was to lock in the 2.0 design decisions as
+durable ADRs, formalize the threat model, and extend the CI safety
+net so future regressions of the classes caught in 2.0.0 / 2.0.2 /
+2.0.3 can't recur.
+
+### Added
+- **ADR 0005 — `#derive(accessors)` adoption** (`docs/adr/`).
+  Documents why 2.0 reversed v1.2.0's REJECT decision: the
+  UUID-zeroing bug surfaced during 2.0 made the safety case
+  explicit, agnosys convention shifted, and cc5 5.4.7 stabilized
+  derive generation. Codifies the UUID-placeholder pattern and the
+  "raw offsets inside defining file" convention.
+- **ADR 0006 — `dist/libro.cyr` committed-artifact contract**
+  (`docs/adr/`). The invariants that make `cyrius distlib` safe:
+  `[lib] modules ⊇ main.cyr includes`, four-way version parity
+  (VERSION / cyrius.cyml / dist header / git tag), why the
+  `SIG_ALG_ED25519` warning is expected (stdlib/sigil/patra
+  precede libro in consumer include order). Rooted in Finding 1
+  from 2.0.0's hardening pass.
+- **ADR 0007 — Nested / scalar-aware canonical-JSON hashing**
+  (`docs/adr/`). The 2.0 breaking change explained: 1.x quoted
+  every JSON value as a string, silently collapsing `{"n": 42}`
+  and `{"n": "42"}` into identical hashes (a latent
+  second-preimage primitive). Describes the recursive byte-walker
+  that replaces it and spells out the re-verification expectation
+  for consumers with non-string / nested `details` in 1.x chains.
+- **Threat model** (`docs/development/threat-model.md`). Replaces
+  the 40-line Rust-era stub with a Cyrius/2.0.3-era version:
+  trust-boundary diagram, asset table, 12 numbered threats with
+  mitigation / residual-risk / status per class, supply-chain pin
+  list, review cadence. Absorbs findings from the 2.0 audit as
+  mitigation precedents.
+- **CI bench-history wiring** (`.github/workflows/ci.yml`). The
+  `LIBRO_BENCH_HISTORY` + `LIBRO_BENCH_TAG` infrastructure shipped
+  in 2.0 but CI wasn't consuming it — we had no perf trend across
+  cuts. Now every CI run emits one CSV row per bench tagged with
+  the commit SHA, uploaded as an `actions/upload-artifact@v4`
+  workflow artifact with 90-day retention. Local dry-run confirms
+  14 rows from `libro_core` alone.
+- **CI raw-offset allowlist gate** (`.github/workflows/ci.yml`).
+  Per-file registry of parameter names that may appear in raw
+  `load64(X + N)` / `store64(X + N, …)` / `load64(X)` form.
+  Complements the specific-struct guard from 2.0.1/2.0.2: that
+  one covers 7 unambiguous (struct, param) pairs; this one closes
+  the ambiguous-single-letter case by requiring per-file
+  registration of every raw-offset param name. A new raw-offset
+  site on an unregistered name fails CI — forcing the author
+  either to use a derived accessor (preferred) or to opt into the
+  allowlist with a justification comment. The gate flagged my own
+  layout-test locals on first dry-run, which is the correct
+  behavior.
+- **Struct-layout invariant tests** in `src/main.cyr` — three
+  tests covering the `#derive(accessors)` shape spectrum: chain
+  (4 fields, no UUID), iproof (6 fields, no UUID), anchor
+  (9 fields, 16-byte inline-UUID prefix). Each test writes
+  sentinel values via raw offsets and asserts the derived
+  accessors return them, then writes via derived setters and
+  asserts raw-offset reads see them. Guards against a future
+  Cyrius `#derive(accessors)` compiler regression that emits
+  offsets inconsistently. The tests' locals are named
+  `chain_layout` / `iproof_layout` / `anchor_layout` (not `c` /
+  `ip` / `a`) to avoid triggering the specific-struct guard;
+  they're explicitly registered in the allowlist with a comment.
+
+### Validation
+- **316 tests, 0 failed** (294 → 316: +22 asserts from three
+  layout-invariant tests).
+- 22 benches, 11 fuzz targets — all clean.
+- All four CI gates dry-run green: manifest completeness,
+  specific-struct raw-offset guard, per-file allowlist,
+  dist-freshness.
+- No `src/*.cyr` library-code changes — dist byte-identical to
+  2.0.3 except for the version-header line.
+- Lint + format clean; binary 440 KB (was 437 KB — +3 KB from
+  the three layout-test functions).
+
 ## [2.0.3] - 2026-04-19
 
 Fuzz-driven hardening sprint. Three new fuzz targets were added for
@@ -779,6 +859,7 @@ previously-gated tests.
 - `VERSION` file and `scripts/version-bump.sh`
 - README with architecture overview, roadmap, and reference code pointers
 
+[2.0.4]: https://github.com/MacCracken/libro/compare/2.0.3...2.0.4
 [2.0.3]: https://github.com/MacCracken/libro/compare/2.0.2...2.0.3
 [2.0.2]: https://github.com/MacCracken/libro/compare/2.0.1...2.0.2
 [2.0.1]: https://github.com/MacCracken/libro/compare/2.0.0...2.0.1

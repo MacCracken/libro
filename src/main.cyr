@@ -1065,6 +1065,88 @@ fn test_proof_to_json_unsigned() {
     assert(load8(data + str_len(json) - 1) == 125, "proof_to_json ends with '}'");
 }
 
+# ================================================================
+# Struct-layout invariant tests (ADR 0005 guard)
+# ================================================================
+# For each #derive(accessors) struct we care about, write sentinel
+# values via raw offsets and read via derived getters — and vice
+# versa. If a future Cyrius release regenerates accessors at
+# different offsets, or a struct declaration is edited without
+# updating call sites, these tests fail loudly. Without them, an
+# off-by-one in the derived emission could silently read the wrong
+# field. Three structs cover the shape spectrum:
+#   - chain: 4 fields, no UUID
+#   - iproof: 6 fields, no UUID
+#   - anchor: 9 fields, inline-UUID prefix (_uuid_hi / _uuid_lo)
+
+fn test_layout_chain() {
+    # 4 fields × 8 bytes = 32 bytes. Local is named `chain_layout` (not `c`)
+    # so the CI raw-offset guard (which forbids `c + N` outside chain.cyr)
+    # doesn't flag this intentional layout-probe test.
+    var chain_layout = fl_alloc(32);
+    store64(chain_layout,      0x1111111111111111);
+    store64(chain_layout + 8,  0x2222222222222222);
+    store64(chain_layout + 16, 0x3333333333333333);
+    store64(chain_layout + 24, 0x4444444444444444);
+    assert(chain_entries(chain_layout)      == 0x1111111111111111, "chain.entries at +0");
+    assert(chain_prev_hash(chain_layout)    == 0x2222222222222222, "chain.prev_hash at +8");
+    assert(chain_max_capacity(chain_layout) == 0x3333333333333333, "chain.max_capacity at +16");
+    assert(chain_overflow(chain_layout)     == 0x4444444444444444, "chain.overflow at +24");
+
+    chain_set_entries(chain_layout,      0xAAAA);
+    chain_set_prev_hash(chain_layout,    0xBBBB);
+    chain_set_max_capacity(chain_layout, 0xCCCC);
+    chain_set_overflow(chain_layout,     0xDDDD);
+    assert(load64(chain_layout)      == 0xAAAA, "chain_set_entries writes at +0");
+    assert(load64(chain_layout + 8)  == 0xBBBB, "chain_set_prev_hash writes at +8");
+    assert(load64(chain_layout + 16) == 0xCCCC, "chain_set_max_capacity writes at +16");
+    assert(load64(chain_layout + 24) == 0xDDDD, "chain_set_overflow writes at +24");
+}
+
+fn test_layout_iproof() {
+    # 6 fields × 8 bytes = 48 bytes. Local named `iproof_layout` so the
+    # specific-struct guard (which forbids `ip + N` outside proof.cyr)
+    # doesn't flag this intentional probe.
+    var iproof_layout = fl_alloc(48);
+    store64(iproof_layout,      0x1111111111111111);
+    store64(iproof_layout + 8,  0x2222222222222222);
+    store64(iproof_layout + 16, 0x3333333333333333);
+    store64(iproof_layout + 24, 0x4444444444444444);
+    store64(iproof_layout + 32, 0x5555555555555555);
+    store64(iproof_layout + 40, 0x6666666666666666);
+    assert(iproof_tree_head(iproof_layout)   == 0x1111111111111111, "iproof.tree_head at +0");
+    assert(iproof_consistency(iproof_layout) == 0x2222222222222222, "iproof.consistency at +8");
+    assert(iproof_inclusions(iproof_layout)  == 0x3333333333333333, "iproof.inclusions at +16");
+    assert(iproof_entries(iproof_layout)     == 0x4444444444444444, "iproof.entries at +24");
+    assert(iproof_anchor(iproof_layout)      == 0x5555555555555555, "iproof.anchor at +32");
+    assert(iproof_tree(iproof_layout)        == 0x6666666666666666, "iproof.tree at +40");
+}
+
+fn test_layout_anchor() {
+    # 9 fields × 8 bytes = 72 bytes, first 16 are inline-UUID
+    # placeholders (_uuid_hi / _uuid_lo). The pointer-returning
+    # anchor_id stays manual (returns &_uuid_hi = pointer to struct head).
+    var anchor_layout = fl_alloc(72);
+    store64(anchor_layout,      0x0101010101010101);   # _uuid_hi
+    store64(anchor_layout + 8,  0x0202020202020202);   # _uuid_lo
+    store64(anchor_layout + 16, 0x1616161616161616);   # merkle_root
+    store64(anchor_layout + 24, 0x1818181818181818);   # entry_count
+    store64(anchor_layout + 32, 0x2020202020202020);   # chain_head
+    store64(anchor_layout + 40, 0x2828282828282828);   # hash_alg
+    store64(anchor_layout + 48, 0x3030303030303030);   # created_at
+    store64(anchor_layout + 56, 0x3838383838383838);   # prev_hash
+    store64(anchor_layout + 64, 0x4040404040404040);   # hash
+    assert(anchor_merkle_root(anchor_layout) == 0x1616161616161616, "anchor.merkle_root at +16");
+    assert(anchor_entry_count(anchor_layout) == 0x1818181818181818, "anchor.entry_count at +24");
+    assert(anchor_chain_head(anchor_layout)  == 0x2020202020202020, "anchor.chain_head at +32");
+    assert(anchor_hash_alg(anchor_layout)    == 0x2828282828282828, "anchor.hash_alg at +40");
+    assert(anchor_created_at(anchor_layout)  == 0x3030303030303030, "anchor.created_at at +48");
+    assert(anchor_prev_hash(anchor_layout)   == 0x3838383838383838, "anchor.prev_hash at +56");
+    assert(anchor_hash(anchor_layout)        == 0x4040404040404040, "anchor.hash at +64");
+    # anchor_id returns the pointer to the UUID prefix (i.e., the head).
+    assert(anchor_id(anchor_layout) == anchor_layout, "anchor_id returns head pointer");
+}
+
 fn test_proof_to_json_null_on_zero() {
     var json = proof_to_json(0);
     var expected = str_from("null");
@@ -2056,6 +2138,11 @@ fn main() {
 
     test_group("Kernel audit");
     test_kernel_classify();
+
+    test_group("Struct layout (#derive accessors)");
+    test_layout_chain();
+    test_layout_iproof();
+    test_layout_anchor();
 
     test_group("Integrity proof");
     test_proof_unsigned();

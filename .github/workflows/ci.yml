@@ -67,6 +67,71 @@ jobs:
           fi
           echo "Manifest covers all main.cyr src/ includes."
 
+      - name: Raw-offset allowlist (per-file registered params)
+        run: |
+          # Complementary to the specific-struct guard below: every raw
+          # `load64(X + N)` / `store64(X + N, …)` / `load64(X)` site in
+          # src/*.cyr must use a parameter name registered for that file
+          # in the allowlist below. A NEW raw-offset site on an
+          # unregistered name fails CI — forcing the author to either
+          # (a) switch to a derived accessor, or (b) explicitly opt
+          # into the allowlist with review.
+          #
+          # The allowlist is a snapshot of 2.0.3's legitimate raw-offset
+          # sites (structs accessed inside their defining file + a few
+          # local-buffer cases). Any addition here should be justified
+          # by a comment in the edited source file.
+          declare -A ALLOW
+          ALLOW[src/anchoring.cyr]="a r _hf_lebuf"
+          ALLOW[src/chain.cyr]="a c"
+          ALLOW[src/entry.cyr]="e _ts_buf"
+          ALLOW[src/error.cyr]="e"
+          ALLOW[src/export.cyr]="sb"
+          ALLOW[src/file_store.cyr]="e s"
+          ALLOW[src/hasher.cyr]="h _hf_lebuf"
+          # main.cyr: test locals. chain_layout/iproof_layout/anchor_layout
+          # are intentional raw-offset probes in the #derive(accessors)
+          # layout-invariant tests (test_layout_* — see ADR 0005).
+          ALLOW[src/main.cyr]="a c e e1 ip probe1 probe2 chain_layout iproof_layout anchor_layout"
+          ALLOW[src/merkle.cyr]="cp mp pn t tree"
+          ALLOW[src/patra_store.cyr]="e s"
+          ALLOW[src/proof.cyr]="ip p pv s"
+          ALLOW[src/query.cyr]="q"
+          ALLOW[src/retention.cyr]="r"
+          ALLOW[src/review.cyr]="r s"
+          ALLOW[src/signing.cyr]="es sk vk"
+          ALLOW[src/store.cyr]="s"
+          ALLOW[src/streaming.cyr]="entries s sub"
+          ALLOW[src/timestamping.cyr]="a r resp"
+          # Files not listed default to empty allowlist (consumers only).
+          FAILED=0
+          for f in src/*.cyr; do
+            hits=$(grep -nE '(load64|store64)\([a-zA-Z_][a-zA-Z0-9_]*(\s*\+\s*[0-9]+)?' "$f" 2>/dev/null || true)
+            [ -z "$hits" ] && continue
+            allowed="${ALLOW[$f]:-}"
+            while IFS= read -r line; do
+              pname=$(echo "$line" \
+                | grep -oE '(load64|store64)\([a-zA-Z_][a-zA-Z0-9_]*' \
+                | head -1 \
+                | sed -E 's/(load64|store64)\(//')
+              # Skip the rare store64(<literal>, ...) pattern — not applicable here.
+              [ -z "$pname" ] && continue
+              ok=0
+              for a in $allowed; do
+                [ "$pname" = "$a" ] && { ok=1; break; }
+              done
+              if [ "$ok" -eq 0 ]; then
+                echo "FAIL in $f: raw-offset on unregistered param '$pname'"
+                echo "  $line"
+                echo "  → either switch to a derived accessor (preferred) or add '$pname'"
+                echo "    to the allowlist for $f with a comment justifying it."
+                FAILED=1
+              fi
+            done <<< "$hits"
+          done
+          if [ "$FAILED" -ne 0 ]; then exit 1; fi
+          echo "Raw-offset allowlist: clean (all sites use registered params)."
+
       - name: Raw-offset guard (derived structs outside defining files)
         run: |
           # Cross-module readers must use derived accessors on #derive(accessors)
@@ -136,12 +201,33 @@ jobs:
           done
 
       - name: Benchmarks
+        env:
+          # Append one CSV row per bench to bench-history.csv, tagged
+          # with the commit SHA so successive runs form a perf trend.
+          # bench_history_write() is a no-op when LIBRO_BENCH_HISTORY
+          # is unset, so this has zero overhead for local runs.
+          LIBRO_BENCH_HISTORY: ${{ github.workspace }}/bench-history.csv
+          LIBRO_BENCH_TAG: ${{ github.sha }}
         run: |
           for f in benches/*.bcyr; do
             name=$(basename "$f" .bcyr)
             CYRIUS_DCE=1 cyrius build "$f" "build/$name"
             "build/$name"
           done
+          if [ -f "$LIBRO_BENCH_HISTORY" ]; then
+            echo "=== bench history rows this run ==="
+            tail -n +1 "$LIBRO_BENCH_HISTORY" | head -40
+            echo "==="
+          fi
+
+      - name: Upload bench history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-history-${{ github.sha }}
+          path: bench-history.csv
+          if-no-files-found: ignore
+          retention-days: 90
 
       - name: dist/libro.cyr is up-to-date
         run: |
