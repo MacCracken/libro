@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-05-10
+
+**Raw-offset CI guard extended to the remaining derived structs.**
+Second item on the sequenced 2.6.x patch line. Two complementary
+checks land: six new unambiguous-param structs join the cross-file
+guard, and a brand-new offset-bound check enforces field-count
+discipline on the seven ambiguous-param structs (those sharing
+single-letter names `a` / `e` / `r` / `s` across multiple files).
+
+### Added
+
+- **Extended cross-file specific-struct guard** in
+  `.github/workflows/ci.yml`. Six new `check_struct` entries:
+  - `pv` (proof.cyr, param `pv`)
+  - `proof_node` (merkle.cyr, param `pn`)
+  - `merkle_tree` (merkle.cyr, param `tree`)
+  - `ts_response` (timestamping.cyr, param `resp`)
+  - `_sub` (streaming.cyr, param `sub`)
+  - `tpm_anchor` (tpm_anchor.cyr, param `ta`)
+  Each param is unambiguous across libro (verified by grep
+  across `src/*.cyr` for the param + raw-offset pattern). Total
+  specific-struct cross-file coverage: 7 → 13.
+- **New CI gate — "Raw-offset bound check (struct field-count
+  enforcement)".** For the seven ambiguous-param structs whose
+  param name appears in multiple defining files (anchor, archive,
+  ts_attestation, entry, error, filestore, _patrastore, sth,
+  receipt, retention, review, integrity, memstore, stream,
+  ts_request), the gate validates that each `load64(param + N)` /
+  `store64(param + N, …)` site stays within the struct's field
+  count (`max_offset = (n_fields - 1) * 8`). 17 (file, param,
+  struct, field_count) tuples registered.
+- **Sanity-checked the new gate fires** by injecting a bogus
+  `store64(r + 64, 0)` in `src/retention.cyr` (retention is a
+  2-field struct, max +8); the gate caught the +64 offset
+  immediately. Source restored afterwards; no committed change
+  from the sanity check.
+
+### Bug class caught
+
+Off-by-one offset bugs after a struct shrinks — e.g., removing a
+field from a derived-accessors struct leaves stale raw-offset
+references in the defining file that point past the new struct
+boundary. The cross-file specific-struct guard never caught this
+because it only fires on raw offsets *outside* the defining file.
+The per-file allowlist registers param names but doesn't constrain
+the offset values. The new offset-bound gate closes the gap.
+
+### Verified
+
+- Local CI sim of the extended cross-file guard against current
+  `src/*.cyr` — PASS (no false positives on the 6 new struct
+  entries).
+- Local CI sim of the new offset-bound gate against current
+  `src/*.cyr` — PASS (all 17 tracked (file, param, struct)
+  triples have offset values within the registered max).
+- Build clean (`CYRIUS_DCE=1 cyrius build src/main.cyr build/libro`).
+- Test suite: 502 passed, 0 failed (unchanged from 2.6.1).
+- LIBRO_TPM build: 514 passed, 0 failed (unchanged from 2.6.1).
+
+### Maintenance
+
+- When a `#derive(accessors)` struct gains or loses a field, the
+  corresponding `field_count` in the offset-bound table needs to
+  be updated. The maintenance signal is loud: the CI gate fires
+  immediately on a stale field count combined with a new
+  raw-offset site outside the old range.
+- Adding a new derived struct: if its canonical param name is
+  unambiguous across `src/*.cyr`, register it via `check_struct`
+  in the cross-file guard. If the param name is shared, register
+  via `check_offset_bound` in the new gate.
+
 ## [2.6.1] - 2026-05-10
 
 **Layout-invariant coverage expansion.** The first item on the

@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — libro
 
-> **Last refresh**: 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup pass — 4 stale rows → fresh, 2 read-through rows → fresh) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup pass + 2.6.2 wrap-up — roadmap stripped to forward-facing only) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`libro`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo dep pin drift lives in [`development/dependency-watch.md`](development/dependency-watch.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Libro is a cryptographic audit-chain library every Cyrius audit-event consumer (daimon, aegis, stiva, sigil, ark) depends on — stale API / trust-model / verification docs propagate downstream, so doc currency carries weight. The doc surface is moderate (~25 files) and most are load-bearing.
@@ -60,8 +60,8 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 | `SECURITY.md` | 2026-04-19 | 🔵 No version-tied claims | Reporting policy + scope. |
 | `CODE_OF_CONDUCT.md` | 2026-03-21 | 🔵 No version-tied claims | Standard. |
 | `DEPS-PATTERN.md` | 2026-04-19 | 🔵 No version-tied claims | The `dist/libro.cyr` distribution contract. Patra is the reference. |
-| `VERSION` | 2026-05-10 | ✅ Fresh | `2.6.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
-| `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
+| `VERSION` | 2026-05-10 | ✅ Fresh | `2.6.2` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `LICENSE` | (initial commit) | 🔵 No version-tied claims | GPL-3.0-only. |
 
 ---
 
@@ -69,7 +69,7 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-05-10 | ✅ Fresh | 2.x roadmap closed at 2.5.0 (PQ + hybrid + PatraStore perf + TPM all shipped). 2.6.0 closes `proof_from_json` round-trip. "Open — unblocked (not yet slotted)" still lists JSON streaming, RFC 6901 pointers, struct-layout test expansion, raw-offset guard expansion. |
+| `roadmap.md` | 2026-05-10 | ✅ Fresh | Forward-facing only as of 2.6.2: open 2.6.x items (RFC 6901 pointers / proof_to_json bench re-investigation / JSON streaming), ecosystem-blocked threads, items tracked in other repos, and ideas. Release history was moved out — CHANGELOG owns release detail. |
 | `threat-model.md` | 2026-05-10 | ✅ Fresh | Refreshed in post-2.6.0 docs pass: added T13 (PQ cryptanalysis, MITIGATED via 2.2/2.3) and T14 (anchor tampering, software-mitigated + hardware-sealed opt-in via 2.5.0); upgraded T2 (entry forgery) for polymorphic 3-way dispatch; upgraded T6 (key material) for `secret var` + `getrandom` + alg-aware zeroize; refreshed supply-chain block + residual-risk table. |
 | `dependency-watch.md` | 2026-05-10 | ✅ Fresh | Refreshed in post-2.6.0 docs pass: external-dep table now reflects current pins (cyrius 5.10.34 / sigil 3.0.1 / patra 1.9.3 / agnosys 1.0.4); stdlib table grew to 22 modules; PQ stack + PatraStore perf + opt-in TPM tracked; crypto-primitives history extended through 2.5.0; watch-list items marked SHIPPED. |
 
@@ -141,12 +141,9 @@ None outstanding for the 2.6.0 cut. This section will repopulate when:
 
 ## Open items currently on the roadmap
 
-State summary for cross-reference with `docs/development/roadmap.md`:
-
-- **`lib/test.cyr` table-driven refactor** — investigated in 2.1.1, not pursued for that release. libro's current homogeneous test groups exercise different accessor fns per case, so `test_each` adds indirection without LOC savings.
-- **`proof_to_json` bench-context control-flow hijack** — still open. Re-tested in 2.1.1 + 2.2.0 + 2.5.0 against cyrius 5.10.34; bug persists, manifestation changed. Sequenced as 4th of 5 items on the 2.6.x line.
-- **Raw-offset guard expansion to ambiguous-param structs / RFC 6901 JSON Pointer queries / JSON streaming** — sequenced as 2.6.2 / 2.6.3 / tail-end items on the 2.6.x patch line per `roadmap.md`.
-- **Struct-layout invariant tests for the remaining structs** — ✅ shipped in 2.6.1. 15 new test_layout_* fns + 1 TPM-gated, total layout coverage 10 → 25 (26 with TPM).
+See `docs/development/roadmap.md` for the live forward-facing list.
+Open as of 2.6.2: RFC 6901 JSON Pointer queries / `proof_to_json`
+bench-context re-investigation / JSON streaming.
 
 ---
 
@@ -174,4 +171,4 @@ When the bucket counts at the top drift, refresh the at-a-glance table.
 
 ---
 
-*Last refresh: 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup pass — all 6 stale/read-through rows closed). Refresh in place when docs are touched.*
+*Last refresh: 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup pass + 2.6.2 wrap-up — roadmap pared to forward-facing only). Refresh in place when docs are touched.*

@@ -194,15 +194,84 @@ jobs:
             fi
           }
           # struct         | defining file        | canonical param name
-          check_struct chain          src/chain.cyr    c
-          check_struct iproof         src/proof.cyr    ip
-          check_struct signing_key    src/signing.cyr  sk
-          check_struct verifying_key  src/signing.cyr  vk
-          check_struct entry_sig      src/signing.cyr  es
-          check_struct merkle_proof   src/merkle.cyr   mp
-          check_struct consistency    src/merkle.cyr   cp
+          check_struct chain          src/chain.cyr        c
+          check_struct iproof         src/proof.cyr        ip
+          check_struct signing_key    src/signing.cyr      sk
+          check_struct verifying_key  src/signing.cyr      vk
+          check_struct entry_sig      src/signing.cyr      es
+          check_struct merkle_proof   src/merkle.cyr       mp
+          check_struct consistency    src/merkle.cyr       cp
+          # 2.6.2: six more derived structs whose canonical param names
+          # are unambiguous across libro (don't appear in any other
+          # file's raw-offset sites — verified by grep across src/*.cyr
+          # for the registered name + offset pattern).
+          check_struct pv             src/proof.cyr        pv
+          check_struct proof_node     src/merkle.cyr       pn
+          check_struct merkle_tree    src/merkle.cyr       tree
+          check_struct ts_response    src/timestamping.cyr resp
+          check_struct _sub           src/streaming.cyr    sub
+          check_struct tpm_anchor     src/tpm_anchor.cyr   ta
           if [ "$FAILED" -ne 0 ]; then exit 1; fi
           echo "No raw-offset struct reads outside defining files."
+
+      - name: Raw-offset bound check (struct field-count enforcement)
+        run: |
+          # 2.6.2 expansion: for structs whose canonical param name is
+          # AMBIGUOUS across libro (single letters `a`, `e`, `r`, `s`
+          # shared across multiple defining files), the cross-file
+          # specific-struct guard above can't distinguish them. This
+          # check fills the gap by validating that raw-offset sites
+          # inside each defining file stay within the registered struct's
+          # field count. Catches off-by-one bugs after a struct shrinks
+          # and stale offsets that miss the new struct boundary.
+          #
+          # Per (file, param, struct, field_count) — max_offset is
+          # computed as (field_count - 1) * 8. The check passes when
+          # every `load64(param + N)` / `store64(param + N, …)` site
+          # in `file` has N ≤ max_offset for that param's struct.
+          #
+          # Adding a new entry: pick a (file, param, struct,
+          # field_count) tuple from the #derive(accessors) struct
+          # declarations. Update on struct field-count change.
+          FAILED=0
+          check_offset_bound() {
+            local file="$1" param="$2" struct="$3" field_count="$4"
+            local max_offset=$(( (field_count - 1) * 8 ))
+            local hits
+            hits=$(grep -nE "(load64|store64)\($param[ ]*\+[ ]*[0-9]+" "$file" 2>/dev/null || true)
+            [ -z "$hits" ] && return 0
+            while IFS= read -r line; do
+              local offset
+              offset=$(echo "$line" | grep -oE "\+[ ]*[0-9]+" | head -1 | grep -oE "[0-9]+")
+              [ -z "$offset" ] && continue
+              if [ "$offset" -gt "$max_offset" ]; then
+                echo "FAIL in $file: offset +$offset on param '$param' exceeds struct '$struct' (${field_count} fields → max +$max_offset):"
+                echo "  $line"
+                echo "  → check the offset, the struct field count, or whether this should use the $struct""_* derived accessors."
+                FAILED=1
+              fi
+            done <<< "$hits"
+          }
+          # file                       | param | struct          | fields
+          check_offset_bound src/anchoring.cyr     a      anchor           9
+          check_offset_bound src/anchoring.cyr     r      receipt          5
+          check_offset_bound src/chain.cyr         a      archive          2
+          check_offset_bound src/entry.cyr         e      entry           11
+          check_offset_bound src/error.cyr         e      error            6
+          check_offset_bound src/file_store.cyr    e      entry           11
+          check_offset_bound src/file_store.cyr    s      filestore        3
+          check_offset_bound src/patra_store.cyr   e      entry           11
+          check_offset_bound src/patra_store.cyr   s      _patrastore      4
+          check_offset_bound src/proof.cyr         s      sth              6
+          check_offset_bound src/retention.cyr     r      retention        2
+          check_offset_bound src/review.cyr        r      review           9
+          check_offset_bound src/review.cyr        s      integrity        2
+          check_offset_bound src/store.cyr         s      memstore         1
+          check_offset_bound src/streaming.cyr     s      stream           3
+          check_offset_bound src/timestamping.cyr  a      ts_attestation   6
+          check_offset_bound src/timestamping.cyr  r      ts_request       4
+          if [ "$FAILED" -ne 0 ]; then exit 1; fi
+          echo "Raw-offset bound check: all sites within their struct field range."
 
       - name: Format check
         run: cyrfmt --check src/*.cyr
