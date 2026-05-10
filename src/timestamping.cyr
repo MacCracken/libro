@@ -148,18 +148,14 @@ fn ts_request_new(hash_hex) {
     return r;
 }
 
-fn ts_request_set_nonce(r) {
-    # Generate 16-byte random nonce
+fn ts_request_generate_nonce(r) {
+    # Generate 16-byte random nonce — wraps the auto-derived
+    # `ts_request_set_nonce` setter with /dev/urandom entropy gathering.
     var nonce_buf = alloc(16);
     var fd = file_open("/dev/urandom", 0, 0);
     file_read(fd, nonce_buf, 16);
     file_close(fd);
-    store64(r + 16, hex_encode_str(nonce_buf, 16));
-    return r;
-}
-
-fn ts_request_set_hash_alg(r, alg) {
-    store64(r, alg);
+    ts_request_set_nonce(r, hex_encode_str(nonce_buf, 16));
     return r;
 }
 

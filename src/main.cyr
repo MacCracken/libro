@@ -8,17 +8,25 @@
 # assert.cyr brings string.cyr + fmt.cyr — do not re-include them
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
-include "lib/vec.cyr"
+include "lib/freelist.cyr"
 include "lib/str.cyr"
-include "lib/fmt.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
-include "lib/freelist.cyr"
-include "lib/hashmap.cyr"
+include "lib/fs.cyr"
+include "lib/fmt.cyr"
 include "lib/json.cyr"
 include "lib/sakshi.cyr"
-include "lib/bigint.cyr"
 include "lib/chrono.cyr"
+include "lib/bigint.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+include "lib/ct.cyr"
+include "lib/keccak.cyr"
+include "lib/thread.cyr"
+include "lib/agnosys.cyr"
 
 # ================================================================
 # Patra — SQL-backed storage backend (persistent audit log)
@@ -955,7 +963,7 @@ fn test_ts_request_der() {
 fn test_ts_request_with_nonce() {
     var hash = str_from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     var req = ts_request_new(hash);
-    ts_request_set_nonce(req);
+    ts_request_generate_nonce(req);
     assert(ts_request_nonce(req) != 0, "nonce set");
     assert(str_len(ts_request_nonce(req)) == 32, "nonce is 32-char hex");
 }

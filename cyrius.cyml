@@ -1,10 +1,10 @@
 [package]
 name = "libro"
-version = "2.0.5"
+version = "2.1.0"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.4.7"
+cyrius = "5.10.34"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -52,26 +52,34 @@ stdlib = [
     "alloc",
     "vec",
     "str",
+    "string",
     "fmt",
     "syscalls",
     "io",
+    "fs",
     "freelist",
     "hashmap",
     "json",
+    "tagged",
+    "process",
     "sakshi",
     "bigint",
     "chrono",
+    "ct",
+    "keccak",
+    "thread",
 ]
 
-# External first-party deps. Currently vendored in lib/ for reproducibility;
-# `cyrius deps` can resync to the pinned tags.
+# External first-party deps. `cyrius deps` resolves these into lib/
+# from the pinned tags. lib/ is gitignored — the contract is the tag
+# pin here, not the bytes on disk.
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "2.8.3"
-modules = ["sigil.cyr"]
+tag = "3.0.1"
+modules = ["dist/sigil.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.1.1"
-modules = ["patra.cyr"]
+tag = "1.9.3"
+modules = ["dist/patra.cyr"]

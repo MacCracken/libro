@@ -5,6 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-05-10
+
+**Toolchain + dependency refresh.** Bumps cyrius 5.4.7 → 5.10.34,
+sigil 2.8.3 → 3.0.1, patra 1.1.1 → 1.9.3. Closes the gap that had
+accumulated against the cyrius v5.8.65 stdlib-foldin manifest (sigil
+3.x and patra 1.9.x are the foldin slot for both deps). Carries one
+breaking-out-of-tree change — `lib/` is no longer git-tracked — and
+one internal rename to clear a new cyrius duplicate-fn warning.
+
+### Changed
+
+- **`cyrius` pin** `5.4.7` → `5.10.34` (`cyrius.cyml [package].cyrius`).
+- **`[deps.sigil].tag`** `2.8.3` → `3.0.1`; module path
+  `sigil.cyr` → `dist/sigil.cyr` to match sigil's canonical manifest
+  convention. Sigil 3.0's breaking changes (`TRUST_COMMUNITY` enum
+  removal, `alog_append_to_file` / `alog_load_from_file` renames,
+  `-D SIGIL_BATCH_PARALLEL` removal) don't touch libro — none of
+  the affected surface is exercised. Libro's sigil consumption
+  (`sha256_*`, `ed25519_*`, `hex_*`) is unchanged.
+- **`[deps.patra].tag`** `1.1.1` → `1.9.3`; module path
+  `patra.cyr` → `dist/patra.cyr`. Patra's 1.9.0 rename of
+  `json_build` → `patra_json_build` doesn't touch libro (no caller).
+  The 1.6–1.8 feature surface (`COL_BYTES`, `INSERT OR IGNORE`,
+  STR-indexed btree, sync modes, prepared statements, slab
+  allocator) is additive — libro's existing `patra_init` /
+  `patra_open` / `patra_exec` / `patra_query` / `patra_begin` /
+  `patra_commit` / `patra_rollback` / `patra_result_*` consumption
+  is unchanged.
+- **`[deps].stdlib`** extended with `string`, `fs`, `tagged`,
+  `process`, `ct`, `keccak`, `thread`. These are required by the
+  sigil 3.0.1 dist bundle (`lib/ct.cyr` for `ct_select`,
+  `lib/keccak.cyr` for `_keccak_f1600` / `shake256`,
+  `lib/thread.cyr` for the parallel-batch-verify mutex primitives).
+  Without them, `ed25519_keypair` SIGILLs at runtime via the
+  unresolved `ct_select` reference (the cyrius "undefined fn
+  (will crash at runtime)" build warning is now load-bearing).
+- **`src/main.cyr`, `benches/libro_core.bcyr`,
+  `benches/libro_io.bcyr`, `benches/libro_proof.bcyr`,
+  `fuzz/fuzz_libro.fcyr`** updated to `include` the new stdlib
+  modules and the transitive `lib/agnosys.cyr` that sigil pulls in.
+- **`benches/libro_core.bcyr`** picks up `src/anchoring.cyr` (its
+  `src/proof.cyr` call into `anchor_verify_integrity` was
+  previously an unresolved forward reference that the cyrius 5.10.x
+  "undefined fn" gate now blocks).
+- **`benches/libro_io.bcyr`** picks up `src/retention.cyr` (same
+  pattern — `chain.cyr` calls `retention_split_index`).
+- **`src/timestamping.cyr` — `ts_request_set_nonce` →
+  `ts_request_generate_nonce`.** Collides with the
+  `#derive(accessors)`-generated setter on the `ts_request` struct
+  under cyrius 5.10's stricter duplicate-fn check. Renamed; the
+  new fn calls the auto-derived setter to install the random nonce.
+  The redundant manual `ts_request_set_hash_alg` (identical to the
+  auto-derived setter) is removed. Only caller in `src/main.cyr`
+  updated.
+
+### Removed
+
+- **`lib/` is no longer git-tracked** (49 files removed from the
+  tree). The directory is now repopulated by `cyrius deps` from
+  the `[deps]` pins in `cyrius.cyml`. Matches the agnosys / patra /
+  yukti convention — prevents stale vendored stdlib stubs from a
+  prior cyrius version drifting against the manifest pin.
+  `/lib/` added to `.gitignore`.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **373 passed, 0 failed** (unchanged from 2.0.5).
+- All three benchmark binaries build + run on cyrius 5.10.34
+  (`libro_bench_core`, `libro_bench_io`, `libro_bench_proof`).
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration
+  runs (no crashes).
+- `cyrfmt --check src/*.cyr` clean.
+- `cyrius lint src/*.cyr` clean (0 warnings across 22 modules).
+
+### Known
+
+- A new cyrius 5.10 build note flags `cwd ./lib/ shadows
+  version-pinned /home/<...>/.cyrius/versions/5.10.35/lib/`.
+  Informational — silence with `CYRIUS_NO_WARN_SHADOW_LIB=1` or
+  ignore. The deps-resolved `./lib/` is the one we want; the
+  toolchain-bundled snapshot is older.
+
 ## [2.0.5] - 2026-04-19
 
 Continuing through the unblocked-work list surfaced in the post-2.0.4
