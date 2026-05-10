@@ -181,11 +181,12 @@ Effort: medium. Opt-in keeps the default build surface unchanged.
 These remain on the menu but don't fit a specific minor yet. Pick
 one up as 2.x.0 fillers or absorb into a related minor.
 
-- [ ] **`proof_from_json` round-trip.** 2.0 ships `proof_to_json`
-  but no parser to re-hydrate a saved proof. Closes the loop for
-  archival workflows. Pairs naturally with a fuzz target on the
-  new parser. The 2.0.x release line landed a partial-verify
-  round-trip — finishing the round-trip is mostly mechanical.
+- [x] ~~**`proof_from_json` round-trip.**~~ Shipped in 2.6.0. The
+  inclusion-path JSON shape switched from bare hex strings to
+  `{"h":"<hex>","s":<0|1>}` objects so the side bit survives.
+  `merkle_verify_proof` now passes against every parsed inclusion;
+  legacy emissions still parse (degraded to SIDE_LEFT defaults) so
+  archival proofs from older libro versions remain readable.
 - [ ] **JSON streaming for very large proofs.** Cyrius 5.7.40–42
   shipped `json_stream_*` emitters. Libro's `proof_to_json` is
   in-memory string building. If proof size becomes a concern

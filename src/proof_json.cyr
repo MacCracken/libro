@@ -49,15 +49,23 @@ fn _sb_proof_inclusion(sb, mp) {
     str_builder_add(sb, merkle_proof_leaf(mp));
     str_builder_add_cstr(sb, "\",\"root\":\"");
     str_builder_add(sb, merkle_proof_root(mp));
+    # Path entries are emitted as `{"h":"<hex>","s":<0|1>}` so the
+    # side bit survives round-trip — merkle_verify_proof needs it to
+    # decide left vs right hash ordering at each level. Pre-2.6.0
+    # libro emitted bare hex strings here, losing the side; the
+    # parser side accepts both forms.
     str_builder_add_cstr(sb, "\",\"path\":[");
     var path = merkle_proof_path(mp);
     var pn = vec_len(path);
     var i = 0;
     while (i < pn) {
         if (i > 0) { str_builder_add_cstr(sb, ","); }
-        str_builder_add_cstr(sb, "\"");
-        str_builder_add(sb, vec_get(path, i));
-        str_builder_add_cstr(sb, "\"");
+        var node = vec_get(path, i);
+        str_builder_add_cstr(sb, "{\"h\":\"");
+        str_builder_add(sb, proof_node_hash(node));
+        str_builder_add_cstr(sb, "\",\"s\":");
+        str_builder_add_int(sb, proof_node_side(node));
+        str_builder_add_cstr(sb, "}");
         i += 1;
     }
     str_builder_add_cstr(sb, "]}");
@@ -481,6 +489,13 @@ fn _pfj_parse_one_inclusion(d, start, end) {
     path_pos = _pfj_skip_ws(d, path_pos, end);
     if (path_pos >= end || (load8(d + path_pos) & 0xFF) != 91) { return 0; }
     path_pos = path_pos + 1;
+    # Path entries are proof_node structs. Accept TWO emission shapes:
+    #   2.6.0+: {"h":"<hex>","s":<0|1>}  — lossless, side bit preserved.
+    #   Legacy (pre-2.6): "<hex>"        — side dropped, treat as SIDE_LEFT.
+    # The legacy path produces proof_nodes that can be carried through
+    # the iproof struct but won't pass merkle_verify_proof (correctness
+    # of the path-sides is lost). Round-trip from 2.6.0+ emissions is
+    # fully lossless.
     var path = vec_new();
     while (path_pos < end) {
         path_pos = _pfj_skip_ws(d, path_pos, end);
@@ -488,10 +503,34 @@ fn _pfj_parse_one_inclusion(d, start, end) {
         var c = load8(d + path_pos) & 0xFF;
         if (c == 93) { break; }
         if (c == 44) { path_pos = path_pos + 1; continue; }
-        var s = _pfj_parse_string(d, path_pos, end);
-        if (_pfj_end_pos < 0) { return 0; }
-        vec_push(path, s);
-        path_pos = _pfj_end_pos;
+        if (c == 123) {
+            # Object form. Find the object's bounds, then look up h + s
+            # inside that range.
+            var obj_end = _pfj_skip_value(d, path_pos, end);
+            if (obj_end < 0) { return 0; }
+            var h_pos = _pfj_find_key_at(d, path_pos, obj_end, "h");
+            if (h_pos < 0) { return 0; }
+            var h = _pfj_parse_string(d, h_pos, obj_end);
+            if (_pfj_end_pos < 0) { return 0; }
+            var s_pos = _pfj_find_key_at(d, path_pos, obj_end, "s");
+            var side = SIDE_LEFT;
+            if (s_pos >= 0) {
+                var sv = _pfj_parse_int(d, s_pos, obj_end);
+                if (sv == SIDE_RIGHT) { side = SIDE_RIGHT; }
+            }
+            vec_push(path, proof_node_new(h, side));
+            path_pos = obj_end;
+        } elif (c == 34) {
+            # Legacy bare-string form. Side defaults to LEFT — this is
+            # lossy and verification of the resulting proof will fail
+            # unless the leaf actually sat on the left at every level.
+            var s = _pfj_parse_string(d, path_pos, end);
+            if (_pfj_end_pos < 0) { return 0; }
+            vec_push(path, proof_node_new(s, SIDE_LEFT));
+            path_pos = _pfj_end_pos;
+        } else {
+            return 0;
+        }
     }
 
     return merkle_proof_new(index, leaf, path, root);

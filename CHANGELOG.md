@@ -5,6 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-05-10
+
+**`proof_from_json` round-trip closes + doc-health ledger.** Two
+threads bundled: finishing the proof-JSON parser (the 2.0.x
+follow-up that landed as "partial verify" — 2.6.0 lifts it to a
+full round-trip), and adding a living documentation-currency
+ledger modeled on the agnosys pattern.
+
+### Added
+
+- **Lossless inclusion-path JSON serialization** — `proof_to_json`
+  now emits each `merkle_proof.path` entry as an object
+  `{"h":"<hex>","s":<0|1>}` instead of a bare hex string. The
+  `s` (side bit) was previously dropped, so parsed proofs lost
+  the left-vs-right info `merkle_verify_proof` needs. With the
+  side preserved, every parsed merkle_proof round-trips and
+  verifies.
+- **`proof_from_json` parser accepts both forms** — the 2.6.0
+  object form (lossless) and the pre-2.6 bare-string form
+  (degraded: side defaults to `SIDE_LEFT`). Archival proofs
+  written by older libro versions remain readable; the
+  legacy-form proofs won't pass `merkle_verify_proof` (they
+  couldn't before either) but the iproof structure parses
+  without crashing.
+- **`test_proof_from_json_roundtrip_full`** — replaces the
+  former `_partial_verify` test. Asserts entries chain-verify,
+  rebuilt tree root matches parsed sth.root, AND every parsed
+  inclusion passes `merkle_verify_proof` (the new contract).
+- **`test_proof_from_json_legacy_path_accepted`** — pins the
+  backward-compat path: bare-string emissions parse, produce
+  proof_nodes with `SIDE_LEFT` defaults, and the parser doesn't
+  crash. 8 new assertions total.
+- **`docs/doc-health.md`** — new living ledger covering all 25
+  markdown files in the libro repo. Buckets: Fresh / Stale /
+  Read-through-outstanding / Evergreen / Frozen / ADRs. Pattern
+  lifted from [agnosys](https://github.com/MacCracken/agnosys/blob/main/docs/doc-health.md).
+  Initial inventory + 4-row cleanup paired with this release;
+  4 rows flagged stale (threat-model, dependency-watch,
+  standards-mapping, architecture/overview) for 2.6.x / 2.7.0
+  refresh.
+
+### Changed
+
+- **`_sb_proof_inclusion`** in `src/proof_json.cyr` — path-array
+  emission upgraded to object form with `h` + `s` keys.
+- **`_pfj_parse_one_inclusion`** — path-array parser now branches
+  on first non-whitespace char: `{` → object form (extract `h`
+  + `s`, wrap in `proof_node_new`); `"` → legacy bare string
+  (wrap in `proof_node_new(s, SIDE_LEFT)`). Old `_pfj_parse_string`
+  path retained for the legacy branch.
+- **`CLAUDE.md`** — Project Identity version bumped `2.0.0-dev`
+  → `2.6.0-dev`; Current State refreshed (22 modules counting
+  the opt-in TPM one; 30 benches across 3 binaries; 435/443
+  test counts; binary size ~456 KB; dist line count ~5.4k);
+  toolchain pin string refreshed `5.4.2` → `5.10.34`.
+- **`README.md`** — Architecture diagram, Quick Start test-count
+  line, and Project structure module list all reflect the
+  2.6.0 surface (22 modules, 32 benches, 435/443 tests).
+- **`docs/development/roadmap.md`** — `proof_from_json`
+  round-trip marked ✅ shipped (was the highest-leverage
+  "Open — unblocked" item). doc-health.md added to docs
+  Tier 7 (Engineering issues) bucket.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **443 passed, 0 failed** (was 435 — net
+  +8 from full-roundtrip + legacy-form tests; one prior test
+  replaced).
+- `CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm`
+  clean; **451 passed, 0 failed** (443 + 8 TPM-gated).
+- All three benchmark binaries build + run.
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration
+  runs (the `fuzz_proof_from_json` harness exercises the new
+  object-form parsing via random `{` chars in the input).
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+- Raw-offset CI check passes (no new offset sites; the parser
+  uses `proof_node_new` rather than raw stores).
+
+### Migration notes
+
+Consumers that have *saved* proof JSON output from libro
+≤ 2.5.0:
+
+- **Re-parse with libro ≥ 2.6.0** — saved bytes still parse via
+  the legacy bare-string code path. The structural fields
+  (entries, tree-head, anchor slot) round-trip identically.
+- **Verification of saved inclusions doesn't work** — same
+  status as pre-2.6 (the side bit was never captured). Re-emit
+  the proof under 2.6.0+ to get verifiable inclusion arrays.
+- **No on-the-wire format break** — clients running mixed
+  versions still parse each other's output; the object-form
+  produces correct verification, the legacy form produces a
+  parseable but un-verifiable inclusion array.
+
+### Roadmap impact
+
+- **The high-leverage 2.x "unblocked" item is closed.** Remaining
+  filler items (JSON streaming, RFC 6901 pointers, raw-offset
+  guard expansion, struct-layout test expansion) are smaller in
+  scope; pick up as room appears in any minor.
+- **Stale-doc refresh window** opens — the 4 rows flagged in
+  `docs/doc-health.md` (threat-model, dependency-watch,
+  standards-mapping, architecture/overview) want a pass during
+  the 2.6.x / 2.7.0 cycle.
+
 ## [2.5.0] - 2026-05-10
 
 **TPM-sealed `WitnessAnchor` lands (opt-in).** Hardware-backed
