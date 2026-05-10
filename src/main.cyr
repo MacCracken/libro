@@ -895,6 +895,100 @@ fn test_signing_zeroize() {
     assert((load8(key_ptr) & 0xFF) == 0, "key zeroized");
 }
 
+# ================================================================
+# ML-DSA-65 (NIST FIPS 204) — post-quantum signing battery.
+# Mirrors the Ed25519 tests above: keygen + sign + verify roundtrip,
+# tamper rejection, key_id, zeroize. Plus a few PQ-specific shape
+# checks (signature byte count, algorithm-string round-trip,
+# cross-algorithm vk rejection).
+# ================================================================
+
+fn test_signing_mldsa_roundtrip() {
+    var sk = signing_key_generate_mldsa();
+    assert(sk != 0, "mldsa signing key generated");
+    assert(signing_key_algorithm(sk) == SIG_ALG_ML_DSA_65, "sk algorithm = ML-DSA-65");
+
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig = sign_entry(sk, e);
+    assert(sig != 0, "mldsa entry signed");
+    # ML-DSA-65 signature: 3309 bytes × 2 hex = 6618 chars.
+    assert(str_len(entry_sig_signature(sig)) == 6618, "mldsa signature is 6618-char hex");
+    # Algorithm string round-trips as sigil's canonical name.
+    assert(str_eq(entry_sig_algorithm(sig), str_from("ML-DSA-65")) == 1,
+        "entry_sig.algorithm carries ML-DSA-65 string");
+
+    var vk = verifying_key_from_signing(sk);
+    assert(verifying_key_algorithm(vk) == SIG_ALG_ML_DSA_65, "vk algorithm = ML-DSA-65");
+    assert(verify_entry_signature(vk, e, sig) == 1, "mldsa signature verifies");
+}
+
+fn test_signing_mldsa_tamper_rejected() {
+    var sk = signing_key_generate_mldsa();
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+    var sig = sign_entry(sk, e);
+
+    # Different ML-DSA key → verify must fail.
+    var sk2 = signing_key_generate_mldsa();
+    var vk2 = verifying_key_from_signing(sk2);
+    assert(verify_entry_signature(vk2, e, sig) == 0, "mldsa: tampered key rejected");
+}
+
+fn test_signing_mldsa_key_id() {
+    var sk = signing_key_generate_mldsa();
+    signing_key_set_key_id(sk, str_from("pq-key-v1"));
+
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig = sign_entry_with_key_id(sk, e, str_from("rotation-pq-1"));
+    assert(entry_sig_key_id(sig) != 0, "mldsa sig has key_id");
+}
+
+fn test_signing_mldsa_zeroize() {
+    var sk = signing_key_generate_mldsa();
+    var key_ptr = signing_key_bytes(sk);
+    signing_key_zeroize(sk);
+    # Spot-check: first byte of the 4032-byte sk buffer is zero.
+    assert((load8(key_ptr) & 0xFF) == 0, "mldsa sk first byte zeroized");
+    # Also check a byte deep into the buffer (offset 2000 — well past
+    # where the Ed25519-sized memset would have stopped). Pins the
+    # alg-aware sk_size dispatch.
+    assert((load8(key_ptr + 2000) & 0xFF) == 0, "mldsa sk byte +2000 zeroized");
+}
+
+fn test_signing_cross_alg_rejected() {
+    # An Ed25519 signature shouldn't verify against an ML-DSA vk and
+    # vice versa. The algorithm dispatch in verify_entry_signature
+    # uses the vk's algorithm to pick the primitive; mismatched
+    # signature bytes will fail to decode + reject cleanly.
+    var sk_ed = signing_key_generate();
+    var sk_pq = signing_key_generate_mldsa();
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig_ed = sign_entry(sk_ed, e);
+    var sig_pq = sign_entry(sk_pq, e);
+
+    var vk_ed = verifying_key_from_signing(sk_ed);
+    var vk_pq = verifying_key_from_signing(sk_pq);
+
+    # Sanity: matched pairs verify.
+    assert(verify_entry_signature(vk_ed, e, sig_ed) == 1, "ed/ed pair verifies");
+    assert(verify_entry_signature(vk_pq, e, sig_pq) == 1, "pq/pq pair verifies");
+
+    # Cross-pairs reject. The vk dispatches to its primitive and the
+    # signature bytes (different size + format) fail to validate.
+    assert(verify_entry_signature(vk_pq, e, sig_ed) == 0, "ed sig rejected by pq vk");
+    assert(verify_entry_signature(vk_ed, e, sig_pq) == 0, "pq sig rejected by ed vk");
+}
+
 fn test_anchor_create() {
     var c = chain_new();
     var det = str_from("{}");
@@ -2350,6 +2444,13 @@ fn main() {
     test_signing_tamper_rejected();
     test_signing_key_id();
     test_signing_zeroize();
+
+    test_group("Signing (ML-DSA-65)");
+    test_signing_mldsa_roundtrip();
+    test_signing_mldsa_tamper_rejected();
+    test_signing_mldsa_key_id();
+    test_signing_mldsa_zeroize();
+    test_signing_cross_alg_rejected();
 
     test_group("Anchoring");
     test_anchor_create();

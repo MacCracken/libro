@@ -169,6 +169,86 @@ if (archive != 0) {
 }
 ```
 
+## Post-Quantum Signing — ML-DSA-65 (NIST FIPS 204)
+
+libro 2.2.0 adds ML-DSA-65 entry signing alongside Ed25519. The
+two algorithms share `sign_entry` / `verify_entry_signature` /
+`sign_tree_head` / `verify_tree_head` — dispatch happens via
+the `algorithm` field on the signing / verifying key, set at
+keygen time.
+
+```cyrius
+# Ed25519 (default — pre-2.2 callers unchanged)
+var sk_ed = signing_key_generate();
+var sig   = sign_entry(sk_ed, entry);     # 64-byte signature
+var vk_ed = verifying_key_from_signing(sk_ed);
+verify_entry_signature(vk_ed, entry, sig);
+
+# ML-DSA-65 (FIPS 204, 2.2.0+)
+var sk_pq = signing_key_generate_mldsa();
+var sig   = sign_entry(sk_pq, entry);     # 3309-byte signature
+var vk_pq = verifying_key_from_signing(sk_pq);
+verify_entry_signature(vk_pq, entry, sig);
+```
+
+### Sizing
+
+| Field | Ed25519 | ML-DSA-65 | Ratio |
+|-------|---------|-----------|------:|
+| Public key (`sk.pub_bytes`) | 32 B | 1952 B | 61× |
+| Secret key (`sk.bytes`)     | 64 B | 4032 B | 63× |
+| Signature (raw)             | 64 B | 3309 B | 51× |
+| Signature (hex in `entry_sig.signature`) | 128 chars | 6618 chars | 51× |
+
+The `signing_key` and `verifying_key` struct *layouts* don't
+change — those fields are pointers, and the buffers behind them
+just allocate to the right size for the chosen algorithm.
+
+### Performance (sigil 3.0.1, x86_64 dev host)
+
+| Op | Ed25519 | ML-DSA-65 | Notes |
+|----|--------:|----------:|-------|
+| `sign_entry`         | 1.1 ms | 3.5 ms | PQ sign rejection-loops average 4–5 iterations |
+| `verify_entry_signature` | 6.6 ms | 2.1 ms | ML-DSA verify is faster than Ed25519 verify in this build |
+
+Per-entry signing in the millisecond range is fine for audit
+workloads (one entry per kernel-audit / aegis-event / stiva-state-
+change). For batch signing of many entries, the cost is linear
+and verifiers can parallelize across entries (single-threaded
+today, see roadmap §2.x).
+
+### When to use which
+
+- **Ed25519** is the default — smaller signatures, well-understood
+  threat model, and the right choice for chains that don't anchor
+  long-lived audit trails into a post-quantum world.
+- **ML-DSA-65** is the right choice when your audit retention
+  window meaningfully overlaps with cryptographically-relevant
+  quantum computers — i.e. PCI / SOX / HIPAA workloads with
+  multi-year retention, or compliance regimes that explicitly
+  flag PQ readiness (NIST CNSA 2.0, federal post-quantum mandates).
+- **Hybrid (Ed25519 + ML-DSA-65)** is on the 2.3.x roadmap — it
+  produces both signatures per entry, lets verifiers accept the
+  policy-required subset, and is the migration path for chains
+  that need to outlive a single algorithm's threat horizon. Until
+  it lands, opt new chains directly into ML-DSA-65 if PQ is the
+  goal.
+
+### Algorithm dispatch
+
+`verify_entry_signature(vk, e, es)` dispatches on `vk.algorithm`,
+not on the signature's claimed algorithm. This is intentional:
+the verifying key is the trust anchor, and an attacker who could
+swap the algorithm string in `entry_sig` shouldn't be able to
+trick the verifier into accepting a signature under a primitive
+the consumer didn't authorize.
+
+A signature produced under algorithm A and verified against a vk
+configured for algorithm B is rejected: B's primitive will fail
+to decode the bytes (different layout) or fail to verify (wrong
+math). The `test_signing_cross_alg_rejected` battery in
+`src/main.cyr` pins this.
+
 ## Hardening — Landlock sandbox for PatraStore
 
 PatraStore opens `.patra` files at consumer-supplied paths. A

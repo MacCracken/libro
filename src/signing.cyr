@@ -1,5 +1,15 @@
-# signing.cyr — Ed25519 cryptographic signing for audit entries
-# Delegates to sigil's Ed25519 implementation (RFC 8032).
+# signing.cyr — cryptographic signing for audit entries
+#
+# Two algorithms supported, dispatched at runtime via the
+# `algorithm` field on signing_key / verifying_key / entry_sig:
+#
+#   SIG_ALG_ED25519     — 64-byte signatures, RFC 8032
+#   SIG_ALG_ML_DSA_65   — 3309-byte signatures, NIST FIPS 204
+#
+# Both delegate to sigil. The signing_key / verifying_key struct
+# layouts are alg-agnostic (pointer fields), so the same struct
+# carries either algorithm's key material — only the buffer sizes
+# behind the pointers differ.
 
 # ================================================================
 # SigningKey — generated accessors:
@@ -10,16 +20,33 @@
 #derive(accessors)
 struct signing_key { bytes; pub_bytes; algorithm; key_id; zeroized; seed; }
 
+# Per-algorithm sizes. Centralized here so add-an-algorithm changes
+# stay localized — no scattered `64` or `MLDSA65_SK_BYTES` literals
+# in the dispatch fns below.
+fn _sig_pk_bytes(alg) {
+    if (alg == SIG_ALG_ED25519)   { return 32; }
+    if (alg == SIG_ALG_ML_DSA_65) { return MLDSA65_PK_BYTES; }
+    return 0;
+}
+
+fn _sig_sk_bytes(alg) {
+    if (alg == SIG_ALG_ED25519)   { return 64; }
+    if (alg == SIG_ALG_ML_DSA_65) { return MLDSA65_SK_BYTES; }
+    return 0;
+}
+
+fn _sig_sig_bytes(alg) {
+    if (alg == SIG_ALG_ED25519)   { return 64; }
+    if (alg == SIG_ALG_ML_DSA_65) { return MLDSA65_SIG_BYTES; }
+    return 0;
+}
+
 fn signing_key_generate() {
     sakshi_info("signing: key generate", 21);
     var sk = fl_alloc(48);
     var sk_bytes = alloc(64);
     var pk_bytes = alloc(32);
     var seed = alloc(32);
-    # `secret var` zeroes the stack copy on function exit, so the
-    # entropy never lingers beyond the keypair derivation. The seed
-    # heap copy is the long-lived material that signing_key_zeroize
-    # is responsible for clearing.
     secret var seed_stack[32];
     random_bytes(&seed_stack, 32);
     memcpy(seed, &seed_stack, 32);
@@ -27,6 +54,30 @@ fn signing_key_generate() {
     store64(sk, sk_bytes);
     store64(sk + 8, pk_bytes);
     store64(sk + 16, SIG_ALG_ED25519);
+    store64(sk + 24, 0);
+    store64(sk + 32, 0);
+    store64(sk + 40, seed);
+    return sk;
+}
+
+# ML-DSA-65 keygen. Same struct shape — only the buffer sizes
+# differ (sk: 4032 vs 64, pk: 1952 vs 32). The 32-byte seed is
+# the FIPS 204 ξ input, hashed inside sigil to derive (ρ, ρ′, K)
+# during ExpandA / ExpandS. Heap-allocates the seed buffer because
+# `signing_key_zeroize` clears it from the struct.
+fn signing_key_generate_mldsa() {
+    sakshi_info("signing: key generate (mldsa65)", 31);
+    var sk = fl_alloc(48);
+    var sk_bytes = alloc(MLDSA65_SK_BYTES);
+    var pk_bytes = alloc(MLDSA65_PK_BYTES);
+    var seed = alloc(32);
+    secret var seed_stack[32];
+    random_bytes(&seed_stack, 32);
+    memcpy(seed, &seed_stack, 32);
+    mldsa65_keypair_from_seed(seed, pk_bytes, sk_bytes);
+    store64(sk, sk_bytes);
+    store64(sk + 8, pk_bytes);
+    store64(sk + 16, SIG_ALG_ML_DSA_65);
     store64(sk + 24, 0);
     store64(sk + 32, 0);
     store64(sk + 40, seed);
@@ -48,19 +99,23 @@ fn signing_key_from_seed(seed) {
 }
 
 # Zeroize key material. Not a derived accessor — touches both the
-# secret-key buffer and the seed, then flips the zeroized flag via the
-# generated setter.
+# secret-key buffer and the seed (alg-aware sk size), then flips
+# the zeroized flag via the generated setter.
 fn signing_key_zeroize(sk) {
     if (signing_key_zeroized(sk) == 1) { return 0; }
-    memset(signing_key_bytes(sk), 0, 64);
+    var sk_size = _sig_sk_bytes(signing_key_algorithm(sk));
+    memset(signing_key_bytes(sk), 0, sk_size);
     memset(signing_key_seed(sk), 0, 32);
     signing_key_set_zeroized(sk, 1);
     return 0;
 }
 
-# Get verifying (public) key as hex Str
+# Get verifying (public) key as hex Str. Alg-aware — Ed25519
+# returns 64 chars (32 bytes × 2), ML-DSA-65 returns 3904 chars
+# (1952 bytes × 2).
 fn signing_key_verifying_hex(sk) {
-    return hex_encode_str(load64(sk + 8), 32);
+    var pk_size = _sig_pk_bytes(signing_key_algorithm(sk));
+    return hex_encode_str(load64(sk + 8), pk_size);
 }
 
 # ================================================================
@@ -70,21 +125,32 @@ fn signing_key_verifying_hex(sk) {
 #derive(accessors)
 struct verifying_key { bytes; algorithm; }
 
+# Construct from raw Ed25519 public-key bytes (32 bytes). Kept
+# Ed25519-specific for backward compatibility with pre-2.2 callers.
+# Use `verifying_key_from_bytes_alg` for ML-DSA-65 or any other
+# future algorithm.
 fn verifying_key_from_bytes(bytes) {
+    return verifying_key_from_bytes_alg(bytes, SIG_ALG_ED25519);
+}
+
+fn verifying_key_from_bytes_alg(bytes, alg) {
+    var pk_size = _sig_pk_bytes(alg);
     var vk = fl_alloc(16);
-    var pk = alloc(32);
-    memcpy(pk, bytes, 32);
+    var pk = alloc(pk_size);
+    memcpy(pk, bytes, pk_size);
     store64(vk, pk);
-    store64(vk + 8, SIG_ALG_ED25519);
+    store64(vk + 8, alg);
     return vk;
 }
 
 fn verifying_key_from_signing(sk) {
-    return verifying_key_from_bytes(load64(sk + 8));
+    var alg = signing_key_algorithm(sk);
+    return verifying_key_from_bytes_alg(load64(sk + 8), alg);
 }
 
 fn verifying_key_to_hex(vk) {
-    return hex_encode_str(load64(vk), 32);
+    var pk_size = _sig_pk_bytes(verifying_key_algorithm(vk));
+    return hex_encode_str(load64(vk), pk_size);
 }
 
 # ================================================================
@@ -106,19 +172,32 @@ fn entry_sig_new(ehash, signature, verifying_key, key_id, algorithm) {
 }
 
 # ================================================================
-# Sign an entry — returns EntrySignature
+# Sign an entry — returns EntrySignature. Dispatches on the
+# signing key's algorithm; the resulting EntrySignature carries
+# the canonical algorithm name (`sigil_sig_alg_name`) so JSON
+# round-trips and verifier-dispatch can both see it.
 # ================================================================
 
 fn sign_entry(sk, e) {
     sakshi_debug("signing: sign entry", 19);
     var ehash = entry_hash(e);
-    var sig_buf = alloc(64);
-    ed25519_sign(load64(sk), str_data(ehash), str_len(ehash), sig_buf);
-    var sig_hex = hex_encode_str(sig_buf, 64);
+    var alg = signing_key_algorithm(sk);
+    var sig_size = _sig_sig_bytes(alg);
+    var sig_buf = alloc(sig_size);
+    if (alg == SIG_ALG_ED25519) {
+        ed25519_sign(load64(sk), str_data(ehash), str_len(ehash), sig_buf);
+    } elif (alg == SIG_ALG_ML_DSA_65) {
+        # mldsa65_sign argument order: (sig_out, msg, msglen, sk).
+        mldsa65_sign(sig_buf, str_data(ehash), str_len(ehash), load64(sk));
+    } else {
+        sakshi_warn("signing: unknown algorithm in sign_entry", 40);
+        return 0;
+    }
+    var sig_hex = hex_encode_str(sig_buf, sig_size);
     var vk_hex = signing_key_verifying_hex(sk);
     var kid = signing_key_key_id(sk);
-    var alg = str_from("ed25519");
-    return entry_sig_new(ehash, sig_hex, vk_hex, kid, alg);
+    var alg_str = str_from(sig_alg_name(alg));
+    return entry_sig_new(ehash, sig_hex, vk_hex, kid, alg_str);
 }
 
 fn sign_entry_with_key_id(sk, e, key_id) {
@@ -130,11 +209,14 @@ fn sign_entry_with_key_id(sk, e, key_id) {
 # ================================================================
 # Verify entry signature
 # ================================================================
-# Returns 1 if valid, 0 if invalid.
+# Returns 1 if valid, 0 if invalid. Dispatches on the *verifying
+# key's* algorithm — that's the trust anchor in the verify path.
+# A signature carrying a different algorithm string than the vk
+# is rejected: the bytes won't decode to the right shape for
+# the wrong primitive.
 
 fn verify_entry_signature(vk, e, es) {
     sakshi_debug("signing: verify entry", 21);
-    # Check entry hash matches
     var ehash = entry_hash(e);
     var sig_ehash = entry_sig_hash(es);
     if (constant_time_eq_str(ehash, sig_ehash) == 0) {
@@ -142,24 +224,55 @@ fn verify_entry_signature(vk, e, es) {
         return 0;
     }
 
-    # Decode signature from hex (64 bytes for Ed25519)
     var sig_bytes = hex_decode_str(entry_sig_signature(es));
-
-    # Verify with Ed25519
-    return ed25519_verify(load64(vk), str_data(sig_ehash), str_len(sig_ehash), sig_bytes);
+    var alg = verifying_key_algorithm(vk);
+    if (alg == SIG_ALG_ED25519) {
+        return ed25519_verify(load64(vk), str_data(sig_ehash), str_len(sig_ehash), sig_bytes);
+    } elif (alg == SIG_ALG_ML_DSA_65) {
+        # mldsa65_verify argument order: (sig, msg, msglen, pk).
+        # Returns 0 on success, 1 on failure — invert.
+        if (mldsa65_verify(sig_bytes, str_data(sig_ehash), str_len(sig_ehash), load64(vk)) == 0) {
+            return 1;
+        }
+        return 0;
+    }
+    sakshi_warn("signing: unknown algorithm in verify", 36);
+    return 0;
 }
 
 # ================================================================
 # Sign/verify tree head (for IntegrityProof)
 # ================================================================
+# Same dispatch shape as sign_entry / verify_entry_signature.
+# Tree-head signatures are over the merkle root hex (`root_hash`),
+# not raw bytes — both ed25519_sign and mldsa65_sign accept the
+# hex Str's data pointer + length.
 
 fn sign_tree_head(sk, root_hash) {
-    var sig_buf = alloc(64);
-    ed25519_sign(load64(sk), str_data(root_hash), str_len(root_hash), sig_buf);
-    return hex_encode_str(sig_buf, 64);
+    var alg = signing_key_algorithm(sk);
+    var sig_size = _sig_sig_bytes(alg);
+    var sig_buf = alloc(sig_size);
+    if (alg == SIG_ALG_ED25519) {
+        ed25519_sign(load64(sk), str_data(root_hash), str_len(root_hash), sig_buf);
+    } elif (alg == SIG_ALG_ML_DSA_65) {
+        mldsa65_sign(sig_buf, str_data(root_hash), str_len(root_hash), load64(sk));
+    } else {
+        sakshi_warn("signing: unknown algorithm in sign_tree_head", 44);
+        return str_from("");
+    }
+    return hex_encode_str(sig_buf, sig_size);
 }
 
 fn verify_tree_head(vk, root_hash, sig_hex) {
     var sig_bytes = hex_decode_str(sig_hex);
-    return ed25519_verify(load64(vk), str_data(root_hash), str_len(root_hash), sig_bytes);
+    var alg = verifying_key_algorithm(vk);
+    if (alg == SIG_ALG_ED25519) {
+        return ed25519_verify(load64(vk), str_data(root_hash), str_len(root_hash), sig_bytes);
+    } elif (alg == SIG_ALG_ML_DSA_65) {
+        if (mldsa65_verify(sig_bytes, str_data(root_hash), str_len(root_hash), load64(vk)) == 0) {
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
 }

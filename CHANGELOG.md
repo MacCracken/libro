@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-05-10
+
+**Post-quantum signing lands.** ML-DSA-65 (NIST FIPS 204) entry
+signing alongside Ed25519, dispatched at runtime via the
+`algorithm` field on `signing_key` / `verifying_key`. Sigil 3.0.0
+shipped the full FIPS 204 stack in 2.1.0; this is the libro-side
+plumbing that wires it into `sign_entry` / `verify_entry_signature`
+/ `sign_tree_head` / `verify_tree_head`.
+
+Long-standing roadmap item — moves out of "ecosystem-blocked"
+permanently. Hybrid (Ed25519 + ML-DSA-65) signing follows in 2.3.x.
+
+### Added
+
+- **`signing_key_generate_mldsa()`** — generates a 4032-byte
+  ML-DSA-65 secret key + 1952-byte public key from 32 bytes of
+  CSPRNG entropy. Same `signing_key` struct shape as Ed25519
+  (fields are pointers; buffer sizes differ behind them); the
+  `algorithm` field is set to `SIG_ALG_ML_DSA_65 = 1`. Uses
+  `random_bytes` + `secret var seed_stack[32]` for entropy
+  gathering, matching the 2.1.1 hardening pattern.
+- **`verifying_key_from_bytes_alg(bytes, alg)`** — alg-aware vk
+  constructor. The legacy `verifying_key_from_bytes(bytes)` stays
+  Ed25519-specific for backward compat.
+- **Cross-algorithm rejection battery** (`test_signing_cross_alg_rejected`
+  in `src/main.cyr`) — pins that an Ed25519 signature can't verify
+  against an ML-DSA vk and vice versa. Verify dispatch is gated on
+  the *vk's* algorithm (the trust anchor), not the signature's
+  claimed algorithm — an attacker swapping the `entry_sig.algorithm`
+  string can't trick a verifier into accepting bytes under a
+  primitive the consumer didn't authorize.
+- **15 new test assertions** across 5 test fns (roundtrip, tamper-
+  rejection, key_id, zeroize, cross-alg). 373 → 388 total.
+- **2 new bench rows** in `libro_bench_core` — `mldsa65_sign_entry`,
+  `mldsa65_verify_sig`. Iteration counts dropped to 100 (vs 1000
+  for Ed25519) because per-op cost is in the ms range.
+
+### Changed
+
+- **`sign_entry` / `verify_entry_signature` / `sign_tree_head` /
+  `verify_tree_head` are now polymorphic.** Dispatch on the key's
+  algorithm field — pre-2.2 Ed25519 callers see no behaviour
+  change because `signing_key_generate()` still sets
+  `algorithm = SIG_ALG_ED25519`. PQC callers use
+  `signing_key_generate_mldsa()` and the rest of the API is
+  unchanged.
+- **`signing_key_zeroize` is now alg-aware** — uses `_sig_sk_bytes(alg)`
+  to memset the right size (4032 for ML-DSA, 64 for Ed25519). Pre-
+  fix the function memset 64 bytes regardless, leaving ~3.9 KB of
+  ML-DSA secret-key material un-cleared.
+- **`signing_key_verifying_hex` / `verifying_key_to_hex` are
+  alg-aware** — encode 64-char hex (Ed25519) or 3904-char hex
+  (ML-DSA-65) based on `algorithm`.
+- **`entry_sig.algorithm` now carries sigil's canonical name string**
+  (`sig_alg_name(alg)` — `"Ed25519"` or `"ML-DSA-65"`). Pre-2.2 it
+  was hardcoded to `"ed25519"` (lowercase). Internal-only
+  consequence — nothing in libro 2.1.x reads the string content;
+  pinned in 2.0.4's `test_layout_entry_sig` only as a field-offset
+  probe (not value).
+- **Three new size-dispatch helpers** in `signing.cyr` —
+  `_sig_pk_bytes` / `_sig_sk_bytes` / `_sig_sig_bytes`. Centralized
+  so add-an-algorithm changes stay localized. No scattered `64` or
+  `MLDSA65_SK_BYTES` literals in the dispatch fns.
+
+### Performance (x86_64 dev host, sigil 3.0.1)
+
+| Op                       | Ed25519 | ML-DSA-65 | Ratio |
+|--------------------------|--------:|----------:|------:|
+| `sign_entry`             | 1.1 ms  | 3.5 ms    | 3.1×  |
+| `verify_entry_signature` | 6.6 ms  | 2.1 ms    | 0.32× |
+
+ML-DSA-65 verify is *faster* than Ed25519 verify in libro's
+build — a surprise headline. Sigil's 3.0 ML-DSA implementation
+optimizes the verify path well. Sign is ~3× slower than Ed25519
+but absolute is well within audit-workload budget (one signed
+entry per kernel-event is fine).
+
+### Documentation
+
+- **`docs/guides/integration.md`** gains a "Post-Quantum Signing"
+  section: keygen + sign / verify examples, sizing table,
+  performance table, "when to use which" guidance, and the
+  vk-dispatch trust-model note.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **388 passed, 0 failed** (was 373).
+- All three benchmark binaries build + run.
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration
+  runs (no crashes).
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+
+### Roadmap impact
+
+- **2.3.x — Hybrid signing (Ed25519 + ML-DSA-65)** unblocked. The
+  algorithm-dispatch infrastructure is in place; hybrid is mostly
+  a new entry-storage shape (two signature slots) plus a
+  `sigil_verify_hybrid` wrapper.
+- **2.4.x — PatraStore performance** unaffected by this minor.
+- **2.5.x — TPM-sealed `WitnessAnchor`** unaffected.
+
 ## [2.1.1] - 2026-05-10
 
 First slice of the 2.1.x toolchain-bump follow-ups planned in the
