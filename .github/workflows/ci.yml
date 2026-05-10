@@ -117,7 +117,16 @@ jobs:
           # raw-offset probes in the #derive(accessors) layout-invariant
           # tests (test_layout_* — see ADR 0005). Added per-struct as
           # the test battery expanded in 2.0.4+.
-          ALLOW[src/main.cyr]="a c e e1 ip probe1 probe2 chain_layout iproof_layout anchor_layout entry_layout sk_layout vk_layout es_layout mt_layout sth_layout fs_layout"
+          # *_layout locals are intentional raw-offset probes in the
+          # test_layout_* battery (#derive(accessors) layout invariants —
+          # see ADR 0005). Every layout test adds its sentinel-name here.
+          # 2.6.1 added 16 (15 default + 1 TPM-gated): archive / error /
+          # integrity / review / receipt / memstore / stream / ts_request
+          # (tsreq_layout) / ts_response (tsresp_layout) / ts_attestation
+          # (tsa_layout) / retention (ret_layout) / proof_node (pn_layout) /
+          # merkle_proof (mp_layout) / consistency / pv / tpm_anchor
+          # (ta_layout).
+          ALLOW[src/main.cyr]="a c e e1 ip probe1 probe2 chain_layout iproof_layout anchor_layout entry_layout sk_layout vk_layout es_layout mt_layout sth_layout fs_layout archive_layout error_layout integrity_layout review_layout receipt_layout memstore_layout stream_layout tsreq_layout tsresp_layout tsa_layout ret_layout pn_layout mp_layout consistency_layout pv_layout ta_layout"
           ALLOW[src/merkle.cyr]="cp mp pn t tree"
           ALLOW[src/patra_store.cyr]="e s"
           ALLOW[src/proof.cyr]="ip p pv s"
