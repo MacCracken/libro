@@ -1,24 +1,32 @@
 # signing.cyr — cryptographic signing for audit entries
 #
-# Two algorithms supported, dispatched at runtime via the
+# Three algorithms supported, dispatched at runtime via the
 # `algorithm` field on signing_key / verifying_key / entry_sig:
 #
 #   SIG_ALG_ED25519     — 64-byte signatures, RFC 8032
 #   SIG_ALG_ML_DSA_65   — 3309-byte signatures, NIST FIPS 204
+#   SIG_ALG_HYBRID      — Ed25519 + ML-DSA-65 produced together;
+#                         verify-AND under both primitives
 #
-# Both delegate to sigil. The signing_key / verifying_key struct
-# layouts are alg-agnostic (pointer fields), so the same struct
-# carries either algorithm's key material — only the buffer sizes
-# behind the pointers differ.
+# All three delegate to sigil. The struct layouts carry up to
+# two key-material slots so the same shape covers single-alg
+# (slot-2 == 0) and hybrid (both slots populated) entries.
 
 # ================================================================
 # SigningKey — generated accessors:
 #   signing_key_bytes, signing_key_pub_bytes, signing_key_algorithm,
-#   signing_key_key_id, signing_key_zeroized, signing_key_seed
+#   signing_key_key_id, signing_key_zeroized, signing_key_seed,
+#   signing_key_bytes_2, signing_key_pub_bytes_2, signing_key_seed_2
 #   plus `_set_` setters for each.
+#
+# Slot 1 (bytes / pub_bytes / seed):
+#   Ed25519 sk/pk/seed — for SIG_ALG_ED25519 and SIG_ALG_HYBRID
+#   ML-DSA-65 sk/pk/seed — for SIG_ALG_ML_DSA_65
+# Slot 2 (bytes_2 / pub_bytes_2 / seed_2):
+#   ML-DSA-65 sk/pk/seed — for SIG_ALG_HYBRID only; 0 otherwise
 # ================================================================
 #derive(accessors)
-struct signing_key { bytes; pub_bytes; algorithm; key_id; zeroized; seed; }
+struct signing_key { bytes; pub_bytes; algorithm; key_id; zeroized; seed; bytes_2; pub_bytes_2; seed_2; }
 
 # Per-algorithm sizes. Centralized here so add-an-algorithm changes
 # stay localized — no scattered `64` or `MLDSA65_SK_BYTES` literals
@@ -43,7 +51,7 @@ fn _sig_sig_bytes(alg) {
 
 fn signing_key_generate() {
     sakshi_info("signing: key generate", 21);
-    var sk = fl_alloc(48);
+    var sk = fl_alloc(72);
     var sk_bytes = alloc(64);
     var pk_bytes = alloc(32);
     var seed = alloc(32);
@@ -57,6 +65,9 @@ fn signing_key_generate() {
     store64(sk + 24, 0);
     store64(sk + 32, 0);
     store64(sk + 40, seed);
+    store64(sk + 48, 0);  # bytes_2     — unused for single-alg
+    store64(sk + 56, 0);  # pub_bytes_2 — unused for single-alg
+    store64(sk + 64, 0);  # seed_2      — unused for single-alg
     return sk;
 }
 
@@ -67,7 +78,7 @@ fn signing_key_generate() {
 # `signing_key_zeroize` clears it from the struct.
 fn signing_key_generate_mldsa() {
     sakshi_info("signing: key generate (mldsa65)", 31);
-    var sk = fl_alloc(48);
+    var sk = fl_alloc(72);
     var sk_bytes = alloc(MLDSA65_SK_BYTES);
     var pk_bytes = alloc(MLDSA65_PK_BYTES);
     var seed = alloc(32);
@@ -81,11 +92,52 @@ fn signing_key_generate_mldsa() {
     store64(sk + 24, 0);
     store64(sk + 32, 0);
     store64(sk + 40, seed);
+    store64(sk + 48, 0);
+    store64(sk + 56, 0);
+    store64(sk + 64, 0);
+    return sk;
+}
+
+# Hybrid keygen — generates Ed25519 + ML-DSA-65 keypairs from
+# *independent* 32-byte seeds. Independence matters: a single seed
+# fed to both algorithms via different KDFs would still entangle
+# their secret material if either KDF were ever shown to leak
+# correlation. The 64 bytes of CSPRNG output are cheap; the
+# domain-separation is free.
+fn signing_key_generate_hybrid() {
+    sakshi_info("signing: key generate (hybrid)", 30);
+    var sk = fl_alloc(72);
+    # Slot 1: Ed25519
+    var ed_sk = alloc(64);
+    var ed_pk = alloc(32);
+    var ed_seed = alloc(32);
+    secret var ed_seed_stack[32];
+    random_bytes(&ed_seed_stack, 32);
+    memcpy(ed_seed, &ed_seed_stack, 32);
+    ed25519_keypair(ed_seed, ed_sk, ed_pk);
+    # Slot 2: ML-DSA-65
+    var pq_sk = alloc(MLDSA65_SK_BYTES);
+    var pq_pk = alloc(MLDSA65_PK_BYTES);
+    var pq_seed = alloc(32);
+    secret var pq_seed_stack[32];
+    random_bytes(&pq_seed_stack, 32);
+    memcpy(pq_seed, &pq_seed_stack, 32);
+    mldsa65_keypair_from_seed(pq_seed, pq_pk, pq_sk);
+    # Pack
+    store64(sk, ed_sk);
+    store64(sk + 8, ed_pk);
+    store64(sk + 16, SIG_ALG_HYBRID);
+    store64(sk + 24, 0);
+    store64(sk + 32, 0);
+    store64(sk + 40, ed_seed);
+    store64(sk + 48, pq_sk);
+    store64(sk + 56, pq_pk);
+    store64(sk + 64, pq_seed);
     return sk;
 }
 
 fn signing_key_from_seed(seed) {
-    var sk = fl_alloc(48);
+    var sk = fl_alloc(72);
     var sk_bytes = alloc(64);
     var pk_bytes = alloc(32);
     ed25519_keypair(seed, sk_bytes, pk_bytes);
@@ -95,93 +147,183 @@ fn signing_key_from_seed(seed) {
     store64(sk + 24, 0);
     store64(sk + 32, 0);
     store64(sk + 40, seed);
+    store64(sk + 48, 0);
+    store64(sk + 56, 0);
+    store64(sk + 64, 0);
     return sk;
 }
 
-# Zeroize key material. Not a derived accessor — touches both the
-# secret-key buffer and the seed (alg-aware sk size), then flips
-# the zeroized flag via the generated setter.
+# Zeroize key material. Touches both slots when populated:
+#   - bytes (slot 1) sized by primary algorithm; HYBRID treats
+#     slot 1 as Ed25519 so 64 bytes apply.
+#   - bytes_2 (slot 2) is ML-DSA-65 sk for HYBRID, 0 otherwise.
+#   - both seeds, when present.
 fn signing_key_zeroize(sk) {
     if (signing_key_zeroized(sk) == 1) { return 0; }
-    var sk_size = _sig_sk_bytes(signing_key_algorithm(sk));
-    memset(signing_key_bytes(sk), 0, sk_size);
-    memset(signing_key_seed(sk), 0, 32);
+    var alg = signing_key_algorithm(sk);
+    if (alg == SIG_ALG_HYBRID) {
+        # Slot 1 = Ed25519 (64), slot 2 = ML-DSA-65 (4032).
+        memset(signing_key_bytes(sk), 0, 64);
+        memset(signing_key_seed(sk), 0, 32);
+        memset(signing_key_bytes_2(sk), 0, MLDSA65_SK_BYTES);
+        memset(signing_key_seed_2(sk), 0, 32);
+    } else {
+        var sk_size = _sig_sk_bytes(alg);
+        memset(signing_key_bytes(sk), 0, sk_size);
+        memset(signing_key_seed(sk), 0, 32);
+    }
     signing_key_set_zeroized(sk, 1);
     return 0;
 }
 
-# Get verifying (public) key as hex Str. Alg-aware — Ed25519
-# returns 64 chars (32 bytes × 2), ML-DSA-65 returns 3904 chars
-# (1952 bytes × 2).
+# Get verifying (public) key as hex Str. For HYBRID this returns
+# only the Ed25519 portion (slot 1) — the ML-DSA-65 public key is
+# fetched via `signing_key_verifying_hex_2`. Single-alg returns
+# the only pk it has.
 fn signing_key_verifying_hex(sk) {
-    var pk_size = _sig_pk_bytes(signing_key_algorithm(sk));
+    var alg = signing_key_algorithm(sk);
+    if (alg == SIG_ALG_HYBRID) {
+        # Slot 1 holds the 32-byte Ed25519 pk.
+        return hex_encode_str(load64(sk + 8), 32);
+    }
+    var pk_size = _sig_pk_bytes(alg);
     return hex_encode_str(load64(sk + 8), pk_size);
+}
+
+# Slot-2 verifying-key hex. Only meaningful for HYBRID; returns
+# the empty Str otherwise so callers can drop into a single
+# straight-line build of entry_sig without alg-branching.
+fn signing_key_verifying_hex_2(sk) {
+    var alg = signing_key_algorithm(sk);
+    if (alg == SIG_ALG_HYBRID) {
+        # Slot 2 holds the 1952-byte ML-DSA-65 pk.
+        return hex_encode_str(load64(sk + 56), MLDSA65_PK_BYTES);
+    }
+    return str_from("");
 }
 
 # ================================================================
 # VerifyingKey — generated accessors:
-#   verifying_key_bytes, verifying_key_algorithm
+#   verifying_key_bytes, verifying_key_algorithm, verifying_key_bytes_2
 # ================================================================
 #derive(accessors)
-struct verifying_key { bytes; algorithm; }
+struct verifying_key { bytes; algorithm; bytes_2; }
 
 # Construct from raw Ed25519 public-key bytes (32 bytes). Kept
 # Ed25519-specific for backward compatibility with pre-2.2 callers.
-# Use `verifying_key_from_bytes_alg` for ML-DSA-65 or any other
-# future algorithm.
+# Use `verifying_key_from_bytes_alg` for ML-DSA-65 or HYBRID.
 fn verifying_key_from_bytes(bytes) {
     return verifying_key_from_bytes_alg(bytes, SIG_ALG_ED25519);
 }
 
 fn verifying_key_from_bytes_alg(bytes, alg) {
     var pk_size = _sig_pk_bytes(alg);
-    var vk = fl_alloc(16);
+    var vk = fl_alloc(24);
     var pk = alloc(pk_size);
     memcpy(pk, bytes, pk_size);
     store64(vk, pk);
     store64(vk + 8, alg);
+    store64(vk + 16, 0);  # bytes_2 — unused for single-alg
+    return vk;
+}
+
+# Hybrid constructor — takes both pk byte buffers. ed_bytes must
+# be 32 bytes; pq_bytes must be MLDSA65_PK_BYTES.
+fn verifying_key_from_bytes_hybrid(ed_bytes, pq_bytes) {
+    var vk = fl_alloc(24);
+    var ed_pk = alloc(32);
+    var pq_pk = alloc(MLDSA65_PK_BYTES);
+    memcpy(ed_pk, ed_bytes, 32);
+    memcpy(pq_pk, pq_bytes, MLDSA65_PK_BYTES);
+    store64(vk, ed_pk);
+    store64(vk + 8, SIG_ALG_HYBRID);
+    store64(vk + 16, pq_pk);
     return vk;
 }
 
 fn verifying_key_from_signing(sk) {
     var alg = signing_key_algorithm(sk);
+    if (alg == SIG_ALG_HYBRID) {
+        return verifying_key_from_bytes_hybrid(load64(sk + 8), load64(sk + 56));
+    }
     return verifying_key_from_bytes_alg(load64(sk + 8), alg);
 }
 
 fn verifying_key_to_hex(vk) {
-    var pk_size = _sig_pk_bytes(verifying_key_algorithm(vk));
+    var alg = verifying_key_algorithm(vk);
+    if (alg == SIG_ALG_HYBRID) {
+        # Return only the Ed25519 portion for backward compat with
+        # pre-2.3 callers that expect a single hex string. Use
+        # verifying_key_to_hex_2 for the slot-2 pk.
+        return hex_encode_str(load64(vk), 32);
+    }
+    var pk_size = _sig_pk_bytes(alg);
     return hex_encode_str(load64(vk), pk_size);
+}
+
+fn verifying_key_to_hex_2(vk) {
+    var alg = verifying_key_algorithm(vk);
+    if (alg == SIG_ALG_HYBRID) {
+        return hex_encode_str(load64(vk + 16), MLDSA65_PK_BYTES);
+    }
+    return str_from("");
 }
 
 # ================================================================
 # EntrySignature — generated accessors:
 #   entry_sig_hash, entry_sig_signature, entry_sig_verifying_key,
-#   entry_sig_key_id, entry_sig_algorithm
+#   entry_sig_key_id, entry_sig_algorithm, entry_sig_signature_2,
+#   entry_sig_verifying_key_2
+#
+# Single-alg (Ed25519 or ML-DSA-65 only):
+#   signature, verifying_key  → that algorithm's hex sig + hex pk
+#   signature_2, verifying_key_2 → 0
+#
+# Hybrid:
+#   signature, verifying_key   → Ed25519 hex sig + hex pk
+#   signature_2, verifying_key_2 → ML-DSA-65 hex sig + hex pk
 # ================================================================
 #derive(accessors)
-struct entry_sig { hash; signature; verifying_key; key_id; algorithm; }
+struct entry_sig { hash; signature; verifying_key; key_id; algorithm; signature_2; verifying_key_2; }
 
 fn entry_sig_new(ehash, signature, verifying_key, key_id, algorithm) {
-    var es = fl_alloc(40);
+    var es = fl_alloc(56);
     store64(es, ehash);
     store64(es + 8, signature);
     store64(es + 16, verifying_key);
     store64(es + 24, key_id);
     store64(es + 32, algorithm);
+    store64(es + 40, 0);  # signature_2     — single-alg leaves 0
+    store64(es + 48, 0);  # verifying_key_2 — single-alg leaves 0
+    return es;
+}
+
+fn entry_sig_new_hybrid(ehash, ed_sig, ed_vk, key_id, algorithm, pq_sig, pq_vk) {
+    var es = fl_alloc(56);
+    store64(es, ehash);
+    store64(es + 8, ed_sig);
+    store64(es + 16, ed_vk);
+    store64(es + 24, key_id);
+    store64(es + 32, algorithm);
+    store64(es + 40, pq_sig);
+    store64(es + 48, pq_vk);
     return es;
 }
 
 # ================================================================
 # Sign an entry — returns EntrySignature. Dispatches on the
 # signing key's algorithm; the resulting EntrySignature carries
-# the canonical algorithm name (`sigil_sig_alg_name`) so JSON
-# round-trips and verifier-dispatch can both see it.
+# the canonical algorithm name (`sig_alg_name`) and, for hybrid,
+# both signatures and both verifying-key hexes.
 # ================================================================
 
 fn sign_entry(sk, e) {
     sakshi_debug("signing: sign entry", 19);
     var ehash = entry_hash(e);
     var alg = signing_key_algorithm(sk);
+    if (alg == SIG_ALG_HYBRID) {
+        return _sign_entry_hybrid(sk, ehash);
+    }
     var sig_size = _sig_sig_bytes(alg);
     var sig_buf = alloc(sig_size);
     if (alg == SIG_ALG_ED25519) {
@@ -200,6 +342,22 @@ fn sign_entry(sk, e) {
     return entry_sig_new(ehash, sig_hex, vk_hex, kid, alg_str);
 }
 
+# Hybrid sign — produces Ed25519 + ML-DSA-65 signatures over the
+# same entry hash and packs both into the entry_sig slots.
+fn _sign_entry_hybrid(sk, ehash) {
+    var ed_sig_buf = alloc(64);
+    ed25519_sign(load64(sk), str_data(ehash), str_len(ehash), ed_sig_buf);
+    var pq_sig_buf = alloc(MLDSA65_SIG_BYTES);
+    mldsa65_sign(pq_sig_buf, str_data(ehash), str_len(ehash), load64(sk + 48));
+    var ed_sig_hex = hex_encode_str(ed_sig_buf, 64);
+    var pq_sig_hex = hex_encode_str(pq_sig_buf, MLDSA65_SIG_BYTES);
+    var ed_vk_hex = signing_key_verifying_hex(sk);
+    var pq_vk_hex = signing_key_verifying_hex_2(sk);
+    var kid = signing_key_key_id(sk);
+    var alg_str = str_from(sig_alg_name(SIG_ALG_HYBRID));
+    return entry_sig_new_hybrid(ehash, ed_sig_hex, ed_vk_hex, kid, alg_str, pq_sig_hex, pq_vk_hex);
+}
+
 fn sign_entry_with_key_id(sk, e, key_id) {
     var es = sign_entry(sk, e);
     store64(es + 24, key_id);
@@ -211,9 +369,9 @@ fn sign_entry_with_key_id(sk, e, key_id) {
 # ================================================================
 # Returns 1 if valid, 0 if invalid. Dispatches on the *verifying
 # key's* algorithm — that's the trust anchor in the verify path.
-# A signature carrying a different algorithm string than the vk
-# is rejected: the bytes won't decode to the right shape for
-# the wrong primitive.
+# A hybrid vk requires AND-mode verification: both Ed25519 and
+# ML-DSA-65 must validate. This is the SIG_ALG_HYBRID semantic
+# in sigil's `sigil_verify_hybrid`.
 
 fn verify_entry_signature(vk, e, es) {
     sakshi_debug("signing: verify entry", 21);
@@ -224,17 +382,28 @@ fn verify_entry_signature(vk, e, es) {
         return 0;
     }
 
-    var sig_bytes = hex_decode_str(entry_sig_signature(es));
     var alg = verifying_key_algorithm(vk);
     if (alg == SIG_ALG_ED25519) {
+        var sig_bytes = hex_decode_str(entry_sig_signature(es));
         return ed25519_verify(load64(vk), str_data(sig_ehash), str_len(sig_ehash), sig_bytes);
     } elif (alg == SIG_ALG_ML_DSA_65) {
-        # mldsa65_verify argument order: (sig, msg, msglen, pk).
-        # Returns 0 on success, 1 on failure — invert.
+        var sig_bytes = hex_decode_str(entry_sig_signature(es));
         if (mldsa65_verify(sig_bytes, str_data(sig_ehash), str_len(sig_ehash), load64(vk)) == 0) {
             return 1;
         }
         return 0;
+    } elif (alg == SIG_ALG_HYBRID) {
+        # Both slots must be populated and both must verify.
+        var ed_sig_str = entry_sig_signature(es);
+        var pq_sig_str = entry_sig_signature_2(es);
+        if (ed_sig_str == 0 || pq_sig_str == 0) { return 0; }
+        if (str_len(ed_sig_str) == 0 || str_len(pq_sig_str) == 0) { return 0; }
+        var ed_sig_bytes = hex_decode_str(ed_sig_str);
+        var pq_sig_bytes = hex_decode_str(pq_sig_str);
+        return sigil_verify_hybrid(str_data(sig_ehash), str_len(sig_ehash),
+            ed_sig_bytes, load64(vk),
+            pq_sig_bytes, load64(vk + 16),
+            SIG_ALG_HYBRID);
     }
     sakshi_warn("signing: unknown algorithm in verify", 36);
     return 0;
@@ -246,10 +415,25 @@ fn verify_entry_signature(vk, e, es) {
 # Same dispatch shape as sign_entry / verify_entry_signature.
 # Tree-head signatures are over the merkle root hex (`root_hash`),
 # not raw bytes — both ed25519_sign and mldsa65_sign accept the
-# hex Str's data pointer + length.
+# hex Str's data pointer + length. Hybrid mode emits a `|`-
+# delimited concat of the two hex sigs into the single Str field;
+# verify_tree_head splits and dispatches sigil_verify_hybrid.
 
 fn sign_tree_head(sk, root_hash) {
     var alg = signing_key_algorithm(sk);
+    if (alg == SIG_ALG_HYBRID) {
+        var ed_sig_buf = alloc(64);
+        ed25519_sign(load64(sk), str_data(root_hash), str_len(root_hash), ed_sig_buf);
+        var pq_sig_buf = alloc(MLDSA65_SIG_BYTES);
+        mldsa65_sign(pq_sig_buf, str_data(root_hash), str_len(root_hash), load64(sk + 48));
+        var ed_hex = hex_encode_str(ed_sig_buf, 64);
+        var pq_hex = hex_encode_str(pq_sig_buf, MLDSA65_SIG_BYTES);
+        var sb = str_builder_new();
+        str_builder_add_str(sb, ed_hex);
+        str_builder_add_cstr(sb, "|");
+        str_builder_add_str(sb, pq_hex);
+        return str_builder_build(sb);
+    }
     var sig_size = _sig_sig_bytes(alg);
     var sig_buf = alloc(sig_size);
     if (alg == SIG_ALG_ED25519) {
@@ -264,15 +448,41 @@ fn sign_tree_head(sk, root_hash) {
 }
 
 fn verify_tree_head(vk, root_hash, sig_hex) {
-    var sig_bytes = hex_decode_str(sig_hex);
     var alg = verifying_key_algorithm(vk);
     if (alg == SIG_ALG_ED25519) {
+        var sig_bytes = hex_decode_str(sig_hex);
         return ed25519_verify(load64(vk), str_data(root_hash), str_len(root_hash), sig_bytes);
     } elif (alg == SIG_ALG_ML_DSA_65) {
+        var sig_bytes = hex_decode_str(sig_hex);
         if (mldsa65_verify(sig_bytes, str_data(root_hash), str_len(root_hash), load64(vk)) == 0) {
             return 1;
         }
         return 0;
+    } elif (alg == SIG_ALG_HYBRID) {
+        # Split the `|`-delimited Ed25519 hex | ML-DSA-65 hex.
+        var pipe = _sig_find_pipe(sig_hex);
+        if (pipe < 0) { return 0; }
+        var ed_hex = str_substr(sig_hex, 0, pipe);
+        var pq_hex = str_substr(sig_hex, pipe + 1, str_len(sig_hex));
+        var ed_bytes = hex_decode_str(ed_hex);
+        var pq_bytes = hex_decode_str(pq_hex);
+        return sigil_verify_hybrid(str_data(root_hash), str_len(root_hash),
+            ed_bytes, load64(vk),
+            pq_bytes, load64(vk + 16),
+            SIG_ALG_HYBRID);
     }
     return 0;
+}
+
+# Find the byte offset of the first `|` in `s`, or -1 if none.
+# Used by verify_tree_head's hybrid delimiter split.
+fn _sig_find_pipe(s) {
+    var data = str_data(s);
+    var n = str_len(s);
+    var i = 0;
+    while (i < n) {
+        if ((load8(data + i) & 0xFF) == 124) { return i; }  # '|' = 0x7C
+        i = i + 1;
+    }
+    return -1;
 }

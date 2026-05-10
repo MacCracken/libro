@@ -249,6 +249,112 @@ to decode the bytes (different layout) or fail to verify (wrong
 math). The `test_signing_cross_alg_rejected` battery in
 `src/main.cyr` pins this.
 
+## Hybrid Signing — Ed25519 + ML-DSA-65 (2.3.0)
+
+libro 2.3.0 adds hybrid signing as the migration path for chains
+that need to outlive a single algorithm's threat horizon. A hybrid
+signing key carries *both* an Ed25519 keypair and an ML-DSA-65
+keypair (independent seeds, no shared entropy). Each sign call
+produces both signatures; verify requires *both* to validate
+(AND-mode, matching sigil's `sigil_verify_hybrid` contract).
+
+```cyrius
+# Hybrid keygen — two independent 32-byte seeds, two keypairs.
+var sk = signing_key_generate_hybrid();
+
+# sign_entry produces an entry_sig carrying both signatures.
+var sig = sign_entry(sk, entry);
+# sig.signature       = Ed25519 hex   (128 chars)
+# sig.signature_2     = ML-DSA-65 hex (6618 chars)
+# sig.verifying_key   = Ed25519 pk hex
+# sig.verifying_key_2 = ML-DSA-65 pk hex
+# sig.algorithm       = "Hybrid(Ed25519+ML-DSA-65)"
+
+# Verify dispatches on vk.algorithm == SIG_ALG_HYBRID and gates
+# both primitives — Ed25519 verify AND ML-DSA-65 verify must pass.
+var vk = verifying_key_from_signing(sk);
+verify_entry_signature(vk, entry, sig);
+```
+
+### Why hybrid
+
+A hybrid signature is a single audit-chain assertion under two
+distinct cryptographic assumptions. If either algorithm is broken
+in the future — Ed25519 by some discrete-log advance, ML-DSA-65
+by a lattice-cryptanalysis breakthrough — the *other* still
+witnesses the entry's authenticity. For audit chains with
+multi-year retention windows, hybrid is the conservative choice
+during the transition era.
+
+The cost is roughly additive — both primitives run on every sign
+and every verify. Sigil's published numbers + libro's measured
+2.3.0 baseline:
+
+| Op | Ed25519 | ML-DSA-65 | Hybrid (sum) |
+|----|--------:|----------:|-------------:|
+| `sign_entry`             | 1.1 ms | 3.5 ms | 4.6 ms |
+| `verify_entry_signature` | 6.6 ms | 2.1 ms | 8.7 ms |
+
+Per-entry sign + verify in the millisecond range stays well
+within the per-event budget for kernel-audit / aegis / stiva
+workloads.
+
+### Migration story — Ed25519 → Hybrid → ML-DSA-65
+
+A consumer worried about post-quantum threats but not ready to
+abandon Ed25519 today follows this rotation:
+
+1. **2.x today** — chain begins Ed25519-only. Consumers verify
+   with Ed25519 vks. Existing code path.
+2. **Rotate to hybrid** — at a chain boundary (e.g., a chain
+   rotation under retention policy, or a fresh log file), switch
+   to `signing_key_generate_hybrid()`. New entries carry both
+   signatures; verifiers either upgrade to a hybrid vk (validates
+   both) or keep using their Ed25519-only vk (validates the
+   Ed25519 portion only — see "Backwards-compatible verify"
+   below).
+3. **Eventually rotate to ML-DSA-65 only** — once the consumer's
+   threat model considers Ed25519 retired (a multi-year horizon),
+   another chain boundary moves to `signing_key_generate_mldsa()`.
+   Hybrid entries from step 2 remain valid under their hybrid vks
+   indefinitely.
+
+### Backwards-compatible verify
+
+A hybrid `entry_sig` is structurally a superset of an Ed25519
+`entry_sig`: slot-1 carries the same Ed25519 hex sig + pk a
+pre-2.3 verifier expected. A consumer who has *not* upgraded to
+a hybrid vk can still verify the Ed25519 portion of a hybrid
+signature by constructing an Ed25519-only vk:
+
+```cyrius
+# Read just the Ed25519 portion of a hybrid sig with a 2.x vk.
+var vk_ed = verifying_key_from_bytes(
+    hex_decode_str(entry_sig_verifying_key(sig)));
+# vk_ed.algorithm == SIG_ALG_ED25519 → verify dispatches to ed25519_verify.
+verify_entry_signature(vk_ed, entry, sig);
+```
+
+This is the explicit single-algorithm fallback — useful while a
+fleet rolls out the hybrid-aware verifier. It loses the PQ
+guarantee for that consumer; the chain itself still has the
+ML-DSA-65 signatures recorded for any verifier who *does* upgrade.
+
+### Tree-head signature shape
+
+`sign_tree_head` returns a single `Str` for backward compatibility
+with pre-2.3 callers (proof.cyr's `iproof.tree_head.signature`
+field is one Str, not two). For hybrid mode the two hex sigs are
+concatenated with a `|` delimiter:
+
+```
+ed25519_hex_sig | mldsa65_hex_sig
+```
+
+`verify_tree_head` finds the pipe, splits, and dispatches
+`sigil_verify_hybrid`. The pipe character is unambiguous because
+hex digits never include `|`. Length: 128 + 1 + 6618 = 6747 chars.
+
 ## Hardening — Landlock sandbox for PatraStore
 
 PatraStore opens `.patra` files at consumer-supplied paths. A

@@ -56,6 +56,9 @@ var _b_sig = 0;
 var _b_sk_pq = 0;
 var _b_vk_pq = 0;
 var _b_sig_pq = 0;
+var _b_sk_hy = 0;
+var _b_vk_hy = 0;
+var _b_sig_hy = 0;
 
 fn bench_chain_append(ignored) {
     var c = chain_new();
@@ -137,6 +140,21 @@ fn bench_mldsa_verify_sig(ignored) {
     return 0;
 }
 
+# Hybrid signing path. Cost is roughly Ed25519 + ML-DSA-65 added
+# (both primitives run, AND-mode); slightly higher than the sum
+# because of the extra hex_encode + struct allocation overhead.
+fn bench_hybrid_sign_entry(ignored) {
+    var e = vec_get(_b_entries, 0);
+    sign_entry(_b_sk_hy, e);
+    return 0;
+}
+
+fn bench_hybrid_verify_sig(ignored) {
+    var e = vec_get(_b_entries, 0);
+    verify_entry_signature(_b_vk_hy, e, _b_sig_hy);
+    return 0;
+}
+
 fn bench_query_filter(ignored) {
     var q = query_new();
     query_source(q, str_from("bench-src"));
@@ -186,6 +204,9 @@ fn main() {
     _b_sk_pq = signing_key_generate_mldsa();
     _b_vk_pq = verifying_key_from_signing(_b_sk_pq);
     _b_sig_pq = sign_entry(_b_sk_pq, vec_get(_b_entries, 0));
+    _b_sk_hy = signing_key_generate_hybrid();
+    _b_vk_hy = verifying_key_from_signing(_b_sk_hy);
+    _b_sig_hy = sign_entry(_b_sk_hy, vec_get(_b_entries, 0));
 
     _b_batch_sev = vec_new();
     _b_batch_src = vec_new();
@@ -257,6 +278,14 @@ fn main() {
     var b10v = bench_new("mldsa65_verify_sig");
     bench_run(b10v, &bench_mldsa_verify_sig, 100);
     vec_push(benches, b10v);
+
+    var b10hs = bench_new("hybrid_sign_entry");
+    bench_run(b10hs, &bench_hybrid_sign_entry, 100);
+    vec_push(benches, b10hs);
+
+    var b10hv = bench_new("hybrid_verify_sig");
+    bench_run(b10hv, &bench_hybrid_verify_sig, 100);
+    vec_push(benches, b10hv);
 
     var b11 = bench_new("query_filter_100");
     bench_run(b11, &bench_query_filter, 1000);

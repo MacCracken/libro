@@ -5,6 +5,119 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-05-10
+
+**Hybrid signing lands.** Entries can now be signed with both
+Ed25519 and ML-DSA-65 simultaneously, and verified under
+sigil 3.0's `sigil_verify_hybrid` AND-mode contract. This is the
+migration path the 2.2.0 changelog flagged: chains that need to
+outlive a single algorithm's threat horizon (Ed25519 today,
+ML-DSA-65 tomorrow, both during the transition).
+
+### Added
+
+- **`signing_key_generate_hybrid()`** — generates Ed25519 and
+  ML-DSA-65 keypairs from *independent* 32-byte seeds. No shared
+  entropy: 64 bytes of CSPRNG output are cheap, and domain
+  separation is free insurance against any future KDF correlation
+  finding.
+- **`SIG_ALG_HYBRID = 2` dispatch** added to `sign_entry`,
+  `verify_entry_signature`, `sign_tree_head`, `verify_tree_head`.
+  Hybrid sign produces both signatures; hybrid verify requires
+  both to validate. Single-algorithm callers (Ed25519 / ML-DSA-65)
+  continue to work unchanged.
+- **`verifying_key_from_bytes_hybrid(ed_bytes, pq_bytes)`** —
+  constructor for a hybrid vk from raw Ed25519 + ML-DSA-65 pk
+  bytes. `verifying_key_from_signing(sk)` auto-routes through it
+  when `sk.algorithm == SIG_ALG_HYBRID`.
+- **`signing_key_verifying_hex_2(sk)` / `verifying_key_to_hex_2(vk)`**
+  — slot-2 hex accessors. The pre-2.3 `*_hex` accessors stay
+  Ed25519-shaped for backward compatibility (return only slot 1).
+- **`entry_sig_new_hybrid(...)`** — 7-arg constructor that fills
+  both slots of the extended `entry_sig` struct.
+- **23 new test assertions** across 4 hybrid test fns
+  (roundtrip, tamper-rejection on either side, zeroize across
+  both buffers, tree-head roundtrip). 394 → 417 total.
+- **6 new layout-invariant assertions** for the new struct
+  fields (`signing_key.bytes_2/pub_bytes_2/seed_2`,
+  `verifying_key.bytes_2`, `entry_sig.signature_2/verifying_key_2`).
+- **2 new bench rows** in `libro_bench_core` —
+  `hybrid_sign_entry`, `hybrid_verify_sig`.
+
+### Changed
+
+- **`signing_key` extended from 6 to 9 fields** (48 → 72 bytes).
+  New slots: `bytes_2`, `pub_bytes_2`, `seed_2`. Single-algorithm
+  keys leave them as 0; hybrid keys populate both.
+- **`verifying_key` extended from 2 to 3 fields** (16 → 24 bytes).
+  New slot: `bytes_2` (ML-DSA-65 pk for hybrid; 0 otherwise).
+- **`entry_sig` extended from 5 to 7 fields** (40 → 56 bytes).
+  New slots: `signature_2` (ML-DSA-65 hex sig for hybrid; 0
+  otherwise), `verifying_key_2` (ML-DSA-65 hex pk for hybrid; 0
+  otherwise).
+- **`signing_key_zeroize` is hybrid-aware** — clears both 64-byte
+  Ed25519 sk and 4032-byte ML-DSA-65 sk plus both 32-byte seeds
+  when `algorithm == SIG_ALG_HYBRID`.
+- **`sign_tree_head` hybrid output** is the two hex sigs
+  concatenated as `<ed_hex>|<mldsa_hex>` (6747 chars total). The
+  STH structure carries one signature `Str` field, so the
+  delimiter form is the only fit without expanding sth's layout.
+  `verify_tree_head` splits at the pipe and dispatches
+  `sigil_verify_hybrid`. Pipe is unambiguous because hex digits
+  never include `|`.
+- **`signing_key_from_seed`** struct allocation updated from
+  `fl_alloc(48)` to `fl_alloc(72)` to match the new layout.
+- **Layout-invariant tests updated** for the three extended
+  structs. Pre-fix the tests would have silently failed once the
+  derived accessors moved to new offsets — these are the load-
+  bearing guard for #derive(accessors) regressions, see
+  ADR 0005.
+
+### Performance (x86_64 dev host, sigil 3.0.1)
+
+| Op                       | Ed25519 | ML-DSA-65 | Hybrid (sum) |
+|--------------------------|--------:|----------:|-------------:|
+| `sign_entry`             | 1.1 ms  | 3.5 ms    | 4.6 ms       |
+| `verify_entry_signature` | 6.6 ms  | 2.1 ms    | 8.7 ms       |
+
+Hybrid cost is essentially the sum of the two primitives —
+expected, since AND-mode runs both. Per-entry sign + verify in
+the single-digit-millisecond range stays well within the
+per-event budget for kernel-audit / aegis / stiva workloads.
+
+### Documentation
+
+- **`docs/guides/integration.md`** gains a "Hybrid Signing"
+  section: keygen + sign / verify examples, sizing table,
+  performance table, three-step migration story
+  (Ed25519 → Hybrid → ML-DSA-65), and the backwards-compatible
+  verify pattern (a pre-2.3 Ed25519-only vk can still verify
+  the Ed25519 portion of a hybrid sig).
+
+### Breaking — backward-compatible
+
+The `entry_sig`, `signing_key`, and `verifying_key` struct sizes
+*increased*, but the existing field offsets are preserved.
+Pre-2.3 callers using the derived accessors see no change.
+Pre-2.3 callers doing raw-offset access on `sk + 48` or higher
+would break — but the CI raw-offset guard (2.0.4) already
+prevents new such call sites, and the existing allowlist covers
+no slot-2 access. No real-world consumer is affected.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **417 passed, 0 failed** (was 388).
+- All three benchmark binaries build + run.
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration
+  runs (no crashes).
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+
+### Roadmap impact
+
+- **2.4.x — PatraStore performance** is now next in line.
+- **2.5.x — TPM-sealed `WitnessAnchor`** unaffected.
+
 ## [2.2.0] - 2026-05-10
 
 **Post-quantum signing lands.** ML-DSA-65 (NIST FIPS 204) entry

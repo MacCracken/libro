@@ -962,6 +962,110 @@ fn test_signing_mldsa_zeroize() {
     assert((load8(key_ptr + 2000) & 0xFF) == 0, "mldsa sk byte +2000 zeroized");
 }
 
+# ================================================================
+# Hybrid signing (Ed25519 + ML-DSA-65) — sigil 3.0's
+# `sigil_verify_hybrid` AND-mode. The signing_key carries both
+# secret-key buffers; entry_sig carries both hex signatures and
+# both hex verifying keys; verify must validate under both
+# primitives.
+# ================================================================
+
+fn test_signing_hybrid_roundtrip() {
+    var sk = signing_key_generate_hybrid();
+    assert(sk != 0, "hybrid signing key generated");
+    assert(signing_key_algorithm(sk) == SIG_ALG_HYBRID, "sk algorithm = HYBRID");
+    # Both slots populated.
+    assert(signing_key_bytes(sk)     != 0, "hybrid sk slot-1 (Ed25519) populated");
+    assert(signing_key_bytes_2(sk)   != 0, "hybrid sk slot-2 (ML-DSA-65) populated");
+    assert(signing_key_pub_bytes(sk) != 0, "hybrid pk slot-1 populated");
+    assert(signing_key_pub_bytes_2(sk) != 0, "hybrid pk slot-2 populated");
+
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+
+    var sig = sign_entry(sk, e);
+    assert(sig != 0, "hybrid entry signed");
+    # Both signature slots populated.
+    assert(str_len(entry_sig_signature(sig))   == 128,  "hybrid sig slot-1 (Ed25519) is 128-char hex");
+    assert(str_len(entry_sig_signature_2(sig)) == 6618, "hybrid sig slot-2 (ML-DSA-65) is 6618-char hex");
+    assert(str_eq(entry_sig_algorithm(sig), str_from("Hybrid(Ed25519+ML-DSA-65)")) == 1,
+        "entry_sig.algorithm carries hybrid name");
+
+    var vk = verifying_key_from_signing(sk);
+    assert(verifying_key_algorithm(vk) == SIG_ALG_HYBRID, "vk algorithm = HYBRID");
+    assert(verifying_key_bytes(vk)   != 0, "hybrid vk slot-1 populated");
+    assert(verifying_key_bytes_2(vk) != 0, "hybrid vk slot-2 populated");
+    assert(verify_entry_signature(vk, e, sig) == 1, "hybrid signature verifies (AND mode)");
+}
+
+fn test_signing_hybrid_tamper_rejected_either_side() {
+    var sk = signing_key_generate_hybrid();
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var e = vec_get(chain_entries(c), 0);
+    var sig = sign_entry(sk, e);
+
+    # Tamper with the Ed25519 portion only — hybrid AND-verify must still fail.
+    # Replace signature slot-1 with another valid Ed25519 sig over a different message
+    # by signing with a fresh ed-only key (the bytes will be a syntactically valid
+    # Ed25519 sig but won't validate over our hash + ed pk).
+    var sk_other = signing_key_generate();
+    var c2 = chain_new();
+    chain_append(c2, SEV_INFO, str_from("OTHER"), str_from("a"), str_from("{}"));
+    var e2 = vec_get(chain_entries(c2), 0);
+    var sig_other = sign_entry(sk_other, e2);
+    var sig_tampered_ed = entry_sig_new_hybrid(
+        entry_sig_hash(sig),
+        entry_sig_signature(sig_other),       # bad ed sig (over wrong msg)
+        entry_sig_verifying_key(sig),
+        entry_sig_key_id(sig),
+        entry_sig_algorithm(sig),
+        entry_sig_signature_2(sig),
+        entry_sig_verifying_key_2(sig));
+    var vk = verifying_key_from_signing(sk);
+    assert(verify_entry_signature(vk, e, sig_tampered_ed) == 0, "hybrid: tampered Ed25519 portion rejected");
+
+    # Tamper with the ML-DSA-65 portion only — hybrid AND-verify must still fail.
+    # We don't have a "wrong" ML-DSA sig handy; substitute an empty Str so
+    # hex_decode_str returns 0 and the verify path bails.
+    var sig_tampered_pq = entry_sig_new_hybrid(
+        entry_sig_hash(sig),
+        entry_sig_signature(sig),
+        entry_sig_verifying_key(sig),
+        entry_sig_key_id(sig),
+        entry_sig_algorithm(sig),
+        str_from(""),                          # empty pq sig
+        entry_sig_verifying_key_2(sig));
+    assert(verify_entry_signature(vk, e, sig_tampered_pq) == 0, "hybrid: tampered ML-DSA portion rejected");
+}
+
+fn test_signing_hybrid_zeroize() {
+    var sk = signing_key_generate_hybrid();
+    var ed_key_ptr = signing_key_bytes(sk);
+    var pq_key_ptr = signing_key_bytes_2(sk);
+    signing_key_zeroize(sk);
+    # Slot-1 (Ed25519, 64 bytes).
+    assert((load8(ed_key_ptr) & 0xFF)      == 0, "hybrid sk slot-1 first byte zeroized");
+    assert((load8(ed_key_ptr + 63) & 0xFF) == 0, "hybrid sk slot-1 last byte zeroized");
+    # Slot-2 (ML-DSA-65, 4032 bytes).
+    assert((load8(pq_key_ptr) & 0xFF)        == 0, "hybrid sk slot-2 first byte zeroized");
+    assert((load8(pq_key_ptr + 2000) & 0xFF) == 0, "hybrid sk slot-2 byte +2000 zeroized");
+    assert((load8(pq_key_ptr + 4031) & 0xFF) == 0, "hybrid sk slot-2 last byte zeroized");
+}
+
+fn test_signing_hybrid_tree_head_roundtrip() {
+    # Hybrid sign_tree_head packs the two hex sigs as `ed_hex|pq_hex`
+    # into the single Str field; verify_tree_head splits and dispatches.
+    var sk = signing_key_generate_hybrid();
+    var vk = verifying_key_from_signing(sk);
+    var root = str_from("a3b9c5d7e8f0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e");
+    var sig_concat = sign_tree_head(sk, root);
+    # Concatenated form: 128 (ed hex) + 1 (pipe) + 6618 (pq hex) = 6747 chars.
+    assert(str_len(sig_concat) == 6747, "hybrid tree-head sig is 6747 chars (ed|pq)");
+    assert(verify_tree_head(vk, root, sig_concat) == 1, "hybrid tree-head sig verifies");
+}
+
 fn test_signing_cross_alg_rejected() {
     # An Ed25519 signature shouldn't verify against an ML-DSA vk and
     # vice versa. The algorithm dispatch in verify_entry_signature
@@ -1254,44 +1358,60 @@ fn test_layout_entry() {
 }
 
 fn test_layout_signing_key() {
-    # 6 fields × 8 bytes = 48 bytes.
-    var sk_layout = fl_alloc(48);
+    # 9 fields × 8 bytes = 72 bytes. Slot-2 fields (bytes_2 / pub_bytes_2 /
+    # seed_2) added in 2.3.0 to support hybrid signing keys.
+    var sk_layout = fl_alloc(72);
     store64(sk_layout,      0x1111111111111111);    # bytes
     store64(sk_layout + 8,  0x2222222222222222);    # pub_bytes
     store64(sk_layout + 16, 0x3333333333333333);    # algorithm
     store64(sk_layout + 24, 0x4444444444444444);    # key_id
     store64(sk_layout + 32, 0x5555555555555555);    # zeroized
     store64(sk_layout + 40, 0x6666666666666666);    # seed
-    assert(signing_key_bytes(sk_layout)      == 0x1111111111111111, "signing_key.bytes at +0");
-    assert(signing_key_pub_bytes(sk_layout)  == 0x2222222222222222, "signing_key.pub_bytes at +8");
-    assert(signing_key_algorithm(sk_layout)  == 0x3333333333333333, "signing_key.algorithm at +16");
-    assert(signing_key_key_id(sk_layout)     == 0x4444444444444444, "signing_key.key_id at +24");
-    assert(signing_key_zeroized(sk_layout)   == 0x5555555555555555, "signing_key.zeroized at +32");
-    assert(signing_key_seed(sk_layout)       == 0x6666666666666666, "signing_key.seed at +40");
+    store64(sk_layout + 48, 0x7777777777777777);    # bytes_2
+    store64(sk_layout + 56, 0x8888888888888888);    # pub_bytes_2
+    store64(sk_layout + 64, 0x9999999999999999);    # seed_2
+    assert(signing_key_bytes(sk_layout)        == 0x1111111111111111, "signing_key.bytes at +0");
+    assert(signing_key_pub_bytes(sk_layout)    == 0x2222222222222222, "signing_key.pub_bytes at +8");
+    assert(signing_key_algorithm(sk_layout)    == 0x3333333333333333, "signing_key.algorithm at +16");
+    assert(signing_key_key_id(sk_layout)       == 0x4444444444444444, "signing_key.key_id at +24");
+    assert(signing_key_zeroized(sk_layout)     == 0x5555555555555555, "signing_key.zeroized at +32");
+    assert(signing_key_seed(sk_layout)         == 0x6666666666666666, "signing_key.seed at +40");
+    assert(signing_key_bytes_2(sk_layout)      == 0x7777777777777777, "signing_key.bytes_2 at +48");
+    assert(signing_key_pub_bytes_2(sk_layout)  == 0x8888888888888888, "signing_key.pub_bytes_2 at +56");
+    assert(signing_key_seed_2(sk_layout)       == 0x9999999999999999, "signing_key.seed_2 at +64");
 }
 
 fn test_layout_verifying_key() {
-    # 2 fields × 8 bytes = 16 bytes — smallest struct shape.
-    var vk_layout = fl_alloc(16);
-    store64(vk_layout,     0xAAAAAAAAAAAAAAAA);     # bytes
-    store64(vk_layout + 8, 0xBBBBBBBBBBBBBBBB);     # algorithm
+    # 3 fields × 8 bytes = 24 bytes. Slot-2 (bytes_2) added in 2.3.0
+    # to carry the ML-DSA-65 public key alongside Ed25519 for hybrid vks.
+    var vk_layout = fl_alloc(24);
+    store64(vk_layout,      0xAAAAAAAAAAAAAAAA);    # bytes
+    store64(vk_layout + 8,  0xBBBBBBBBBBBBBBBB);    # algorithm
+    store64(vk_layout + 16, 0xCCCCCCCCCCCCCCCC);    # bytes_2
     assert(verifying_key_bytes(vk_layout)     == 0xAAAAAAAAAAAAAAAA, "verifying_key.bytes at +0");
     assert(verifying_key_algorithm(vk_layout) == 0xBBBBBBBBBBBBBBBB, "verifying_key.algorithm at +8");
+    assert(verifying_key_bytes_2(vk_layout)   == 0xCCCCCCCCCCCCCCCC, "verifying_key.bytes_2 at +16");
 }
 
 fn test_layout_entry_sig() {
-    # 5 fields × 8 bytes = 40 bytes.
-    var es_layout = fl_alloc(40);
+    # 7 fields × 8 bytes = 56 bytes. Slot-2 (signature_2 / verifying_key_2)
+    # added in 2.3.0 to carry the ML-DSA-65 hex sig + pk alongside Ed25519
+    # for hybrid entry signatures.
+    var es_layout = fl_alloc(56);
     store64(es_layout,      0x1111111111111111);    # hash
     store64(es_layout + 8,  0x2222222222222222);    # signature
     store64(es_layout + 16, 0x3333333333333333);    # verifying_key
     store64(es_layout + 24, 0x4444444444444444);    # key_id
     store64(es_layout + 32, 0x5555555555555555);    # algorithm
-    assert(entry_sig_hash(es_layout)          == 0x1111111111111111, "entry_sig.hash at +0");
-    assert(entry_sig_signature(es_layout)     == 0x2222222222222222, "entry_sig.signature at +8");
-    assert(entry_sig_verifying_key(es_layout) == 0x3333333333333333, "entry_sig.verifying_key at +16");
-    assert(entry_sig_key_id(es_layout)        == 0x4444444444444444, "entry_sig.key_id at +24");
-    assert(entry_sig_algorithm(es_layout)     == 0x5555555555555555, "entry_sig.algorithm at +32");
+    store64(es_layout + 40, 0x6666666666666666);    # signature_2
+    store64(es_layout + 48, 0x7777777777777777);    # verifying_key_2
+    assert(entry_sig_hash(es_layout)            == 0x1111111111111111, "entry_sig.hash at +0");
+    assert(entry_sig_signature(es_layout)       == 0x2222222222222222, "entry_sig.signature at +8");
+    assert(entry_sig_verifying_key(es_layout)   == 0x3333333333333333, "entry_sig.verifying_key at +16");
+    assert(entry_sig_key_id(es_layout)          == 0x4444444444444444, "entry_sig.key_id at +24");
+    assert(entry_sig_algorithm(es_layout)       == 0x5555555555555555, "entry_sig.algorithm at +32");
+    assert(entry_sig_signature_2(es_layout)     == 0x6666666666666666, "entry_sig.signature_2 at +40");
+    assert(entry_sig_verifying_key_2(es_layout) == 0x7777777777777777, "entry_sig.verifying_key_2 at +48");
 }
 
 fn test_layout_merkle_tree() {
@@ -2451,6 +2571,12 @@ fn main() {
     test_signing_mldsa_key_id();
     test_signing_mldsa_zeroize();
     test_signing_cross_alg_rejected();
+
+    test_group("Signing (Hybrid Ed25519+ML-DSA-65)");
+    test_signing_hybrid_roundtrip();
+    test_signing_hybrid_tamper_rejected_either_side();
+    test_signing_hybrid_zeroize();
+    test_signing_hybrid_tree_head_roundtrip();
 
     test_group("Anchoring");
     test_anchor_create();
