@@ -29,7 +29,7 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
 ## Basic Usage
 
-Libro's 21 library modules compile as a single unit. In a consumer you can
+Libro's 21 library modules (+1 opt-in `src/tpm_anchor.cyr` behind `-D LIBRO_TPM`) compile as a single unit. In a consumer you can
 either include them individually (useful inside the libro repo) or pull the
 committed `dist/libro.cyr` bundle via `cyrius deps` (what downstream projects
 actually do — see [DEPS-PATTERN.md](../../DEPS-PATTERN.md)).

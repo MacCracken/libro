@@ -10,6 +10,10 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/libro && ./build/libro
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && \
     timeout 30 ./build/fuzz_libro
 
+# Optional: opt-in TPM build (default skips agnosys's tpm_seal surface)
+CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm && \
+    ./build/libro_tpm   # 451 assertions: 443 default + 8 TPM-gated
+
 # Benchmarks (three binaries — cc5 5.4.2 fixup-table cap forced the core/io
 # split in 1.2.0; libro_proof.bcyr added later for proof-path coverage)
 CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && \
@@ -44,35 +48,44 @@ The group list, in declaration order:
 - FileStore (append / load / verify / streamed verify — including the
   2.0.3 regression test for unterminated-tail input)
 - PatraStore (SQL-backed storage, ungated in 1.1.0 after the UAF fix)
+- PatraStore (perf tier — 2.4.0): sync-mode round-trip, append_batch
+  correctness, prepared statements survive open, indexed by_source
 - ChainIO (chain_export / chain_import round-trip)
 - Export (JSONL + CSV with escaping)
 - Review + integrity
 - Merkle tree + inclusion / consistency proofs
 - Signing (Ed25519 via sigil, key rotation via key_id)
+- Signing (ML-DSA-65) — 2.2.0 NIST FIPS 204 entry signing battery
+- Signing (Hybrid Ed25519+ML-DSA-65) — 2.3.0 AND-mode hybrid battery
 - Anchoring (WitnessAnchor + meta-chain)
 - Timestamping (RFC 3161 DER encode/decode)
 - Integrity proof (signed tree heads, inclusion/consistency bundles,
-  anchor bundles, proof_to_json with offset-typo regression guard)
+  anchor bundles, proof_to_json + 2.6.0 proof_from_json round-trip
+  including legacy bare-string path acceptance)
 - Streaming (pub/sub with MQTT wildcards)
 - Kernel audit (AGNOS /proc interface)
 - Struct layout (#derive accessors) — 2.0.4 invariant tests for chain,
-  iproof, anchor
+  iproof, anchor; extended in 2.3.0 to signing_key / verifying_key /
+  entry_sig with the new slot-2 fields
+- TPM-sealed anchors (LIBRO_TPM, opt-in) — 2.5.0 sealed-anchor battery
+  (only built when `-D LIBRO_TPM` is set)
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 373 assertions across these groups.** Count moves with every
-sprint; the source of truth is the output of `./build/libro`, not this
-document.
+**Total: 443 assertions default / 451 with `-D LIBRO_TPM`** across
+these groups. Count moves with every sprint; the source of truth is
+the output of `./build/libro`, not this document.
 
 ## Benchmarks
 
-Three bench binaries ship 24 benchmarks total. The original core/io
+Three bench binaries ship 32 benchmarks total. The original core/io
 split landed in 1.2.0 because cc5 5.4.2's 16384 fixup-table cap
 couldn't hold a single combined binary after the 2.0 canonical-JSON
 walker landed. A third binary (`libro_proof.bcyr`) was added for
-proof-build benches.
+proof-build benches. The 2.2 / 2.3 / 2.4 cycle added rows for PQ /
+hybrid signing + PatraStore perf knobs.
 
-### libro_core (14 benchmarks)
+### libro_core (18 benchmarks)
 
 | Benchmark | Iterations | Target |
 |-----------|------------|--------|
@@ -87,6 +100,10 @@ proof-build benches.
 | `merkle_consistency` | 100 | RFC 9162 consistency proof |
 | `sign_entry` | 1000 | Ed25519 sign |
 | `verify_sig` | 1000 | Ed25519 verify |
+| `mldsa65_sign_entry` | 100 | ML-DSA-65 sign (FIPS 204, sigil 3.0) |
+| `mldsa65_verify_sig` | 100 | ML-DSA-65 verify (2.1 ms — faster than Ed25519 in sigil 3.0) |
+| `hybrid_sign_entry` | 100 | Ed25519 + ML-DSA-65 sign (sum-of-two) |
+| `hybrid_verify_sig` | 100 | Ed25519 + ML-DSA-65 verify AND-mode |
 | `query_filter_100` | 1000 | `chain_query` over 100 entries |
 | `proof_unsigned_100` | 10 | unsigned integrity-proof build |
 | `hex_encode_32b` | 10000 | 32-byte hex encode |
@@ -107,15 +124,16 @@ the run bounded while still exercising the O(N log N) path.
 
 **`proof_to_json` benches are intentionally not shipped here.** Every
 attempt to measure `proof_to_json(ip)` inside `bench_run` triggers
-what looks like stack corruption or a similar control-flow hijack:
-`main()` re-enters repeatedly at ~25 Hz, emitting the banner over
-and over with no real progress. The same call works correctly in
-the test suite (`test_proof_to_json_*` all pass, 350 tests green),
-so the bug is bench-context-specific to `proof_json.cyr` rather
-than `proof_to_json` itself. Filed as an open hardening item in
-`docs/development/roadmap.md`.
+a control-flow hijack: cc5 5.4.x manifested as ~25 Hz main()
+re-entry; cyrius 5.10.34 (re-tested in 2.1.1 + 2.2.0 + 2.5.0)
+manifests as SIGILL on the first bench iteration. Same class of
+bug, different surface. The same call works correctly in the test
+suite (`test_proof_to_json_*` + `test_proof_from_json_roundtrip_full`
+all pass, 443 tests green), so the bug is bench-context-specific
+to `proof_json.cyr` rather than `proof_to_json` itself. Filed in
+the bench file header for future cyrius bug-pass cycles to close.
 
-### libro_io (8 benchmarks)
+### libro_io (12 benchmarks)
 
 | Benchmark | Iterations | Target |
 |-----------|------------|--------|
@@ -127,6 +145,10 @@ than `proof_to_json` itself. Filed as an open hardening item in
 | `stream_publish` | 1000 | pub/sub publish |
 | `streamed_verify_100` | 10 | `filestore_verify_streamed` over 100 entries |
 | `filestore_load_10` | 100 | FileStore load+parse of 10 entries |
+| `patra_append_50_full` | 5 | PatraStore append with SYNC_FULL (per-call fdatasync) |
+| `patra_append_50_batch` | 5 | PatraStore append with SYNC_BATCH (group commit; real-disk ~64× faster than FULL per patra 1.8.0) |
+| `patra_load_all_50` | 50 | PatraStore load_all via prepared SELECT |
+| `patra_by_source_50` | 50 | PatraStore by_source via opt-in STR src_idx |
 
 ### Bench history
 
@@ -159,7 +181,10 @@ no-crash on random input; a target that returns normally is a pass.
 
 Three fuzz targets were added in 2.0.3, one more in 2.0.6. `fuzz_filestore_verify_streamed`
 caught a HIGH-severity infinite-loop bug on its first run
-(see `docs/audit/2026-04-19-audit-2.0.md` Finding 4).
+(see `docs/audit/2026-04-19-audit-2.0.md` Finding 4). The
+`fuzz_proof_from_json` target exercises both the 2.6.0 object-form
+parser (random `{` chars in input) and the legacy bare-string
+path; both must survive without crash.
 
 ## Writing Tests
 
@@ -205,11 +230,13 @@ assert(entry_verify(entry) == 0, "tamper detected");
 
 The 2.0.4 layout-invariant tests (`test_layout_chain` /
 `test_layout_iproof` / `test_layout_anchor`) are templates for
-writing one per struct if a future sprint wants to extend coverage.
-Write sentinel values via raw offsets and assert the derived
-accessors return them, then the reverse. Would catch a Cyrius
-`#derive(accessors)` compiler regression before any end-to-end
-test would notice.
+writing one per struct. 2.3.0 extended the trio to 7 layout
+tests covering `signing_key`, `verifying_key`, `entry_sig`,
+`merkle_tree`, `sth`, `filestore`, and the original chain /
+iproof / anchor. Write sentinel values via raw offsets and assert
+the derived accessors return them, then the reverse. Would catch
+a Cyrius `#derive(accessors)` compiler regression before any
+end-to-end test would notice.
 
 ### Streaming
 
@@ -239,9 +266,10 @@ They exist to prevent regression of classes already caught in audits:
 
 | Gate | Added | Catches |
 |------|-------|---------|
-| Manifest completeness | 2.0.1 | `[lib] modules` drifting from `src/main.cyr` includes |
+| Manifest completeness | 2.0.1 (refined 2.5.0) | `[lib] modules` drifting from `src/main.cyr` includes; 2.5.0 skip `#ifdef`-gated includes for opt-in modules |
 | Specific-struct raw-offset guard | 2.0.1 + 2.0.2 | `load64(c+N)`, `load64(ip+N)`, etc. outside defining file |
-| Per-file allowlist | 2.0.4 | new raw-offset param names appearing in unregistered files |
+| Per-file allowlist | 2.0.4 (extended 2.5.0) | new raw-offset param names appearing in unregistered files; 2.5.0 registers `ta` for `src/tpm_anchor.cyr` |
+| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (443 → 451 assertions) |
 | Dist freshness | 1.1.1 | `dist/libro.cyr` missing or stale vs `src/` |
 | Version parity (release only) | 1.1.1 | VERSION / cyrius.cyml / dist header / git tag disagreement |
 

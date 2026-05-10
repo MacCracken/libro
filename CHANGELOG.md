@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-05-10
+
+**Layout-invariant coverage expansion.** The first item on the
+sequenced 2.6.x patch line. Adds layout-invariant tests for every
+remaining `#derive(accessors)` struct in the public surface — 15
+new structs (16 under `-D LIBRO_TPM`), bringing total layout
+coverage from 10 → 25 (26 with TPM). Catches `#derive(accessors)`
+codegen drift across cyrius toolchain bumps before any end-to-end
+test would.
+
+### Added
+
+- **15 new `test_layout_*` fns** covering: `archive`, `error`,
+  `integrity`, `review`, `receipt`, `memstore`, `stream`,
+  `ts_request`, `ts_response`, `ts_attestation`, `retention`,
+  `proof_node`, `merkle_proof`, `consistency`, `pv`.
+- **1 new `test_layout_tpm_anchor`** (gated behind `#ifdef LIBRO_TPM`)
+  covering the opt-in TPM-anchor struct's 4-field layout.
+- **59 new assertions** in the default build / 67 with `-D LIBRO_TPM`.
+
+### Pattern
+
+Each test follows the same shape as the existing 10 layout tests
+(2.0.4 trio + 2.3.0 extension): allocate a freelist buffer sized to
+N×8 bytes, poke distinguishable sentinel values at each raw offset,
+read back via the derived accessors, assert each one returns the
+sentinel. UUID-prefixed structs (`receipt`) skip the first 16 bytes
+the same way `anchor` and `entry` do — those slots are `_uuid_hi` /
+`_uuid_lo` placeholders without accessors.
+
+Internal `_`-prefixed structs (`_patrastore`, `_sub`) are
+intentionally not covered — they're not public-surface and have no
+consumer-visible layout contract.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **502 passed, 0 failed** (was 443).
+- `CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm`
+  clean; **514 passed, 0 failed** (was 451).
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+
+### Roadmap impact
+
+Closes the first sequenced item on the 2.6.x patch line. The
+remaining sequenced 2.6.x items (raw-offset guard expansion → RFC
+6901 pointers → bench-hijack re-investigation → JSON streaming)
+stay open for subsequent patches.
+
 ## [2.6.0] - 2026-05-10
 
 **`proof_from_json` round-trip closes + doc-health ledger.** Two

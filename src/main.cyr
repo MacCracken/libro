@@ -1489,6 +1489,228 @@ fn test_layout_anchor() {
     assert(anchor_id(anchor_layout) == anchor_layout, "anchor_id returns head pointer");
 }
 
+# ================================================================
+# 2.6.1 — layout-invariant coverage for the remaining derived structs
+# ================================================================
+# These probes are the same shape as the trio above (poke sentinels
+# at raw offsets, read back via derived accessors). They catch
+# `#derive(accessors)` codegen drift across cyrius toolchain bumps
+# before any end-to-end test would.
+
+fn test_layout_archive() {
+    # 2 fields × 8 bytes = 16 bytes.
+    var archive_layout = fl_alloc(16);
+    store64(archive_layout,     0x1111111111111111);    # entries
+    store64(archive_layout + 8, 0x2222222222222222);    # head_hash
+    assert(archive_entries(archive_layout)   == 0x1111111111111111, "archive.entries at +0");
+    assert(archive_head_hash(archive_layout) == 0x2222222222222222, "archive.head_hash at +8");
+}
+
+fn test_layout_error() {
+    # 6 fields × 8 bytes = 48 bytes.
+    var error_layout = fl_alloc(48);
+    store64(error_layout,      0x1111111111111111);    # code
+    store64(error_layout + 8,  0x2222222222222222);    # msg
+    store64(error_layout + 16, 0x3333333333333333);    # field_name
+    store64(error_layout + 24, 0x4444444444444444);    # index
+    store64(error_layout + 32, 0x5555555555555555);    # expected
+    store64(error_layout + 40, 0x6666666666666666);    # actual
+    assert(error_code(error_layout)       == 0x1111111111111111, "error.code at +0");
+    assert(error_msg(error_layout)        == 0x2222222222222222, "error.msg at +8");
+    assert(error_field_name(error_layout) == 0x3333333333333333, "error.field_name at +16");
+    assert(error_index(error_layout)      == 0x4444444444444444, "error.index at +24");
+    assert(error_expected(error_layout)   == 0x5555555555555555, "error.expected at +32");
+    assert(error_actual(error_layout)     == 0x6666666666666666, "error.actual at +40");
+}
+
+fn test_layout_integrity() {
+    # 2 fields × 8 bytes = 16 bytes.
+    var integrity_layout = fl_alloc(16);
+    store64(integrity_layout,     0x1111111111111111);    # status
+    store64(integrity_layout + 8, 0x2222222222222222);    # message
+    assert(integrity_status(integrity_layout)  == 0x1111111111111111, "integrity.status at +0");
+    assert(integrity_message(integrity_layout) == 0x2222222222222222, "integrity.message at +8");
+}
+
+fn test_layout_review() {
+    # 9 fields × 8 bytes = 72 bytes.
+    var review_layout = fl_alloc(72);
+    store64(review_layout,      0x1111111111111111);    # entry_count
+    store64(review_layout + 8,  0x2222222222222222);    # integrity
+    store64(review_layout + 16, 0x3333333333333333);    # earliest
+    store64(review_layout + 24, 0x4444444444444444);    # latest
+    store64(review_layout + 32, 0x5555555555555555);    # sources
+    store64(review_layout + 40, 0x6666666666666666);    # severities
+    store64(review_layout + 48, 0x7777777777777777);    # agents
+    store64(review_layout + 56, 0x8888888888888888);    # head_hash
+    store64(review_layout + 64, 0x9999999999999999);    # continued_from
+    assert(review_entry_count(review_layout)    == 0x1111111111111111, "review.entry_count at +0");
+    assert(review_integrity(review_layout)      == 0x2222222222222222, "review.integrity at +8");
+    assert(review_earliest(review_layout)       == 0x3333333333333333, "review.earliest at +16");
+    assert(review_latest(review_layout)         == 0x4444444444444444, "review.latest at +24");
+    assert(review_sources(review_layout)        == 0x5555555555555555, "review.sources at +32");
+    assert(review_severities(review_layout)     == 0x6666666666666666, "review.severities at +40");
+    assert(review_agents(review_layout)         == 0x7777777777777777, "review.agents at +48");
+    assert(review_head_hash(review_layout)      == 0x8888888888888888, "review.head_hash at +56");
+    assert(review_continued_from(review_layout) == 0x9999999999999999, "review.continued_from at +64");
+}
+
+fn test_layout_receipt() {
+    # 5 fields × 8 bytes = 40 bytes, first 16 are inline-UUID
+    # placeholders (_uuid_hi / _uuid_lo) like anchor + entry.
+    var receipt_layout = fl_alloc(40);
+    store64(receipt_layout,      0x0101010101010101);    # _uuid_hi
+    store64(receipt_layout + 8,  0x0202020202020202);    # _uuid_lo
+    store64(receipt_layout + 16, 0x3333333333333333);    # backend
+    store64(receipt_layout + 24, 0x4444444444444444);    # received_at
+    store64(receipt_layout + 32, 0x5555555555555555);    # data
+    assert(receipt_backend(receipt_layout)     == 0x3333333333333333, "receipt.backend at +16");
+    assert(receipt_received_at(receipt_layout) == 0x4444444444444444, "receipt.received_at at +24");
+    assert(receipt_data(receipt_layout)        == 0x5555555555555555, "receipt.data at +32");
+    # receipt_anchor_id returns the head pointer like anchor_id/entry_id.
+    assert(receipt_anchor_id(receipt_layout) == receipt_layout, "receipt_anchor_id returns head pointer");
+}
+
+fn test_layout_memstore() {
+    # 1 field × 8 bytes = 8 bytes — minimal struct shape.
+    var memstore_layout = fl_alloc(8);
+    store64(memstore_layout, 0xAAAAAAAAAAAAAAAA);    # entries
+    assert(memstore_entries(memstore_layout) == 0xAAAAAAAAAAAAAAAA, "memstore.entries at +0");
+}
+
+fn test_layout_stream() {
+    # 3 fields × 8 bytes = 24 bytes.
+    var stream_layout = fl_alloc(24);
+    store64(stream_layout,      0x1111111111111111);    # subs
+    store64(stream_layout + 8,  0x2222222222222222);    # prefix
+    store64(stream_layout + 16, 0x3333333333333333);    # published
+    assert(stream_subs(stream_layout)      == 0x1111111111111111, "stream.subs at +0");
+    assert(stream_prefix(stream_layout)    == 0x2222222222222222, "stream.prefix at +8");
+    assert(stream_published(stream_layout) == 0x3333333333333333, "stream.published at +16");
+}
+
+fn test_layout_ts_request() {
+    # 4 fields × 8 bytes = 32 bytes.
+    var tsreq_layout = fl_alloc(32);
+    store64(tsreq_layout,      0x1111111111111111);    # hash_alg
+    store64(tsreq_layout + 8,  0x2222222222222222);    # hash
+    store64(tsreq_layout + 16, 0x3333333333333333);    # nonce
+    store64(tsreq_layout + 24, 0x4444444444444444);    # cert_req
+    assert(ts_request_hash_alg(tsreq_layout) == 0x1111111111111111, "ts_request.hash_alg at +0");
+    assert(ts_request_hash(tsreq_layout)     == 0x2222222222222222, "ts_request.hash at +8");
+    assert(ts_request_nonce(tsreq_layout)    == 0x3333333333333333, "ts_request.nonce at +16");
+    assert(ts_request_cert_req(tsreq_layout) == 0x4444444444444444, "ts_request.cert_req at +24");
+}
+
+fn test_layout_ts_response() {
+    # 3 fields × 8 bytes = 24 bytes.
+    var tsresp_layout = fl_alloc(24);
+    store64(tsresp_layout,      0x1111111111111111);    # status
+    store64(tsresp_layout + 8,  0x2222222222222222);    # token
+    store64(tsresp_layout + 16, 0x3333333333333333);    # status_string
+    assert(ts_response_status(tsresp_layout)        == 0x1111111111111111, "ts_response.status at +0");
+    assert(ts_response_token(tsresp_layout)         == 0x2222222222222222, "ts_response.token at +8");
+    assert(ts_response_status_string(tsresp_layout) == 0x3333333333333333, "ts_response.status_string at +16");
+}
+
+fn test_layout_ts_attestation() {
+    # 6 fields × 8 bytes = 48 bytes.
+    var tsa_layout = fl_alloc(48);
+    store64(tsa_layout,      0x1111111111111111);    # hash
+    store64(tsa_layout + 8,  0x2222222222222222);    # subject
+    store64(tsa_layout + 16, 0x3333333333333333);    # algorithm
+    store64(tsa_layout + 24, 0x4444444444444444);    # token
+    store64(tsa_layout + 32, 0x5555555555555555);    # tsa_url
+    store64(tsa_layout + 40, 0x6666666666666666);    # created_at
+    assert(ts_attestation_hash(tsa_layout)       == 0x1111111111111111, "ts_attestation.hash at +0");
+    assert(ts_attestation_subject(tsa_layout)    == 0x2222222222222222, "ts_attestation.subject at +8");
+    assert(ts_attestation_algorithm(tsa_layout)  == 0x3333333333333333, "ts_attestation.algorithm at +16");
+    assert(ts_attestation_token(tsa_layout)      == 0x4444444444444444, "ts_attestation.token at +24");
+    assert(ts_attestation_tsa_url(tsa_layout)    == 0x5555555555555555, "ts_attestation.tsa_url at +32");
+    assert(ts_attestation_created_at(tsa_layout) == 0x6666666666666666, "ts_attestation.created_at at +40");
+}
+
+fn test_layout_retention() {
+    # 2 fields × 8 bytes = 16 bytes.
+    var ret_layout = fl_alloc(16);
+    store64(ret_layout,     0x1111111111111111);    # kind
+    store64(ret_layout + 8, 0x2222222222222222);    # value
+    assert(retention_kind(ret_layout)  == 0x1111111111111111, "retention.kind at +0");
+    assert(retention_value(ret_layout) == 0x2222222222222222, "retention.value at +8");
+}
+
+fn test_layout_proof_node() {
+    # 2 fields × 8 bytes = 16 bytes.
+    var pn_layout = fl_alloc(16);
+    store64(pn_layout,     0x1111111111111111);    # hash
+    store64(pn_layout + 8, 0x2222222222222222);    # side
+    assert(proof_node_hash(pn_layout) == 0x1111111111111111, "proof_node.hash at +0");
+    assert(proof_node_side(pn_layout) == 0x2222222222222222, "proof_node.side at +8");
+}
+
+fn test_layout_merkle_proof() {
+    # 4 fields × 8 bytes = 32 bytes.
+    var mp_layout = fl_alloc(32);
+    store64(mp_layout,      0x1111111111111111);    # index
+    store64(mp_layout + 8,  0x2222222222222222);    # leaf
+    store64(mp_layout + 16, 0x3333333333333333);    # path
+    store64(mp_layout + 24, 0x4444444444444444);    # root
+    assert(merkle_proof_index(mp_layout) == 0x1111111111111111, "merkle_proof.index at +0");
+    assert(merkle_proof_leaf(mp_layout)  == 0x2222222222222222, "merkle_proof.leaf at +8");
+    assert(merkle_proof_path(mp_layout)  == 0x3333333333333333, "merkle_proof.path at +16");
+    assert(merkle_proof_root(mp_layout)  == 0x4444444444444444, "merkle_proof.root at +24");
+}
+
+fn test_layout_consistency() {
+    # 5 fields × 8 bytes = 40 bytes. The CI cross-file guard registers
+    # `cp` for consistency in merkle.cyr; this layout test uses a
+    # `consistency_layout` local to stay clear of that path-tracking.
+    var consistency_layout = fl_alloc(40);
+    store64(consistency_layout,      0x1111111111111111);    # old_size
+    store64(consistency_layout + 8,  0x2222222222222222);    # new_size
+    store64(consistency_layout + 16, 0x3333333333333333);    # old_root
+    store64(consistency_layout + 24, 0x4444444444444444);    # new_root
+    store64(consistency_layout + 32, 0x5555555555555555);    # path
+    assert(consistency_old_size(consistency_layout) == 0x1111111111111111, "consistency.old_size at +0");
+    assert(consistency_new_size(consistency_layout) == 0x2222222222222222, "consistency.new_size at +8");
+    assert(consistency_old_root(consistency_layout) == 0x3333333333333333, "consistency.old_root at +16");
+    assert(consistency_new_root(consistency_layout) == 0x4444444444444444, "consistency.new_root at +24");
+    assert(consistency_path(consistency_layout)     == 0x5555555555555555, "consistency.path at +32");
+}
+
+fn test_layout_pv() {
+    # 6 fields × 8 bytes = 48 bytes.
+    var pv_layout = fl_alloc(48);
+    store64(pv_layout,      0x1111111111111111);    # tree_head_valid
+    store64(pv_layout + 8,  0x2222222222222222);    # entries_valid
+    store64(pv_layout + 16, 0x3333333333333333);    # tree_matches
+    store64(pv_layout + 24, 0x4444444444444444);    # inclusions_valid
+    store64(pv_layout + 32, 0x5555555555555555);    # consistency_valid
+    store64(pv_layout + 40, 0x6666666666666666);    # anchor_valid
+    assert(pv_tree_head_valid(pv_layout)   == 0x1111111111111111, "pv.tree_head_valid at +0");
+    assert(pv_entries_valid(pv_layout)     == 0x2222222222222222, "pv.entries_valid at +8");
+    assert(pv_tree_matches(pv_layout)      == 0x3333333333333333, "pv.tree_matches at +16");
+    assert(pv_inclusions_valid(pv_layout)  == 0x4444444444444444, "pv.inclusions_valid at +24");
+    assert(pv_consistency_valid(pv_layout) == 0x5555555555555555, "pv.consistency_valid at +32");
+    assert(pv_anchor_valid(pv_layout)      == 0x6666666666666666, "pv.anchor_valid at +40");
+}
+
+#ifdef LIBRO_TPM
+fn test_layout_tpm_anchor() {
+    # 4 fields × 8 bytes = 32 bytes. Only built under -D LIBRO_TPM
+    # since the struct itself is gated.
+    var ta_layout = fl_alloc(32);
+    store64(ta_layout,      0x1111111111111111);    # inner
+    store64(ta_layout + 8,  0x2222222222222222);    # sealed_ctx
+    store64(ta_layout + 16, 0x3333333333333333);    # pcr_indices
+    store64(ta_layout + 24, 0x4444444444444444);    # output_dir
+    assert(tpm_anchor_inner(ta_layout)        == 0x1111111111111111, "tpm_anchor.inner at +0");
+    assert(tpm_anchor_sealed_ctx(ta_layout)   == 0x2222222222222222, "tpm_anchor.sealed_ctx at +8");
+    assert(tpm_anchor_pcr_indices(ta_layout)  == 0x3333333333333333, "tpm_anchor.pcr_indices at +16");
+    assert(tpm_anchor_output_dir(ta_layout)   == 0x4444444444444444, "tpm_anchor.output_dir at +24");
+}
+#endif
+
 fn test_proof_to_json_null_on_zero() {
     var json = proof_to_json(0);
     var expected = str_from("null");
@@ -2892,6 +3114,25 @@ fn main() {
     test_layout_merkle_tree();
     test_layout_sth();
     test_layout_filestore();
+    # 2.6.1 layout expansion
+    test_layout_archive();
+    test_layout_error();
+    test_layout_integrity();
+    test_layout_review();
+    test_layout_receipt();
+    test_layout_memstore();
+    test_layout_stream();
+    test_layout_ts_request();
+    test_layout_ts_response();
+    test_layout_ts_attestation();
+    test_layout_retention();
+    test_layout_proof_node();
+    test_layout_merkle_proof();
+    test_layout_consistency();
+    test_layout_pv();
+#ifdef LIBRO_TPM
+    test_layout_tpm_anchor();
+#endif
 
     test_group("Integrity proof");
     test_proof_unsigned();

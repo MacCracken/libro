@@ -8,6 +8,12 @@ minors, and ecosystem-blocked items.
 
 | Version | Focus | Headline |
 |---------|-------|----------|
+| **2.6.1** | Layout-invariant coverage | 15 new `test_layout_*` fns + 1 TPM-gated. Total layout coverage 10 → 25 (26 with TPM). 502 tests default / 514 with `-D LIBRO_TPM`. |
+| **2.6.0** | proof_from_json full round-trip + doc-health.md | Lossless inclusion paths (`{"h":<hex>,"s":<0/1>}`); 443 tests; new docs/doc-health.md ledger. |
+| **2.5.0** | Opt-in TPM-sealed `WitnessAnchor` | New `src/tpm_anchor.cyr` behind `-D LIBRO_TPM`; agnosys promoted to direct pin. |
+| **2.4.0** | PatraStore performance tier | Prepared SELECT/COUNT, sync-mode controls, append_batch, opt-in STR src_idx. |
+| **2.3.0** | Hybrid signing | Ed25519 + ML-DSA-65 AND-mode. Struct slots extended for both algorithms. |
+| **2.2.0** | Post-quantum signing | ML-DSA-65 (NIST FIPS 204) entry signing via sigil 3.0. |
 | **2.1.0** | Toolchain + dep refresh | cyrius 5.4.7 → 5.10.34, sigil 2.8.3 → 3.0.1, patra 1.1.1 → 1.9.3. `[deps].stdlib` extended for sigil 3.0's bundle (ct/keccak/thread/agnosys + transitive). `lib/` un-tracked (agnosys pattern); CI install rewritten to use the canonical `scripts/install.sh`. `cyrius.cyml [package].version = "${file:VERSION}"`. 373 tests. |
 | 2.0.5 | 2.0.4 follow-ups | Three more `#derive(accessors)` layout-invariant tests; third bench binary `libro_proof.bcyr`. |
 | 2.0.4 | Docs + CI + hardening | ADRs 0005–0007, threat-model rewrite, bench-history in CI, per-file raw-offset allowlist, struct-layout invariant tests (chain / iproof / anchor). 316 tests. |
@@ -22,7 +28,7 @@ minors, and ecosystem-blocked items.
 The Rust-era history (0.90.0 ← 0.22.4 ← …) lives in CHANGELOG for
 archaeological interest.
 
-## Planned minors (2.1.x → 2.5.x)
+## Planned minors (2.1.x → 2.6.x)
 
 Sequencing reflects unblocked-ness and visible value to consumers.
 Each minor is one focused theme; patches under it are small grinds
@@ -50,22 +56,15 @@ isolated and ships as a patch.
   intended `.patra` directory) under `docs/guides/integration.md`
   for consumers; libro itself stays unopinionated. Doc-only.
 - [x] ~~**`lib/test.cyr` table-driven refactor.**~~ Investigated in
-  2.1.1 development; **deferred indefinitely.** The homogeneous
-  groups in libro's test surface (10× `test_layout_*`, 5× canonical
-  JSON, ~5× SHA-256 vectors) each exercise *different accessor
-  functions per case* — collapsing them via `test_each` requires
-  fn-pointer indirection per field, which costs more LOC than it
-  saves and obscures the intent of the layout-invariant probes.
-  `test_each` is the right shape for "input → expected output"
+  2.1.1 development; not pursued for that release. Today's
+  homogeneous groups in libro's test surface (10× `test_layout_*`,
+  5× canonical JSON, ~5× SHA-256 vectors) each exercise *different
+  accessor functions per case* — collapsing them via `test_each`
+  requires fn-pointer indirection per field, which costs more LOC
+  than it saves and obscures the intent of the layout-invariant
+  probes. `test_each` is the right shape for "input → expected output"
   tables (`json_pointer` corpus, etc.); libro's test surface
   doesn't have that shape in any meaningful concentration.
-- [ ] **Investigate bench-context `proof_to_json` control-flow
-  hijack.** Carried from 2.0.5. Calling `proof_to_json(ip)`
-  inside `bench_run` causes `main()` to re-enter ~25 Hz. Real
-  bug; the bench was dropped from `libro_proof.bcyr`. Could be
-  stack corruption, DCE interaction, or a codegen issue. The
-  cyrius 5.10.x bug-pass cycle may have closed it incidentally —
-  re-test before deeper diagnosis.
 
 ### 2.2.x — post-quantum signing (ML-DSA-65)
 
@@ -176,10 +175,13 @@ Scope:
 
 Effort: medium. Opt-in keeps the default build surface unchanged.
 
-## Open — unblocked (not yet slotted)
+### 2.6.x — proof-format follow-ups + hardening grinds
 
-These remain on the menu but don't fit a specific minor yet. Pick
-one up as 2.x.0 fillers or absorb into a related minor.
+The 2.6.0 line closes `proof_from_json` round-trip (lossless
+inclusion paths) and lands the `docs/doc-health.md` ledger.
+Subsequent patches on the line pick up the previously-unslotted
+items in the order below — sequenced for fastest-to-land + lowest
+risk first, with reactive items at the tail.
 
 - [x] ~~**`proof_from_json` round-trip.**~~ Shipped in 2.6.0. The
   inclusion-path JSON shape switched from bare hex strings to
@@ -187,25 +189,39 @@ one up as 2.x.0 fillers or absorb into a related minor.
   `merkle_verify_proof` now passes against every parsed inclusion;
   legacy emissions still parse (degraded to SIDE_LEFT defaults) so
   archival proofs from older libro versions remain readable.
-- [ ] **JSON streaming for very large proofs.** Cyrius 5.7.40–42
-  shipped `json_stream_*` emitters. Libro's `proof_to_json` is
-  in-memory string building. If proof size becomes a concern
-  (large chains with deep inclusion-proof sets), refactor to
-  streaming. Not actionable until a consumer hits the wall.
-- [ ] **RFC 6901 JSON Pointer queries** (`/entries/0/hash` etc.).
-  Cyrius 5.7.40+ ships the parser. Could feed into `QueryFilter`
-  for CLI tools or config-driven retention policies. Speculative.
-- [ ] **Extend the raw-offset guard to ambiguous-param structs.**
-  ~15 derived structs use single-letter param names that overlap
-  across files. Needs either codebase-wide rename or per-file
-  allowed-offsets map cross-checked against `#derive` declarations.
-  Option (b) is the right fix but needs more tooling than a shell
-  grep.
-- [ ] **Struct-layout invariant tests for the remaining structs.**
-  Three landed in 2.0.4. Expanding to the other ~24 derived
-  structs is ~100 more assertions; low effort, diminishing returns
-  beyond the shape-spectrum trio but useful confidence after
-  toolchain bumps.
+- [x] ~~**2.6.1 — Struct-layout invariant tests for the remaining
+  structs.**~~ Shipped in 2.6.1. 15 new layout tests covering
+  `archive`, `error`, `integrity`, `review`, `receipt`, `memstore`,
+  `stream`, `ts_request`, `ts_response`, `ts_attestation`,
+  `retention`, `proof_node`, `merkle_proof`, `consistency`, `pv`;
+  plus a 16th gated behind `#ifdef LIBRO_TPM` covering `tpm_anchor`.
+  Total layout coverage 10 → 25 (26 with TPM). +59 assertions
+  default / +71 with `-D LIBRO_TPM`. Internal `_`-prefixed structs
+  (`_patrastore`, `_sub`) intentionally not covered — not
+  public-surface.
+- [ ] **2.6.2 — Extend the raw-offset guard to ambiguous-param
+  structs.** ~15 derived structs use single-letter param names that
+  overlap across files. CI tooling work — needs either a codebase-
+  wide rename or a per-file allowed-offsets map cross-checked
+  against `#derive` declarations. Option (b) is the right fix but
+  needs more tooling than a shell grep.
+- [ ] **2.6.3 — RFC 6901 JSON Pointer queries** (`/entries/0/hash`
+  etc.). Cyrius 5.7.40+ ships the parser. Adds a public API surface
+  that feeds into `QueryFilter` for CLI tools or config-driven
+  retention policies; substrate for the structured-audit query DSL
+  listed under Ideas.
+- [ ] **2.6.x — Re-investigate `proof_to_json` bench-context
+  control-flow hijack.** Carried since 2.0.5. Re-tested in
+  2.1.1 / 2.2.0 / 2.5.0 against cyrius 5.10.34; bug persists with
+  changed symptom (was ~25 Hz `main()` re-entry, now SIGILL on
+  first bench iteration). Test-suite path is fine. Re-test against
+  whatever cyrius is current at that patch's time.
+- [ ] **2.6.x — JSON streaming for very large proofs.** Cyrius
+  5.7.40–42 shipped `json_stream_*` emitters. Libro's
+  `proof_to_json` is in-memory string building; a streaming
+  refactor helps when proof size becomes a memory concern (large
+  chains with deep inclusion-proof sets). Reactive — pick up when
+  a consumer reports memory pressure.
 
 ## Open — ecosystem-blocked
 
@@ -227,17 +243,15 @@ item moves to "Future".
   serial throughput). Sigil 3.1's alloc-free verify-hot-path
   rewrite is the actual unblocker; libro stays serial until then.
 
-## Out of libro scope (tracked elsewhere)
+## Tracked in other repos
 
 - **MCP tools (`libro_query`, `libro_verify`, `libro_export`) via
-  bote.** Lives in the bote repo — libro's API is stable; the MCP
-  surface is a wrapper concern and shouldn't grow libro's module
-  count.
+  bote.** Currently lives in the bote repo.
 
-## Future (speculative)
+## Ideas (not slotted)
 
-Items without a clear owner or scheduled unblocker. Drop or
-promote to "Open" if they reach actionable state.
+Items without a named owner or upstream unblocker. Listed for
+visibility; no implicit scope decision either way.
 
 - Structured-audit query DSL. `QueryFilter` is composable but
   code-only; a parseable string form could enable CLI tools or

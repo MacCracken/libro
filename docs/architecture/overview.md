@@ -18,28 +18,38 @@ libro (Cyrius library, single-file compilation)
 ├── review         — ChainReview: structured summary with integrity status
 ├── merkle         — MerkleTree: inclusion proofs, RFC 9162 consistency proofs,
 │                    canonical roots
-├── signing        — Ed25519 signing via sigil, key generation, key_id rotation
+├── signing        — Polymorphic signing dispatch: Ed25519 / ML-DSA-65 / hybrid
+│                    via sigil 3.0; getrandom + secret-var entropy gathering
 ├── anchoring      — WitnessAnchor: self-hashing snapshots, anchor meta-chain
 ├── timestamping   — RFC 3161 DER encoding/decoding, timestamp attestations
 ├── proof          — IntegrityProof: signed tree heads, inclusion/consistency bundles
 ├── kernel_audit   — AGNOS /proc/agnos/audit interface
 ├── file_store     — Append-only JSON Lines backend with flock, streaming verify
 ├── chain_io       — chain_export / chain_import portable JSONL round-trip
-├── patra_store    — SQL-backed backend via patra with indexed queries
+├── patra_store    — SQL-backed backend via patra; prepared statements,
+│                    sync-mode controls, opt-in STR src_idx, append_batch
 ├── streaming      — MQTT-style pub/sub with `*` and `#` wildcards
-└── proof_json     — Pretty-printed JSON emitter for IntegrityProof
+├── proof_json     — Pretty-printed JSON emitter + lossless round-trip parser
+│                    (object-shape inclusion paths preserve side bit)
+└── tpm_anchor     — [opt-in via -D LIBRO_TPM] TPM 2.0 sealed WitnessAnchor
+                     wrapper. Default builds skip this entirely.
 ```
 
-21 library modules. Authoritative list in `cyrius.cyml` `[lib] modules`;
-CI enforces it matches the include list in `src/main.cyr`.
+**21 default + 1 opt-in (TPM) library modules.** Authoritative
+list in `cyrius.cyml` `[lib] modules`; CI enforces it matches the
+non-#ifdef-gated include list in `src/main.cyr`. `tpm_anchor.cyr`
+is deliberately excluded from `[lib].modules` so the default
+`dist/libro.cyr` bundle doesn't link agnosys's tpm_* surface;
+consumers wanting TPM build from source with `-D LIBRO_TPM` or
+vendor the module directly.
 
 ## Design Principles
 
 - **Append-only** — entries cannot be modified or deleted after creation
 - **Integrity by construction** — `entry_new` computes the hash at
   construction time; it cannot be skipped
-- **Own the stack** — Cyrius stdlib + sigil (crypto) + patra (SQL); no
-  third-party crates
+- **Own the stack** — Cyrius stdlib + sigil (crypto) + patra (SQL) +
+  agnosys (kernel/TPM); no third-party crates
 - **Deterministic hashing** — nested scalar-aware canonical JSON
   (ADR 0007) + length-prefixed variable fields
 - **Constant-time security-critical compares** — via sigil's branchless
@@ -47,6 +57,13 @@ CI enforces it matches the include list in `src/main.cyr`.
 - **Declarative struct layout** — every `struct` uses
   `#derive(accessors)` (ADR 0005); cross-module raw offsets are
   CI-forbidden
+- **Polymorphic signing dispatch** — the `algorithm` field on
+  `signing_key` / `verifying_key` is the trust anchor; verify
+  routes to the right primitive at runtime (Ed25519 / ML-DSA-65 /
+  hybrid AND-mode)
+- **Opt-in hardware integration** — TPM sealing lives behind a
+  build define so default builds stay deployable in sandboxed /
+  rootless / non-Linux environments
 - **Structured tracing** — sakshi instrumentation on all key operations
 
 ## Data Flow
@@ -80,12 +97,41 @@ Event → entry_new() → hash computed → chain_append() / chain_append_batch(
                                     optional WitnessAnchor)
                                                │
                                                ├── proof_to_json (pretty JSON)
+                                               ├── proof_from_json (lossless RT, 2.6.0)
                                                └── proof_verify_* (end-to-end)
 ```
 
 Side channels not shown: `chain_export` / `chain_import` for portable
 snapshots; `src/streaming.cyr` for in-process pub/sub; kernel_audit for
-AGNOS `/proc/agnos/audit` ingestion.
+AGNOS `/proc/agnos/audit` ingestion; `tpm_anchor` wraps an existing
+`anchor` with a hardware seal under `-D LIBRO_TPM`.
+
+## Signing Algorithm Dispatch (2.2.0+)
+
+The `signing_key`, `verifying_key`, and `entry_sig` structs carry
+an `algorithm` field that gates which sigil primitive the
+sign/verify path uses. The struct layouts hold two slots so a
+single shape covers single-algorithm and hybrid keys:
+
+```
+signing_key  { bytes, pub_bytes, algorithm, key_id, zeroized, seed,
+               bytes_2, pub_bytes_2, seed_2 }
+verifying_key { bytes, algorithm, bytes_2 }
+entry_sig    { hash, signature, verifying_key, key_id, algorithm,
+               signature_2, verifying_key_2 }
+
+algorithm = SIG_ALG_ED25519 (0)     → slot 1 = Ed25519,  slot 2 = 0
+algorithm = SIG_ALG_ML_DSA_65 (1)   → slot 1 = ML-DSA-65, slot 2 = 0
+algorithm = SIG_ALG_HYBRID (2)      → slot 1 = Ed25519,  slot 2 = ML-DSA-65
+```
+
+`verify_entry_signature` dispatches on the *verifying-key's*
+algorithm, not the signature's claimed algorithm — the vk is the
+trust anchor. Hybrid verify wraps `sigil_verify_hybrid` in AND-mode:
+both Ed25519 and ML-DSA-65 must validate. See
+[`docs/guides/integration.md`](../guides/integration.md) for the
+migration story (Ed25519 → Hybrid → ML-DSA-65) and the
+backward-compatible verify pattern.
 
 ## Hash Algorithm
 
@@ -155,7 +201,48 @@ the first 16 bytes with `_uuid_hi` / `_uuid_lo` placeholders; their
 inside the defining file. Two CI gates enforce this: a specific-
 struct guard (registers 7 unambiguous param names: `c`, `ip`, `sk`,
 `vk`, `es`, `mp`, `cp`) and a per-file allowlist (every raw-offset
-param name must be registered per file). See ADR 0005.
+param name must be registered per file). The per-file allowlist
+was extended in 2.5.0 to register `ta` for `src/tpm_anchor.cyr`
+under the same defining-file pattern. See ADR 0005.
+
+## PatraStore Persistence Surface (2.4.0+)
+
+`src/patra_store.cyr` exposes three perf knobs over patra's base
+SQL backend, each opt-in to preserve the durable-by-default
+contract:
+
+- **`patrastore_set_sync_mode(s, mode)` / `_flush(s)`** — surface
+  patra's group-commit API. Default is `PATRA_SYNC_FULL` (per-call
+  fdatasync); switch to `PATRA_SYNC_BATCH` to amortize fsync across
+  writes (auto-flush every 64). Real-disk speedup ~64× per patra's
+  upstream bench numbers.
+- **`patrastore_append_batch(s, entries)`** — bulk append with
+  sync auto-toggled. Composes with consumer-held BATCH windows
+  (caller already in BATCH stays in BATCH on return).
+- **`patrastore_create_source_index(s)`** — opt-in STR-keyed
+  btree index on the `src` column (patra 1.7.0). Trades per-insert
+  cost for O(log N) `patrastore_by_source` queries.
+
+`patrastore_load_all` and `patrastore_len` transparently use
+prepared SELECT/COUNT statements parsed once at `patrastore_open`
+and finalized at close — skipping the ~8 µs tokenize+parse step
+per read call.
+
+## TPM-Sealed Anchors (2.5.0+, opt-in)
+
+`src/tpm_anchor.cyr` (gated `-D LIBRO_TPM`) wraps libro's `anchor`
+struct with a TPM seal over the anchor's self-hash. Verification
+requires three conditions all together:
+
+1. The inner anchor's self-hash matches (`anchor_verify_integrity`).
+2. The host TPM unseals the blob (PCR state today == PCR state
+   when sealed, per the policy chosen by `pcr_indices`).
+3. The unsealed bytes equal the inner anchor's hash.
+
+Default PCR policy is PCR 0 (firmware) + PCR 7 (Secure Boot
+configuration) — the AGNOS-aligned conservative default. See
+[`docs/guides/tpm-anchors.md`](../guides/tpm-anchors.md) for the
+trust model + when it does and doesn't apply.
 
 ## Consumers
 

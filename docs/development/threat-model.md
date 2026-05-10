@@ -1,27 +1,29 @@
 # Libro Threat Model
 
-**Last updated:** 2026-04-19 (post-2.0.3)
+**Last updated:** 2026-05-10 (post-2.6.0)
 **Status:** Living document — updated on material change to trust
 boundaries or defended classes.
 
 Libro is a cryptographic audit-chain library: hash-linked event
-logging with integrity verification, optional Ed25519 signing,
-optional RFC 3161 timestamp attestations, and witness-backend
-anchoring. This document catalogues what libro does and does not
-defend against, so consumers (daimon, aegis, stiva, sigil, ark)
-can reason about residual risk in their own deployments.
+logging with integrity verification, polymorphic per-entry signing
+(Ed25519 / ML-DSA-65 / hybrid), optional RFC 3161 timestamp
+attestations, witness-backend anchoring, and optional TPM-sealed
+anchor attestation. This document catalogues what libro does and
+does not defend against, so consumers (daimon, aegis, stiva, sigil,
+ark) can reason about residual risk in their own deployments.
 
 ## Scope
 
 **In scope:** Integrity of audit data across the libro API surface
-— entries, chains, proofs, signatures, stored artifacts (FileStore,
-PatraStore), streamed verification, chain import/export.
+— entries, chains, proofs, signatures (Ed25519 / ML-DSA-65 / hybrid),
+stored artifacts (FileStore, PatraStore), streamed verification,
+chain import/export, TPM-sealed anchors (opt-in).
 
 **Out of scope:** Threats to the operator's own honesty (libro is
 append-only audit; it cannot force a caller to log what they did);
-compromise of upstream crypto primitives (sigil's SHA-256 and
-Ed25519 are trusted as correct); side-channel attacks beyond the
-constant-time compares libro already uses; fault injection;
+compromise of upstream crypto primitives (sigil's SHA-256, Ed25519,
+and ML-DSA-65 are trusted as correct); side-channel attacks beyond
+the constant-time compares libro already uses; fault injection;
 rowhammer; the future federated / multi-node deployment modes.
 
 ## Trust boundaries
@@ -56,8 +58,14 @@ rowhammer; the future federated / multi-node deployment modes.
   authentically — it does not validate *what* is being logged,
   only that the log's structure is tamper-evident.
 - **libro → sigil:** sigil is trusted. Its SHA-256 (FIPS 180-4),
-  Ed25519 (RFC 8032), and `ct_eq` (branchless constant-time
-  compare) are taken as correct. A sigil CVE would propagate.
+  Ed25519 (RFC 8032), ML-DSA-65 (NIST FIPS 204), `sigil_verify_hybrid`
+  (AND-mode), and `ct_eq` (branchless constant-time compare) are
+  taken as correct. A sigil CVE would propagate.
+- **libro → agnosys (opt-in):** under `-D LIBRO_TPM`, agnosys is
+  the backend for `tpm_seal` / `tpm_unseal` (shells out to
+  tpm2-tools). Treated as trusted at the seal/unseal interface;
+  agnosys's own threat model applies to the kernel boundary.
+  Default builds do not pull this surface in.
 - **libro → filesystem (FileStore, chain_io):** Adversarial. Files
   can be modified out-of-band. Hash-linkage + signatures are the
   defense; libro parsers assume nothing about input well-formedness.
@@ -73,11 +81,12 @@ rowhammer; the future federated / multi-node deployment modes.
 | Asset                        | Protection                                          |
 |------------------------------|-----------------------------------------------------|
 | Chain integrity              | SHA-256 hash-linkage, `verify_chain`, `chain_verify`|
-| Entry authenticity           | Ed25519 per-entry signatures (`sign_entry`)         |
+| Entry authenticity           | Polymorphic per-entry sigs: Ed25519 / ML-DSA-65 / hybrid (2.2 / 2.3) |
 | Chain-head authenticity      | Signed Tree Head (STH) in `IntegrityProof`          |
 | Timestamp trustworthiness    | RFC 3161 token in `ts_attestation`                  |
-| Signing key secrecy          | Heap-only storage, `signing_key_zeroize` on disposal|
+| Signing key secrecy          | `secret var` stack window during keygen (2.1.1); heap-resident sk cleared via alg-aware `signing_key_zeroize` (2.2/2.3 cover both slots) |
 | Cross-chain consistency      | Witness anchoring (`WitnessAnchor` meta-chain)      |
+| Anchor authenticity (opt-in) | TPM-sealed self-hash under PCR policy (2.5.0, `-D LIBRO_TPM`) |
 
 ## Threats and mitigations
 
@@ -104,14 +113,32 @@ external anchor (T8).
 **Attack:** Attacker constructs a fake `EntrySignature` for an
 entry they control.
 
-**Mitigation:** `sign_entry(sk, e)` produces an Ed25519 signature
-over the entry hash. `verify_entry_signature(vk, e, sig)` checks
-via sigil's `ed25519_verify`. Without the signing key, forgery is
-computationally infeasible (Ed25519 provides 128-bit security).
+**Mitigation:** `sign_entry(sk, e)` produces a signature over the
+entry hash; `verify_entry_signature(vk, e, sig)` dispatches on
+the verifying-key's algorithm (the trust anchor — not the
+signature's claimed algorithm). Three algorithm options as of
+2.3.0:
 
-**Residual:** If the signing key is exposed, all past and future
-signatures are forgeable. See T6. Key rotation (`key_id` on
-`EntrySignature`) limits blast radius.
+- **Ed25519** (RFC 8032) — 128-bit security baseline.
+- **ML-DSA-65** (NIST FIPS 204, 2.2.0) — post-quantum, ~192-bit
+  classical security and quantum-resistance.
+- **Hybrid Ed25519 + ML-DSA-65** (2.3.0) — both primitives must
+  validate. Verifier accepts the entry only if both primitives
+  pass (sigil's `sigil_verify_hybrid` AND-mode).
+
+Without the signing key, forgery is computationally infeasible
+under each primitive's security model. Hybrid mode resists a
+break of *either* primitive: an attacker who could forge Ed25519
+(post-quantum) still can't produce a valid ML-DSA portion.
+
+**Residual:** If a signing key is exposed, all past and future
+signatures *under that algorithm* are forgeable. See T6. Key
+rotation (`key_id` on `EntrySignature`) limits blast radius.
+Hybrid mode shifts the residual: a key compromise on one
+algorithm only invalidates that algorithm's signatures, but the
+hybrid AND-mode verify fails the moment either side is broken
+— consumers must rotate explicitly, hybrid doesn't auto-degrade
+to single-algorithm.
 
 ### T3 — Second-preimage on hash (MITIGATED IN 2.0)
 
@@ -160,21 +187,34 @@ compounded it is also resolved. Any future similar bug in the
 streaming / import parsers is our primary residual-risk class and
 is why these paths have dedicated fuzz coverage.
 
-### T6 — Signing-key material exposure (PARTIAL)
+### T6 — Signing-key material exposure (MITIGATED, hardware path opt-in)
 
 **Attack:** Attacker reads the signing key from a core dump,
 swap, or memory scan.
 
-**Mitigation:** `SigningKey` stores key material on the heap (not
-the stack). `signing_key_zeroize(sk)` overwrites both the secret-
-key buffer and the seed before freeing. Consumers are expected to
-call `zeroize` in a `defer`-equivalent or on shutdown.
+**Mitigation:**
+- **Stack entropy window** (2.1.1) — `signing_key_generate*` reads
+  32 bytes of CSPRNG into a `secret var seed_stack[32]` and
+  `memcpy`s to the heap. `secret var` is compiler-guaranteed
+  zeroize-on-return, so the seed never lingers on the stack past
+  keygen.
+- **Heap-resident sk material** — stored on the heap (not the
+  stack). `signing_key_zeroize(sk)` is alg-aware: clears 64 bytes
+  for Ed25519, 4032 bytes for ML-DSA-65, BOTH slots (4096 bytes +
+  64 bytes of seeds) for hybrid. Consumers are expected to call
+  zeroize in a `defer`-equivalent or on shutdown.
+- **Entropy gathering hardened** (2.1.1) — `random_bytes` via
+  `getrandom(2)` replaces the prior `/dev/urandom` open/read/close
+  path; cleaner under Landlock policies that block `/dev/urandom`
+  traversal.
 
 **Residual:** libro does not memlock the key pages; the OS may
 swap them. libro does not defend against pre-zeroize memory reads.
-Hardware-backed key storage (TPM sealing via agnosys + sigil.tpm)
-is unblocked but not yet integrated — see
-`docs/development/roadmap.md` "Open — unblocked".
+Consumers wanting hardware-backed key sealing can run libro behind
+TPM-backed PCR policy gates (2.5.0 `tpm_anchor` covers anchor
+sealing; per-key TPM sealing is a future extension if a consumer
+asks). See [`docs/guides/tpm-anchors.md`](../guides/tpm-anchors.md)
+for the trust model.
 
 ### T7 — Side-channel leakage (OUT OF SCOPE for 2.x)
 
@@ -183,10 +223,14 @@ is unblocked but not yet integrated — see
 **Mitigation:** Not defended at the libro layer. sigil's Ed25519
 is constant-time by construction (RFC 8032). SHA-256 is generally
 considered side-channel resistant under software implementation.
+ML-DSA-65 (sigil 3.0) follows the FIPS 204 deterministic-rejection-
+loop pattern; the side-channel posture is sigil's responsibility
+and out of libro scope.
 
 **Residual:** All software side channels below the crypto-primitive
-level. Hardware-backed deployments (TPM sealing via agnosys +
-sigil.tpm) are unblocked but not yet integrated — see the roadmap.
+level. Consumers needing hardware-rooted protection use the 2.5.0
+TPM-sealed anchor (`-D LIBRO_TPM`) — though the seal protects
+*anchor* integrity, not the underlying signing-key side channels.
 
 ### T8 — Chain rollback / replay (CONSUMER-MITIGATED)
 
@@ -260,17 +304,63 @@ alter events read by `kernel_audit_read`.
 attacker can write to kernel `/proc`, libro cannot defend against
 anything.
 
+### T13 — Quantum cryptanalysis of Ed25519 (MITIGATED, opt-in)
+
+**Attack:** A future cryptographically-relevant quantum computer
+runs Shor's algorithm against Ed25519 signatures, recovering
+signing keys and forging arbitrary entries — invalidating audit
+chains that rely on Ed25519 alone for non-repudiation.
+
+**Mitigation:** Consumers with retention windows that meaningfully
+overlap with the CRQC timeline opt their chains into
+**ML-DSA-65** (FIPS 204) or **hybrid Ed25519 + ML-DSA-65** signing.
+Both landed in 2.2.0 / 2.3.0 via sigil 3.0.0. ML-DSA-65 is the
+NIST-standardized lattice-based signature scheme; hybrid mode adds
+a second independent cryptographic assumption so a break of
+*either* algorithm leaves the other witnessing the entry.
+
+**Residual:** Audit chains created before 2.2.0 (or 2.x consumers
+who stayed on `signing_key_generate()` without migrating) remain
+Ed25519-only. Migration uses chain boundaries (rotation under
+retention policy or a fresh log file) to switch new chains to
+hybrid or ML-DSA-65 without rehashing history. The pre-migration
+chain's authenticity post-CRQC is the consumer's risk-acceptance
+decision.
+
+### T14 — Anchor tampering (MITIGATED for software, hardware-sealed opt-in)
+
+**Attack:** Attacker tampers with a stored `WitnessAnchor` to
+present a fabricated chain-head snapshot.
+
+**Mitigation:** Every anchor self-hashes (`anchor_compute_hash`
+length-prefixes the UUID, merkle_root, entry_count, chain_head,
+hash_alg, created_at, prev_anchor_hash); `anchor_verify_integrity`
+detects byte-level tampering. The 2.5.0 opt-in `tpm_anchor`
+adds a TPM 2.0 seal over the anchor's self-hash under PCR policy
+(default PCR 0 + PCR 7 — firmware + Secure Boot config) — proves
+"this anchor was created on this TPM at this PCR state, AND the
+anchor data hasn't been tampered with since".
+
+**Residual:** TPM sealing is opt-in (`-D LIBRO_TPM`). It does NOT
+prove chain correctness (verify against the tree separately), host
+honesty (a compromised host with TPM control at seal time can
+produce a valid seal for arbitrary content), or identity (combine
+with Ed25519/ML-DSA-65 entry signing for attribution). PCR rotation
+invalidates seals — re-seal is consumer-managed. See
+[`docs/guides/tpm-anchors.md`](../guides/tpm-anchors.md).
+
 ## Residual risk summary
 
-| Class                              | Status          | Next step                 |
-|------------------------------------|-----------------|---------------------------|
-| Post-compromise key use            | Mitigated       | Rotation discipline       |
-| Pre-zeroize memory read            | Unmitigated     | TPM backing (unblocked, not integrated) |
-| Cache / power side channels        | Out of scope    | Hardware-backed (blocked) |
-| Multi-node consistency             | Not implemented | Future (blocked)          |
-| PQ resistance                      | Not implemented | ML-DSA via sigil (blocked)|
-| Consumer rollback discipline       | Consumer        | Integration guidance      |
-| Unknown parser bug in import paths | Fuzz-covered    | Ongoing fuzz sweep        |
+| Class                              | Status              | Next step                 |
+|------------------------------------|---------------------|---------------------------|
+| Post-compromise key use            | Mitigated           | Rotation discipline       |
+| Pre-zeroize memory read            | Mitigated (2.1.1)   | secret-var + getrandom    |
+| Cache / power side channels        | Out of scope        | Sigil-side                |
+| Multi-node consistency             | Not implemented     | Future (blocked)          |
+| PQ resistance (Ed25519 break)      | Mitigated (2.2/2.3) | Hybrid sig migration      |
+| Consumer rollback discipline       | Consumer            | Integration guidance      |
+| Anchor tampering                   | Mitigated, hardware-sealed opt-in (2.5.0) | TPM anchor |
+| Unknown parser bug in import paths | Fuzz-covered        | Ongoing fuzz sweep        |
 
 ## Unsafe code
 
@@ -287,19 +377,23 @@ The equivalent discipline is enforced through:
 
 ## Supply chain
 
-- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "5.4.7"`.
-  CI reads this field and installs the exact toolchain. No
-  wildcard ranges.
-- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "2.8.3"`.
-  `cyrius deps` resolves deterministically.
-- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.1.1"`.
-  Same as above.
+- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "5.10.34"`.
+  CI reads this field and installs the exact toolchain via the
+  canonical `scripts/install.sh` flow. No wildcard ranges.
+- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.0.1"`.
+  `cyrius deps` resolves deterministically. Pins libro to sigil's
+  full FIPS 204 ML-DSA stack.
+- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.9.3"`.
+  Same as above. Pins the prepared-statement / group-commit /
+  STR-btree feature set.
+- **agnosys pin** in `cyrius.cyml` `[deps.agnosys] tag = "1.0.4"`.
+  Direct pin (promoted from transitive-via-sigil in 2.5.0).
+  Default builds DCE the TPM surface; opt-in via `-D LIBRO_TPM`.
 - **Zero third-party deps** beyond the Cyrius toolchain + sigil +
-  patra. No transitive dependency graph to audit.
+  patra + agnosys. No transitive dependency graph to audit.
 
-## Review cadence
+## Change log
 
-This document is reviewed on every minor release (X.Y.0 → X.(Y+1).0)
-and whenever a finding files in `docs/audit/`. Last full review:
-2.0.0. Post-2.0 sprints have appended findings inline; a full
-restructure is due at 2.1.0.
+Last full restructure: 2.6.0 docs-pass (added T13 PQ-resistance /
+T14 anchor-tampering, refreshed T2 / T6 / T7 for the 2.x crypto +
+hardware additions, refreshed the supply-chain pins).
