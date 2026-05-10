@@ -20,23 +20,18 @@ jobs:
 
       - name: Install Cyrius toolchain
         run: |
+          # Use the canonical installer so the layout matches what
+          # `cyrius deps` and `cyriusly` expect: a per-version tree
+          # under ~/.cyrius/versions/$VER/{bin,lib}/, plus
+          # ~/.cyrius/current + the ~/.cyrius/{bin,lib} → versions/$VER
+          # symlinks. cyrius deps reads stdlib from ~/.cyrius/lib;
+          # without the symlinks the stdlib copy fails with
+          # "cannot read ./lib/<name>.cyr" for every [deps].stdlib entry.
           CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/^cyrius[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')}"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          # Install into version-pinned slot so cyrius's shadow-lib
-          # detection finds the snapshot it expects.
-          INSTALL_LIB="$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
-          INSTALL_BIN="$HOME/.cyrius/versions/$CYRIUS_VERSION/bin"
-          mkdir -p "$INSTALL_BIN" "$INSTALL_LIB" "$HOME/.cyrius/bin"
-          cp "$CYRIUS_DIR/bin/"* "$INSTALL_BIN/" 2>/dev/null || true
-          cp "$CYRIUS_DIR/scripts/cyrius" "$INSTALL_BIN/cyrius" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$INSTALL_LIB/" 2>/dev/null || true
-          chmod +x "$INSTALL_BIN/"* 2>/dev/null || true
-          # Add the version-pinned bin to PATH so `cyrius` resolves
-          # to the right binary.
-          echo "$INSTALL_BIN" >> $GITHUB_PATH
+          curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh" \
+            | CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
       - name: Verify toolchain

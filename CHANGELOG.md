@@ -80,12 +80,19 @@ one internal rename to clear a new cyrius duplicate-fn warning.
   expects). With both in `[deps].stdlib`, `cyrius deps` lands
   them in `./lib/` deterministically.
 - **CI install step rewritten** (`.github/workflows/ci.yml`,
-  `release.yml`). The toolchain now installs into
-  `$HOME/.cyrius/versions/$CYRIUS_VERSION/{bin,lib}/` — the
-  version-pinned layout cyrius's shadow-lib resolution expects.
-  Adds the version-pinned `bin/` to `PATH`. Eliminates the
-  `cwd ./lib/ shadows version-pinned ...` warning that surfaced
-  in CI when the version-pinned lib was missing.
+  `release.yml`) to use the canonical `scripts/install.sh`
+  installer instead of unpacking the release tarball by hand.
+  The hand-rolled flow flattened the toolchain into
+  `$HOME/.cyrius/lib/` (or `$HOME/.cyrius/versions/$VER/lib/`
+  without the `~/.cyrius/lib → versions/$VER/lib` symlink),
+  whichever variant we tried. `cyrius deps` reads stdlib from
+  `~/.cyrius/lib/`, and without the symlink it fails on every
+  `[deps].stdlib` entry — `4 deps resolved, 22 errors` /
+  `cannot read ./lib/<name>.cyr`. The canonical installer is
+  what `cyriusly install <ver>` calls, lays out
+  `versions/$VER/{bin,lib}/` + `current` + the `bin`/`lib`
+  symlinks correctly, and is the single source of truth that
+  stays in sync with future cyrius releases.
 - **Explicit `cyrius deps` + `cyrius deps --verify` steps** before
   any compile in both CI and release. The lockfile-hash gate
   short-circuits with a warning until `cyrius.lock` lands in-tree

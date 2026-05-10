@@ -34,19 +34,12 @@ jobs:
 
       - name: Install Cyrius toolchain
         run: |
+          # Canonical installer (see ci.yml for rationale).
           CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/^cyrius[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')}"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          INSTALL_LIB="$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
-          INSTALL_BIN="$HOME/.cyrius/versions/$CYRIUS_VERSION/bin"
-          mkdir -p "$INSTALL_BIN" "$INSTALL_LIB"
-          cp "$CYRIUS_DIR/bin/"* "$INSTALL_BIN/" 2>/dev/null || true
-          cp "$CYRIUS_DIR/scripts/cyrius" "$INSTALL_BIN/cyrius" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$INSTALL_LIB/" 2>/dev/null || true
-          chmod +x "$INSTALL_BIN/"* 2>/dev/null || true
-          echo "$INSTALL_BIN" >> $GITHUB_PATH
+          curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh" \
+            | CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
       - name: Verify toolchain
