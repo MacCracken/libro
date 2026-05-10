@@ -128,6 +128,10 @@ jobs:
           ALLOW[src/store.cyr]="s"
           ALLOW[src/streaming.cyr]="entries s sub"
           ALLOW[src/timestamping.cyr]="a r resp"
+          # 2.5.0: tpm_anchor is defined in tpm_anchor.cyr and built
+          # in tpm_anchor_new via raw offsets at the construction
+          # site. `ta` is the canonical tpm_anchor pointer param.
+          ALLOW[src/tpm_anchor.cyr]="ta"
           # Files not listed default to empty allowlist (consumers only).
           FAILED=0
           for f in src/*.cyr; do

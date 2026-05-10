@@ -2646,23 +2646,26 @@ fn test_tpm_anchor_inner_invalid_on_bad_inner() {
     # Even on a fully-equipped TPM host, if the inner anchor is
     # tampered with, verify must return INNER_INVALID — the TPM
     # seal can't rescue an anchor whose self-hash doesn't match.
+    # Built via derived setters so the test stays inside the
+    # raw-offset allowlist's contract.
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
     var tree = merkle_build(chain_entries(c));
     var inner = anchor_new(tree, c);
-    # Tamper: corrupt the anchor's stored hash so anchor_verify_integrity
-    # fails. We poke the hash slot directly; the test isn't trying to
-    # exercise the integrity helper's tamper detection (that's pinned
-    # elsewhere) — just that tpm_anchor_verify gates on it.
-    store64(inner + 64, str_from("tampered"));
-    # Build a fake tpm_anchor by hand so the test doesn't depend on
-    # tpm_seal succeeding. The sealed_ctx is irrelevant because we
-    # bail at the inner-integrity check before unseal.
+    # Tamper: corrupt the anchor's stored hash via the derived setter
+    # so anchor_verify_integrity fails. The integrity helper's tamper
+    # detection is pinned elsewhere — this just exercises that
+    # tpm_anchor_verify gates on it.
+    anchor_set_hash(inner, str_from("tampered"));
+    # Build a fake tpm_anchor via the derived setters so the test
+    # doesn't depend on tpm_seal succeeding. The sealed_ctx is
+    # irrelevant because we bail at the inner-integrity check before
+    # unseal.
     var ta = fl_alloc(32);
-    store64(ta, inner);
-    store64(ta + 8, 0);
-    store64(ta + 16, tpm_anchor_default_pcr_indices());
-    store64(ta + 24, str_from("/tmp"));
+    tpm_anchor_set_inner(ta, inner);
+    tpm_anchor_set_sealed_ctx(ta, 0);
+    tpm_anchor_set_pcr_indices(ta, tpm_anchor_default_pcr_indices());
+    tpm_anchor_set_output_dir(ta, str_from("/tmp"));
     assert(tpm_anchor_verify(ta) == TPM_ANCHOR_INNER_INVALID,
         "tpm_anchor_verify rejects tampered inner anchor");
     assert(tpm_anchor_verify_strict(ta) == 0,
