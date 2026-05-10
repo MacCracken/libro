@@ -69,6 +69,40 @@ one internal rename to clear a new cyrius duplicate-fn warning.
   prior cyrius version drifting against the manifest pin.
   `/lib/` added to `.gitignore`.
 
+### CI / release
+
+- **`[deps].stdlib` extended with `bench`, `fnptr`.** Both are
+  consumed by the three bench binaries; previously they resolved
+  against the toolchain's bundled fallback `lib/`, which exists
+  locally but not in CI's install layout (the prior CI flattened
+  the toolchain into `$HOME/.cyrius/lib/` instead of the
+  `versions/$CYRIUS_VERSION/lib/` shape cyrius's shadow-lib check
+  expects). With both in `[deps].stdlib`, `cyrius deps` lands
+  them in `./lib/` deterministically.
+- **CI install step rewritten** (`.github/workflows/ci.yml`,
+  `release.yml`). The toolchain now installs into
+  `$HOME/.cyrius/versions/$CYRIUS_VERSION/{bin,lib}/` — the
+  version-pinned layout cyrius's shadow-lib resolution expects.
+  Adds the version-pinned `bin/` to `PATH`. Eliminates the
+  `cwd ./lib/ shadows version-pinned ...` warning that surfaced
+  in CI when the version-pinned lib was missing.
+- **Explicit `cyrius deps` + `cyrius deps --verify` steps** before
+  any compile in both CI and release. The lockfile-hash gate
+  short-circuits with a warning until `cyrius.lock` lands in-tree
+  (one push grace period for fresh deps). Mirrors the agnosys
+  pattern.
+- **`cyrius.cyml [package].version = "${file:VERSION}"`** — `VERSION`
+  is now the single source of truth; the manifest interpolates
+  from it. Matches agnosys; eliminates the manifest/VERSION drift
+  failure mode that `scripts/version-bump.sh` had to paper over.
+  The docs-job version-consistency check now asserts the
+  interpolation literal is present instead of comparing two
+  redundant strings.
+- **Release archive now ships `cyrius.lock`** alongside the
+  source tarball, dist bundle, prebuilt binary, and SHA256SUMS.
+  Consumers pinning libro by tag can verify the resolved-deps
+  graph matches what was released.
+
 ### Verified
 
 - `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.

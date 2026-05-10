@@ -21,11 +21,16 @@ jobs:
 
       - name: Verify version
         run: |
+          # cyrius.cyml uses ${file:VERSION} interpolation, so VERSION
+          # is the single source of truth. Assert tag == VERSION and
+          # the manifest carries the interpolation literal.
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          CYML_VERSION=$(grep '^version = ' cyrius.cyml | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG="${GITHUB_REF_NAME}"
-          [ "$FILE_VERSION" = "$TAG" ] || { echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
-          [ "$CYML_VERSION" = "$TAG" ] || { echo "cyrius.cyml ($CYML_VERSION) != tag ($TAG)"; exit 1; }
+          [ "$FILE_VERSION" = "$TAG" ] || {
+            echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
+          grep -q '^version = "\${file:VERSION}"' cyrius.cyml || {
+            echo "cyrius.cyml version must be \${file:VERSION}"; exit 1; }
+          echo "Version verified: $TAG (cyrius.cyml pulls from VERSION via \${file:VERSION})"
 
       - name: Install Cyrius toolchain
         run: |
@@ -34,13 +39,29 @@ jobs:
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/bin/cyrius" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          INSTALL_LIB="$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
+          INSTALL_BIN="$HOME/.cyrius/versions/$CYRIUS_VERSION/bin"
+          mkdir -p "$INSTALL_BIN" "$INSTALL_LIB"
+          cp "$CYRIUS_DIR/bin/"* "$INSTALL_BIN/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$INSTALL_BIN/cyrius" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$INSTALL_LIB/" 2>/dev/null || true
+          chmod +x "$INSTALL_BIN/"* 2>/dev/null || true
+          echo "$INSTALL_BIN" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+
+      - name: Verify toolchain
+        run: cyrius --version
+
+      - name: Resolve dependencies
+        run: cyrius deps
+
+      - name: Verify dep hashes
+        run: |
+          if [ -f cyrius.lock ]; then
+            cyrius deps --verify
+          else
+            echo "::warning::cyrius.lock not committed — skipping hash verification"
+          fi
 
       - name: Build (DCE)
         run: |
@@ -66,13 +87,15 @@ jobs:
             exit 1
           fi
 
+      - name: Clean toolchain artifacts
+        run: rm -f cyrius-*.tar.gz
+
       - name: Archive
         run: |
           TAG="${GITHUB_REF_NAME}"
-          rm -f cyrius-*.tar.gz
           git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
           cp dist/libro.cyr "libro-${TAG}.cyr"
-          sha256sum libro-*.tar.gz libro-*.cyr build/libro > SHA256SUMS
+          sha256sum libro-*.tar.gz libro-*.cyr build/libro cyrius.lock > SHA256SUMS
 
       - name: Extract changelog
         run: |
@@ -87,4 +110,5 @@ jobs:
             libro-*.tar.gz
             libro-*.cyr
             build/libro
+            cyrius.lock
             SHA256SUMS
