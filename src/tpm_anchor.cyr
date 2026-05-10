@@ -1,0 +1,165 @@
+# tpm_anchor.cyr — TPM 2.0 sealed wrapper around libro's anchor
+#
+# Opt-in: this module is `include`d from `src/main.cyr` only when
+# the `LIBRO_TPM` define is set. Default builds (no `-D LIBRO_TPM=1`)
+# don't pull this in, don't link agnosys's tpm_* surface, and don't
+# pay any binary-size cost. Consumers wanting hardware-backed anchor
+# attestation flip the build define on.
+#
+# Trust model — see docs/guides/tpm-anchors.md. Briefly:
+#   - A `tpm_anchor_new(inner, output_dir, pcr_indices)` seals the
+#     inner anchor's self-hash to the host TPM's current PCR state.
+#   - `tpm_anchor_verify(ta)` requires THREE conditions:
+#       1. The inner anchor's self-hash matches (anchor_verify_integrity).
+#       2. The TPM can unseal the blob (PCR state today == PCR state
+#          at seal time, per the policy chosen by `pcr_indices`).
+#       3. The unsealed bytes equal the inner anchor's hash.
+#   - What this proves: "This anchor was created on this TPM at PCR
+#     state X, AND the anchor data hasn't been tampered with since."
+#   - What it does NOT prove: chain correctness (verify against the
+#     tree separately), host honesty (a compromised host can re-seal
+#     under its own current PCR state), or long-term integrity across
+#     PCR rotations.
+
+# ================================================================
+# TpmAnchorVerify result codes — mirror the AnchorVerify shape so
+# callers can switch on integer values rather than parse error
+# objects. The TPM-unavailable path returns its own code (not folded
+# into INNER_INVALID) so callers on no-TPM hosts can degrade to
+# software-only verification with a clear signal.
+# ================================================================
+
+enum TpmAnchorVerify {
+    TPM_ANCHOR_VALID          = 0;
+    TPM_ANCHOR_INNER_INVALID  = 1;
+    TPM_ANCHOR_UNAVAILABLE    = 2;
+    TPM_ANCHOR_UNSEAL_FAILED  = 3;
+    TPM_ANCHOR_HASH_MISMATCH  = 4;
+}
+
+# ================================================================
+# TpmAnchor — derived accessors:
+#   tpm_anchor_inner, tpm_anchor_sealed_ctx, tpm_anchor_pcr_indices,
+#   tpm_anchor_output_dir (+ _set_ setters)
+#
+# Fields:
+#   inner          — pointer to libro's anchor struct (the
+#                    `anchor` type defined in anchoring.cyr).
+#                    Verification of the underlying claim uses this.
+#   sealed_ctx     — opaque sealed-handle pointer returned by
+#                    agnosys's tpm_seal(). Points at a tpm_sealed
+#                    struct that owns the sealed.ctx file path and
+#                    PCR selection string.
+#   pcr_indices    — vec of i64 PCR indices used at seal time.
+#                    Retained for introspection + re-seal flows.
+#   output_dir     — Str of the directory holding sealed.ctx /
+#                    sealed.pub / sealed.priv. Caller controls
+#                    persistence and cleanup.
+# ================================================================
+#derive(accessors)
+struct tpm_anchor { inner; sealed_ctx; pcr_indices; output_dir; }
+
+# ================================================================
+# Construction — seal the inner anchor's self-hash.
+# Returns 0 on any failure (no TPM, seal call rejected, dir
+# unwritable). Successful return: a tpm_anchor pointer.
+# ================================================================
+
+fn tpm_anchor_new(inner_anchor, output_dir, pcr_indices) {
+    sakshi_info("tpm_anchor: new", 15);
+    if (inner_anchor == 0) { return 0; }
+    if (tpm_detect() == 0) {
+        sakshi_warn("tpm_anchor: TPM unavailable", 27);
+        return 0;
+    }
+    var hash = anchor_hash(inner_anchor);
+    if (hash == 0) { return 0; }
+    var hash_len = str_len(hash);
+    # agnosys tpm_seal caps at TPM_SEAL_MAX_BYTES = 2048; a 64-char
+    # hex hash is well under that.
+    var res = tpm_seal(TPM_SHA256, pcr_indices,
+        str_data(hash), hash_len, str_data(output_dir));
+    if (is_err_result(res) == 1) {
+        sakshi_warn("tpm_anchor: seal failed", 23);
+        return 0;
+    }
+    var sealed = result_unwrap(res);
+    var ta = fl_alloc(32);
+    store64(ta, inner_anchor);
+    store64(ta + 8, sealed);
+    store64(ta + 16, pcr_indices);
+    store64(ta + 24, output_dir);
+    return ta;
+}
+
+# ================================================================
+# Verification — returns one of the TPM_ANCHOR_* codes.
+# Callers that just want a boolean can compare against TPM_ANCHOR_VALID.
+# The UNAVAILABLE code is a soft-fail: the caller's policy decides
+# whether to accept (degrade to software-only) or reject (require
+# hardware attestation).
+# ================================================================
+
+fn tpm_anchor_verify(ta) {
+    sakshi_debug("tpm_anchor: verify", 18);
+    if (ta == 0) { return TPM_ANCHOR_INNER_INVALID; }
+    var inner = tpm_anchor_inner(ta);
+    if (anchor_verify_integrity(inner) == 0) {
+        return TPM_ANCHOR_INNER_INVALID;
+    }
+    if (tpm_detect() == 0) {
+        return TPM_ANCHOR_UNAVAILABLE;
+    }
+    var hash = anchor_hash(inner);
+    var hash_len = str_len(hash);
+    var buf = alloc(hash_len);
+    var res = tpm_unseal(tpm_anchor_sealed_ctx(ta), buf, hash_len);
+    if (is_err_result(res) == 1) {
+        # tpm_unseal failure: PCR state changed since seal, sealed.ctx
+        # corrupted/missing, or tpm2_unseal subprocess failed.
+        return TPM_ANCHOR_UNSEAL_FAILED;
+    }
+    var got = result_unwrap(res);
+    if (got != hash_len) {
+        return TPM_ANCHOR_HASH_MISMATCH;
+    }
+    if (memeq(buf, str_data(hash), hash_len) == 0) {
+        return TPM_ANCHOR_HASH_MISMATCH;
+    }
+    return TPM_ANCHOR_VALID;
+}
+
+# Convenience: bool-shaped verifier that returns 1 only on full
+# hardware-backed success. UNAVAILABLE and any other non-VALID
+# result return 0. Use this in policies that require hardware
+# attestation; use tpm_anchor_verify and switch on the result when
+# the policy allows software fallback.
+fn tpm_anchor_verify_strict(ta) {
+    if (tpm_anchor_verify(ta) == TPM_ANCHOR_VALID) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# Default PCR selection — PCR 0 + PCR 7
+#
+# PCR 0:  measures the firmware (UEFI / coreboot). Detects
+#         firmware tampering / downgrade.
+# PCR 7:  measures the Secure Boot configuration (keys + boot policy).
+#         Detects unauthorized boot-chain modifications.
+#
+# This is the conservative AGNOS-aligned default: tight enough to
+# detect attacks libro cares about (firmware, boot policy) without
+# binding to volatile state (PCR 4 = bootloader, PCR 9-10 = OS
+# components) that would invalidate seals across legitimate
+# kernel updates.
+#
+# Consumers with different threat models can supply their own
+# pcr_indices vec to tpm_anchor_new.
+# ================================================================
+
+fn tpm_anchor_default_pcr_indices() {
+    var v = vec_new();
+    vec_push(v, 0);
+    vec_push(v, 7);
+    return v;
+}

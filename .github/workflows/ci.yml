@@ -62,8 +62,17 @@ jobs:
           # a bundle missing the module, and the dist-freshness gate can't see
           # it because its input (the manifest) is itself the stale oracle.
           # See docs/audit/2026-04-19-audit-2.0.md Finding 1.
-          INCLUDES=$(grep -E 'include "src/[^"]+\.cyr"' src/main.cyr \
-            | sed -E 's/.*"(src\/[^"]+\.cyr)".*/\1/' | sort -u)
+          #
+          # Includes inside #ifdef ... #endif blocks are excluded — they're
+          # opt-in build paths (e.g. src/tpm_anchor.cyr behind LIBRO_TPM)
+          # that intentionally stay out of the default dist bundle.
+          INCLUDES=$(awk '
+            /^#ifdef/ { in_ifdef = 1; next }
+            /^#endif/ { in_ifdef = 0; next }
+            !in_ifdef && /include "src\/[^"]+\.cyr"/ {
+              match($0, /"src\/[^"]+\.cyr"/); print substr($0, RSTART+1, RLENGTH-2)
+            }
+          ' src/main.cyr | sort -u)
           MANIFEST=$(awk '/^\[lib\]/{flag=1;next} /^\[/{flag=0} flag' cyrius.cyml \
             | grep -oE '"src/[^"]+\.cyr"' | tr -d '"' | sort -u)
           MISSING=$(comm -23 <(echo "$INCLUDES") <(echo "$MANIFEST"))
@@ -206,6 +215,21 @@ jobs:
           cat /tmp/libro_test_out | tr -d '\0'
           grep -q "0 failed" /tmp/libro_test_out || { echo "FAIL: tests did not report 0 failed"; exit 1; }
           echo "PASS: all tests"
+
+      - name: TPM-opt-in build + test (LIBRO_TPM)
+        # 2.5.0 ships src/tpm_anchor.cyr behind -D LIBRO_TPM. Default
+        # builds (above) don't include it. This step verifies the
+        # opt-in compiles clean against agnosys's tpm_seal/tpm_unseal
+        # surface and the TPM-tests pass under "no TPM device" or
+        # "TPM device but no tpm2-tools" (the typical CI shape) —
+        # both code paths are explicitly exercised by the test fns.
+        run: |
+          CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm
+          ./build/libro_tpm > /tmp/libro_tpm_test_out 2>&1 || true
+          cat /tmp/libro_tpm_test_out | tr -d '\0'
+          grep -q "0 failed" /tmp/libro_tpm_test_out || {
+            echo "FAIL: LIBRO_TPM build tests did not report 0 failed"; exit 1; }
+          echo "PASS: LIBRO_TPM build + tests"
 
       - name: Fuzz
         run: |

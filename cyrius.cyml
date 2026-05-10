@@ -40,6 +40,12 @@ modules = [
     "src/patra_store.cyr",
     "src/streaming.cyr",
     "src/proof_json.cyr",
+    # NOTE — src/tpm_anchor.cyr is intentionally NOT bundled here.
+    # It's `include`d from main.cyr behind `#ifdef LIBRO_TPM` and
+    # depends on agnosys's tpm_seal/tpm_unseal. cyrius distlib strips
+    # #ifdef markers, so bundling it would force TPM symbols into the
+    # default dist bundle. Consumers wanting TPM build from source
+    # with `-D LIBRO_TPM` or vendor src/tpm_anchor.cyr directly.
 ]
 
 # ── Dependencies ─────────────────────────────────────────────────
@@ -87,3 +93,15 @@ modules = ["dist/sigil.cyr"]
 git = "https://github.com/MacCracken/patra.git"
 tag = "1.9.3"
 modules = ["dist/patra.cyr"]
+
+# Agnosys provides TPM primitives + Linux syscall wrappers libro
+# uses through src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM=1).
+# Currently transitive via sigil 3.0.1; promoted to a direct pin
+# in 2.5.0 so the agnosys version libro tests against is the one
+# libro consumers get, independent of sigil's own pin movements.
+# Match sigil's 1.0.4 floor until a consumer-driven reason to
+# advance.
+[deps.agnosys]
+git = "https://github.com/MacCracken/agnosys.git"
+tag = "1.0.4"
+modules = ["dist/agnosys.cyr"]

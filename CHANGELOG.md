@@ -5,6 +5,125 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-05-10
+
+**TPM-sealed `WitnessAnchor` lands (opt-in).** Hardware-backed
+anchor attestation behind `-D LIBRO_TPM`. Default builds are
+unaffected — no agnosys/tpm2-tools surface linked, same binary
+size, same dependency graph at runtime. Consumers wanting
+hardware-rooted audit attestation flip the build define on.
+
+This closes the final scheduled minor on the 2.x roadmap.
+
+### Added
+
+- **`src/tpm_anchor.cyr`** — new opt-in module wrapping libro's
+  `anchor` struct with a TPM seal over the anchor's self-hash.
+  Three new APIs:
+  - `tpm_anchor_new(inner, output_dir, pcr_indices)` — seals the
+    inner anchor's hash to the host TPM at current PCR state.
+    Returns 0 on any failure (no TPM, no tpm2-tools, seal subprocess
+    error). Consumers null-check and degrade to software-only.
+  - `tpm_anchor_verify(ta)` — returns one of `TPM_ANCHOR_VALID` /
+    `TPM_ANCHOR_INNER_INVALID` / `TPM_ANCHOR_UNAVAILABLE` /
+    `TPM_ANCHOR_UNSEAL_FAILED` / `TPM_ANCHOR_HASH_MISMATCH`.
+    Dispatches three conditions (inner integrity + TPM unseal +
+    cryptographic binding); VALID requires all three.
+  - `tpm_anchor_verify_strict(ta)` — bool-shaped wrapper, returns
+    1 only on full hardware-backed success.
+- **`tpm_anchor_default_pcr_indices()`** — the conservative AGNOS
+  default: PCR 0 (firmware) + PCR 7 (Secure Boot config). Tight
+  enough to detect firmware/boot-policy tampering, loose enough that
+  ordinary userspace + kernel updates don't invalidate seals.
+- **`enum TpmAnchorVerify`** — return-code constants for the verify
+  dispatch. Mirror the `AnchorVerify` shape so callers can switch
+  on integer values.
+- **`#derive(accessors)` struct `tpm_anchor`** — 4 fields:
+  `inner`, `sealed_ctx`, `pcr_indices`, `output_dir`. Standard
+  accessor pattern.
+- **`[deps.agnosys]`** promoted to a direct pin in `cyrius.cyml`
+  (was transitive via sigil). Matches sigil 3.0.1's floor at 1.0.4;
+  libro now controls the version independent of sigil's pin
+  movements.
+- **`docs/guides/tpm-anchors.md`** — new guide covering trust model
+  ("proves anchor was created on this TPM at this PCR state; does
+  NOT prove host honesty or chain correctness"), build flow, runtime
+  requirements (tpm2-tools, /dev/tpmrm0 permissions, writable
+  output_dir), PCR-policy alternatives, file persistence semantics.
+- **4 new test fns / 8 new assertions** in `src/main.cyr` (gated
+  behind `#ifdef LIBRO_TPM`): null-handle returns INNER_INVALID,
+  default PCR shape, tampered-inner rejection, hardware roundtrip
+  (best-effort; logs+skips on hosts without tpm2-tools rather than
+  failing).
+- **CI step** "TPM-opt-in build + test (LIBRO_TPM)" — builds with
+  `-D LIBRO_TPM` and runs the gated test battery. Verifies API
+  correctness on hosts without tpm2-tools (the typical CI shape);
+  hardware-success coverage requires a TPM-equipped runner the
+  shipped workflow doesn't assume.
+
+### Changed
+
+- **`src/main.cyr`** gains a single `#ifdef LIBRO_TPM` block at the
+  end of the includes that pulls in `src/tpm_anchor.cyr`. Same
+  block-shape for the test runner. Default builds skip the block
+  entirely; no overhead.
+- **CI manifest-completeness check** updated to skip `#ifdef`-gated
+  includes when comparing main.cyr against `[lib].modules`. This
+  preserves the gate for normal modules (regression coverage from
+  the 2.0.1 era) while letting opt-in modules stay out of the
+  default dist bundle.
+- **`[lib].modules` intentionally does NOT list `src/tpm_anchor.cyr`**.
+  cyrius distlib strips `#ifdef` markers when bundling, so including
+  it in the manifest would force agnosys tpm_* symbols into the
+  default `dist/libro.cyr` and break the no-TPM consumer contract.
+  Consumers wanting TPM build from source with `-D LIBRO_TPM` or
+  vendor the module directly. The manifest now carries an explicit
+  comment documenting this.
+
+### Trust model (summary; see guide for full detail)
+
+`tpm_anchor_verify(ta) == TPM_ANCHOR_VALID` proves three things
+*together*:
+
+1. The inner `WitnessAnchor`'s self-hash matches its claimed contents
+   (`anchor_verify_integrity` passes).
+2. The TPM can unseal the blob libro sealed at anchor-creation time
+   (PCRs named by `pcr_indices` are in the same state they were at
+   seal time).
+3. The unsealed bytes equal the inner anchor's hash (cryptographic
+   binding — the seal can't be transplanted).
+
+What it does NOT prove: chain correctness (verify against the tree
+separately), host honesty (a compromised host with TPM control at
+seal time can produce a valid seal for arbitrary content), identity
+(combine with Ed25519/ML-DSA-65 entry signing for attribution).
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **435 passed, 0 failed** (unchanged from 2.4.0).
+- `CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm` clean.
+- `./build/libro_tpm` — **443 passed, 0 failed** (435 + 8 TPM-gated).
+- All three benchmark binaries build + run.
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration runs.
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+- Test environment notes: this host has `/dev/tpm0` but no
+  `tpm2-tools` installed, so the `hardware_roundtrip_best_effort`
+  test exercises the seal-fails-gracefully path. The seal-succeeds
+  path is reachable on a properly-equipped TPM host; the test
+  battery handles both.
+
+### Roadmap impact
+
+- **2.x roadmap closes here.** The four major minors planned in the
+  2.1.0 remap have all shipped: 2.2.0 PQ signing, 2.3.0 hybrid
+  signing, 2.4.0 PatraStore perf, 2.5.0 TPM anchors. The remaining
+  roadmap items are "Open — unblocked (not yet slotted)" filler-grade
+  work (`proof_from_json`, JSON streaming, RFC 6901 pointers, struct-
+  layout test expansion, raw-offset guard expansion) and genuinely
+  ecosystem-blocked items (multi-node federation, sigil 3.1
+  parallel batch verify).
+
 ## [2.4.0] - 2026-05-10
 
 **PatraStore performance tier.** Wires patra 1.7–1.9's three perf

@@ -65,6 +65,18 @@ include "src/streaming.cyr"
 include "src/proof_json.cyr"
 
 # ================================================================
+# TPM-sealed anchors (2.5.0) — opt-in via -D LIBRO_TPM=1
+# ================================================================
+# Default builds skip this entirely. The tpm_anchor module pulls
+# agnosys's tpm_seal/tpm_unseal primitives which shell out to
+# tpm2-tools; consumers without a TPM (or running rootless / in
+# containers) don't pay any binary-size or runtime cost when the
+# define is off.
+#ifdef LIBRO_TPM
+include "src/tpm_anchor.cyr"
+#endif
+
+# ================================================================
 # Tests
 # ================================================================
 
@@ -2600,6 +2612,104 @@ fn test_patrastore_indexed_by_source() {
 }
 
 # ================================================================
+# TPM-sealed anchor tests (2.5.0) — opt-in via -D LIBRO_TPM
+# ================================================================
+# These tests cover API correctness, not environmental functionality:
+# they pass on hosts without a TPM (tpm_detect == 0), hosts with a
+# TPM but no tpm2-tools (seal fails), and hosts with full TPM
+# infrastructure (full roundtrip). The runtime-success of seal +
+# unseal depends on the host's tpm2-tools install + permissions +
+# PCR policy; libro's contract is that the API surface dispatches
+# correctly in every case and never crashes on partial-init paths.
+#ifdef LIBRO_TPM
+fn test_tpm_anchor_verify_null_returns_inner_invalid() {
+    # tpm_anchor_verify(0) is the no-op consumer-side fast path —
+    # if the construction failed (returned 0), verify must report
+    # invalid rather than crashing on a null deref.
+    assert(tpm_anchor_verify(0) == TPM_ANCHOR_INNER_INVALID,
+        "tpm_anchor_verify(0) returns INNER_INVALID");
+    assert(tpm_anchor_verify_strict(0) == 0,
+        "tpm_anchor_verify_strict(0) returns 0");
+}
+
+fn test_tpm_anchor_default_pcr_indices() {
+    # The conservative AGNOS-aligned default: PCR 0 (firmware) and
+    # PCR 7 (Secure Boot config). Other PCRs are deliberately
+    # excluded — see the comment in src/tpm_anchor.cyr.
+    var pcrs = tpm_anchor_default_pcr_indices();
+    assert(vec_len(pcrs) == 2, "default PCR set has 2 entries");
+    assert(vec_get(pcrs, 0) == 0, "default PCR[0] = 0 (firmware)");
+    assert(vec_get(pcrs, 1) == 7, "default PCR[1] = 7 (Secure Boot)");
+}
+
+fn test_tpm_anchor_inner_invalid_on_bad_inner() {
+    # Even on a fully-equipped TPM host, if the inner anchor is
+    # tampered with, verify must return INNER_INVALID — the TPM
+    # seal can't rescue an anchor whose self-hash doesn't match.
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var tree = merkle_build(chain_entries(c));
+    var inner = anchor_new(tree, c);
+    # Tamper: corrupt the anchor's stored hash so anchor_verify_integrity
+    # fails. We poke the hash slot directly; the test isn't trying to
+    # exercise the integrity helper's tamper detection (that's pinned
+    # elsewhere) — just that tpm_anchor_verify gates on it.
+    store64(inner + 64, str_from("tampered"));
+    # Build a fake tpm_anchor by hand so the test doesn't depend on
+    # tpm_seal succeeding. The sealed_ctx is irrelevant because we
+    # bail at the inner-integrity check before unseal.
+    var ta = fl_alloc(32);
+    store64(ta, inner);
+    store64(ta + 8, 0);
+    store64(ta + 16, tpm_anchor_default_pcr_indices());
+    store64(ta + 24, str_from("/tmp"));
+    assert(tpm_anchor_verify(ta) == TPM_ANCHOR_INNER_INVALID,
+        "tpm_anchor_verify rejects tampered inner anchor");
+    assert(tpm_anchor_verify_strict(ta) == 0,
+        "tpm_anchor_verify_strict rejects tampered inner anchor");
+}
+
+# Hardware-path: only attempts the full seal+verify when the host
+# can actually do it (TPM device present AND seal succeeds). On
+# CI/dev hosts where tpm2-tools is missing or the TPM isn't
+# accessible, the test logs and skips. When the host CAN do it,
+# the test pins the success-path contract.
+fn test_tpm_anchor_hardware_roundtrip_best_effort() {
+    if (tpm_detect() == 0) {
+        sakshi_info("tpm_anchor: skipping hardware roundtrip (no TPM)", 50);
+        assert(1 == 1, "tpm_anchor hardware roundtrip: no TPM, skip");
+        return 0;
+    }
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var tree = merkle_build(chain_entries(c));
+    var inner = anchor_new(tree, c);
+    var pcrs = tpm_anchor_default_pcr_indices();
+    # /tmp exists; we don't try to mkdir a custom directory because
+    # the test would fail on hosts without mkdir-as-fn in the stdlib.
+    var ta = tpm_anchor_new(inner, str_from("/tmp"), pcrs);
+    if (ta == 0) {
+        # Seal failed — most commonly tpm2-tools not installed, or
+        # /dev/tpmrm0 ACL forbids the test user. Both are valid
+        # runtime environments; the API surface didn't crash and
+        # returned a sentinel 0 that the consumer can null-check.
+        sakshi_info("tpm_anchor: skipping verify (seal failed; tpm2-tools?)", 56);
+        assert(1 == 1, "tpm_anchor hardware roundtrip: seal failed, skip");
+        return 0;
+    }
+    # Seal succeeded — verify must now return VALID, and the strict
+    # bool form must return 1.
+    assert(tpm_anchor_verify(ta) == TPM_ANCHOR_VALID,
+        "tpm_anchor_verify on fresh seal returns VALID");
+    assert(tpm_anchor_verify_strict(ta) == 1,
+        "tpm_anchor_verify_strict on fresh seal returns 1");
+    sys_unlink("/tmp/sealed.ctx");
+    sys_unlink("/tmp/sealed.pub");
+    sys_unlink("/tmp/sealed.priv");
+}
+#endif
+
+# ================================================================
 # Main — run all tests
 # ================================================================
 
@@ -2809,6 +2919,14 @@ fn main() {
     test_patrastore_append_batch_preserves_caller_batch();
     test_patrastore_prepared_stmts_survive_open();
     test_patrastore_indexed_by_source();
+
+#ifdef LIBRO_TPM
+    test_group("TPM-sealed anchors (LIBRO_TPM, opt-in)");
+    test_tpm_anchor_verify_null_returns_inner_invalid();
+    test_tpm_anchor_default_pcr_indices();
+    test_tpm_anchor_inner_invalid_on_bad_inner();
+    test_tpm_anchor_hardware_roundtrip_best_effort();
+#endif
 
     test_group("Gap coverage");
     test_retention_keep_duration();
