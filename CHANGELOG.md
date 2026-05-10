@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-05-10
+
+First slice of the 2.1.x toolchain-bump follow-ups planned in the
+remapped roadmap. Three shippable items + two investigations
+documented.
+
+### Added
+
+- **`[deps].stdlib`** extended with `random` (cyrius `lib/random.cyr`
+  v5.7.35 — kernel CSPRNG via `getrandom(2)`) and `test` (cyrius
+  `lib/test.cyr` v5.7.43 — table-driven testing helpers; included
+  for future use even though the 2.1.1 refactor pass was deferred).
+
+### Changed
+
+- **`signing_key_generate` reads entropy via `random_bytes` into a
+  `secret var seed_stack[32]`**, then `memcpy`s into the long-lived
+  heap seed buffer (`signing.cyr`). Replaces the prior
+  `file_open("/dev/urandom")` + `file_read` + `file_close` chain.
+  The stack copy is auto-zeroized on function exit (cyrius 5.5.12+
+  `secret var` guarantee), eliminating the brief stack-resident
+  entropy window. Heap-resident seed is unchanged — still cleared
+  by `signing_key_zeroize`.
+- **`ts_request_generate_nonce` uses `secret var nonce_buf[16]`**
+  + `random_bytes` (`timestamping.cyr`). Defense-in-depth: nonces
+  aren't strictly secret, but a stack-resident nonce buffer in a
+  later frame would be a stale-data leak, and the language
+  guarantee removes the need for vigilance.
+- **Dropped the `file_open("/dev/urandom") + file_read + file_close`
+  pattern from libro entirely.** Both call sites migrated to
+  `random_bytes`. Cleaner under Landlock policies that deny
+  `/dev/urandom` traversal — `getrandom(2)` is the one-syscall
+  path that works in sandboxed contexts (see new integration
+  guide section).
+
+### Documented
+
+- **Landlock hardening recipe for PatraStore consumers** added to
+  `docs/guides/integration.md`. Cyrius 5.7.35 ships `lib/security.cyr`
+  with the Landlock enums and `lib/syscalls_<arch>_linux.cyr` with
+  the three syscall wrappers (`sys_landlock_create_ruleset`,
+  `sys_landlock_add_rule`, `sys_landlock_restrict_self`). The new
+  guide section walks through a concrete daemon-style policy that
+  restricts the libro process to a single audit-data directory and
+  documents the kernel ≥5.13 requirement, the monotonic-once-applied
+  semantics, and the natural pairing with `getrandom` for entropy
+  in sandboxed contexts. Doc-only — libro itself stays unopinionated
+  about sandbox policy.
+
+### Investigated, deferred
+
+- **`proof_to_json` bench-context control-flow hijack** (carried from
+  2.0.5). Re-tested under cyrius 5.10.34 — bug persists, manifestation
+  changed: 5.4.7 looped main() at ~25 Hz; 5.10.34 SIGILLs on the first
+  bench iteration after a clean `proof_build` + `proof_to_json` pair.
+  Same class of bug, different surface. Stack trace recorded in
+  `benches/libro_proof.bcyr` header comment for future diagnosis.
+  Bench addition reverted; the test-suite path (`test_proof_to_json_*`
+  in `src/main.cyr`) continues to pass cleanly. Remains on the
+  roadmap.
+- **`lib/test.cyr` table-driven refactor** considered and deferred
+  (see roadmap for rationale). libro's homogeneous test groups
+  (`test_layout_*`, canonical JSON, SHA-256 vectors) each exercise
+  different accessor functions per case, so `test_each` would need
+  fn-pointer indirection that costs more LOC than it saves. The
+  stdlib include is in place for future use; the refactor itself is
+  marked as deferred-indefinitely.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **373 passed, 0 failed** (unchanged from 2.1.0).
+- All three benchmark binaries build + run.
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration runs.
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+
 ## [2.1.0] - 2026-05-10
 
 **Toolchain + dependency refresh.** Bumps cyrius 5.4.7 → 5.10.34,

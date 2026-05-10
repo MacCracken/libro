@@ -27,6 +27,7 @@ include "lib/ct.cyr"
 include "lib/keccak.cyr"
 include "lib/thread.cyr"
 include "lib/agnosys.cyr"
+include "lib/random.cyr"
 
 # ================================================================
 # Patra — SQL-backed storage backend (persistent audit log)

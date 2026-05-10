@@ -70,6 +70,8 @@ stdlib = [
     "thread",
     "bench",
     "fnptr",
+    "random",
+    "test",
 ]
 
 # External first-party deps. `cyrius deps` resolves these into lib/

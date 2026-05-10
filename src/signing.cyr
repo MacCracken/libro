@@ -16,10 +16,13 @@ fn signing_key_generate() {
     var sk_bytes = alloc(64);
     var pk_bytes = alloc(32);
     var seed = alloc(32);
-    # Read 32 random bytes for seed
-    var fd = file_open("/dev/urandom", 0, 0);
-    file_read(fd, seed, 32);
-    file_close(fd);
+    # `secret var` zeroes the stack copy on function exit, so the
+    # entropy never lingers beyond the keypair derivation. The seed
+    # heap copy is the long-lived material that signing_key_zeroize
+    # is responsible for clearing.
+    secret var seed_stack[32];
+    random_bytes(&seed_stack, 32);
+    memcpy(seed, &seed_stack, 32);
     ed25519_keypair(seed, sk_bytes, pk_bytes);
     store64(sk, sk_bytes);
     store64(sk + 8, pk_bytes);

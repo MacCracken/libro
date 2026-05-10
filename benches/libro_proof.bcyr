@@ -7,15 +7,22 @@
 #
 # NOTE — the originally planned `proof_to_json_*_25` benches are
 # NOT shipped here. Every attempt to measure `proof_to_json(ip)`
-# inside a bench_run loop triggered what looks like stack corruption
-# or a similar control-flow hijack: main() was observed to re-enter
-# repeatedly (25+ Hz), emitting the banner over and over with no
-# real progress. The same `proof_to_json` call works correctly in
-# the test suite (test_proof_to_json_unsigned / _null_on_zero /
-# _fields_present all pass in src/main.cyr, 350 tests green).
-# Narrowed to a bench-context interaction with proof_json.cyr; root
-# cause not yet isolated. Filed as a follow-up — see
-# docs/development/roadmap.md "Open — unblocked".
+# inside a bench_run loop triggers a control-flow hijack. The
+# same `proof_to_json` call works correctly in the test suite
+# (test_proof_to_json_unsigned / _null_on_zero / _fields_present
+# all pass in src/main.cyr). Narrowed to a bench-context
+# interaction with proof_json.cyr; root cause not yet isolated.
+# Filed as a follow-up — see docs/development/roadmap.md.
+#
+# Re-test history:
+# - 2.0.5 / cyrius 5.4.7 — main() re-enters ~25 Hz, banner spams.
+# - 2.1.1 / cyrius 5.10.34 — SIGILL on first bench iteration after
+#   proof_build + proof_to_json complete once. Different symptom,
+#   same class of bug. Stack trace (no symbols, DCE build):
+#     #0 0x4a8155 → #1 0x4ac1f4 → #2 0x4ac983 → #3 0x499805
+#     #4 0x42199b → #5 0x4acb7e → #6 0x4b1bda
+#   Bench addition was attempted in 2.1.1 development; reverted
+#   pending root-cause work.
 #
 # Run: cyrius build benches/libro_proof.bcyr build/libro_bench_proof
 #      ./build/libro_bench_proof
@@ -43,6 +50,7 @@ include "lib/ct.cyr"
 include "lib/keccak.cyr"
 include "lib/thread.cyr"
 include "lib/agnosys.cyr"
+include "lib/random.cyr"
 include "lib/sigil.cyr"
 
 include "src/error.cyr"

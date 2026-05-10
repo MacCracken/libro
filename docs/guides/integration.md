@@ -168,3 +168,71 @@ if (archive != 0) {
     file_close(fd);
 }
 ```
+
+## Hardening — Landlock sandbox for PatraStore
+
+PatraStore opens `.patra` files at consumer-supplied paths. A
+defense-in-depth measure for daemon-style deployments is to apply
+a Linux Landlock policy that restricts the libro process to only
+the audit-data directory tree, eliminating arbitrary file-read /
+file-traversal as a post-compromise primitive.
+
+Cyrius 5.7.35+ ships `lib/security.cyr` with the Landlock enums
+and `lib/syscalls_<arch>_linux.cyr` with the three syscall
+wrappers. This is consumer-side glue — libro itself stays
+unopinionated about sandbox policy, since the right deny-list
+depends on the consumer's deployment shape.
+
+```cyrius
+include "lib/security.cyr"
+include "lib/syscalls.cyr"
+
+# Build a ruleset that gates filesystem writes + reads.
+var attr[16];
+store64(&attr,
+    LANDLOCK_ACCESS_FS_WRITE_FILE
+  | LANDLOCK_ACCESS_FS_READ_FILE
+  | LANDLOCK_ACCESS_FS_READ_DIR
+  | LANDLOCK_ACCESS_FS_MAKE_REG);
+var ruleset_fd = sys_landlock_create_ruleset(&attr, 8, 0);
+if (ruleset_fd < 0) { /* kernel < 5.13 or syscall blocked */ }
+
+# Allow read+write+create only beneath /var/lib/audit/.
+var path_fd = sys_open("/var/lib/audit", O_PATH | O_CLOEXEC, 0);
+var rule_attr[16];
+store64(&rule_attr,
+    LANDLOCK_ACCESS_FS_WRITE_FILE
+  | LANDLOCK_ACCESS_FS_READ_FILE
+  | LANDLOCK_ACCESS_FS_READ_DIR
+  | LANDLOCK_ACCESS_FS_MAKE_REG);
+store64(&rule_attr + 8, path_fd);
+sys_landlock_add_rule(ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+    &rule_attr, 0);
+sys_close(path_fd);
+
+# Apply. The calling thread (and any clone()'d children) can no
+# longer touch files outside /var/lib/audit. This cannot be relaxed.
+sys_landlock_restrict_self(ruleset_fd, 0);
+
+# After this point, patrastore_open(...) inside /var/lib/audit/ works.
+# patrastore_open(...) anywhere else fails with EACCES, and so does
+# any incidental dlopen / config-file read attempt by transitively
+# linked code.
+```
+
+Notes:
+
+- Landlock restricts only the calling thread + descendants. Don't
+  apply it before forking off helper processes that need broader
+  access.
+- The ruleset is monotonic — once applied, it cannot be widened.
+  Apply it once at process start, after libro's `patra_init()` has
+  done any setup that needs unsandboxed fs access.
+- Kernel 5.13+ required (`sys_landlock_create_ruleset` returns
+  `-ENOSYS` on older kernels). Detect at runtime and degrade to
+  unsandboxed operation if the consumer's deployment matrix
+  spans older kernels.
+- Pairs naturally with `getrandom` for entropy (already used by
+  libro 2.1.1's `signing_key_generate` and
+  `ts_request_generate_nonce`) — both work inside a sandboxed
+  process where `/dev/urandom` might be denied by the ruleset.

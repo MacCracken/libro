@@ -49,12 +49,16 @@ isolated and ships as a patch.
   Document a hardening recipe (deny path traversal outside the
   intended `.patra` directory) under `docs/guides/integration.md`
   for consumers; libro itself stays unopinionated. Doc-only.
-- [ ] **`lib/test.cyr` table-driven refactor.** Cyrius 5.7.43 ships
-  `test_each`. Audit the 373 assertions for homogeneous shapes
-  (Merkle proof vectors, JSON canonical fixtures, hash test
-  vectors); compress to ~5–8 `test_each` calls. ~15–20% LOC
-  reduction in the test surface, no behaviour change. Small,
-  opportunistic.
+- [x] ~~**`lib/test.cyr` table-driven refactor.**~~ Investigated in
+  2.1.1 development; **deferred indefinitely.** The homogeneous
+  groups in libro's test surface (10× `test_layout_*`, 5× canonical
+  JSON, ~5× SHA-256 vectors) each exercise *different accessor
+  functions per case* — collapsing them via `test_each` requires
+  fn-pointer indirection per field, which costs more LOC than it
+  saves and obscures the intent of the layout-invariant probes.
+  `test_each` is the right shape for "input → expected output"
+  tables (`json_pointer` corpus, etc.); libro's test surface
+  doesn't have that shape in any meaningful concentration.
 - [ ] **Investigate bench-context `proof_to_json` control-flow
   hijack.** Carried from 2.0.5. Calling `proof_to_json(ip)`
   inside `bench_run` causes `main()` to re-enter ~25 Hz. Real

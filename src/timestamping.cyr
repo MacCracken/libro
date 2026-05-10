@@ -149,13 +149,15 @@ fn ts_request_new(hash_hex) {
 }
 
 fn ts_request_generate_nonce(r) {
-    # Generate 16-byte random nonce — wraps the auto-derived
-    # `ts_request_set_nonce` setter with /dev/urandom entropy gathering.
-    var nonce_buf = alloc(16);
-    var fd = file_open("/dev/urandom", 0, 0);
-    file_read(fd, nonce_buf, 16);
-    file_close(fd);
-    ts_request_set_nonce(r, hex_encode_str(nonce_buf, 16));
+    # Generate 16-byte random nonce. The raw bytes go through
+    # hex_encode_str into the request struct — `secret var` zeros
+    # the stack buffer on return as a defense-in-depth measure
+    # (nonces aren't strictly secret, but a stale-stack-buffer
+    # read should never reveal the nonce material to an attacker
+    # observing later stack frames).
+    secret var nonce_buf[16];
+    random_bytes(&nonce_buf, 16);
+    ts_request_set_nonce(r, hex_encode_str(&nonce_buf, 16));
     return r;
 }
 
