@@ -47,6 +47,11 @@ include "src/anchoring.cyr"
 include "src/file_store.cyr"
 include "src/streaming.cyr"
 
+# 2.4.0 patra-perf benches need patrastore_*. patra is bundled
+# transitively via lib/sigil includes? No — pull it in explicitly.
+include "lib/patra.cyr"
+include "src/patra_store.cyr"
+
 include "benches/bench_history.cyr"
 
 var _b_chain = 0;
@@ -58,6 +63,10 @@ var _b_anchor = 0;
 var _b_stream = 0;
 var _b_store = 0;
 var _b_fs = 0;
+var _b_ps_full = 0;
+var _b_ps_batch = 0;
+var _b_ps_query = 0;
+var _b_ps_entries_50 = 0;
 
 fn bench_export_jsonl(ignored) {
     export_jsonl(_b_entries, _b_dev_null);
@@ -100,6 +109,40 @@ fn bench_filestore_load(ignored) {
     return 0;
 }
 
+# 2.4.0 patra-perf benches.
+#
+# CAVEAT — these run against /tmp (tmpfs) where fdatasync is a
+# no-op. The SYNC_FULL vs SYNC_BATCH delta will look like noise
+# here; the real-disk numbers (per patra 1.8.0's bench notes:
+# 19.5ms vs 306µs per insert on btrfs/nvme, ~64×) only show up
+# when LIBRO_BENCH_PATRA_PATH points at a real-fs path. The
+# /tmp baseline is still useful for catching regressions in the
+# bookkeeping overhead (mode toggles, prepared dispatch, etc.).
+
+fn bench_patrastore_append_50_full(ignored) {
+    var i = 0;
+    while (i < 50) {
+        patrastore_append(_b_ps_full, vec_get(_b_ps_entries_50, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn bench_patrastore_append_50_batch(ignored) {
+    patrastore_append_batch(_b_ps_batch, _b_ps_entries_50);
+    return 0;
+}
+
+fn bench_patrastore_load_all_50(ignored) {
+    patrastore_load_all(_b_ps_query);
+    return 0;
+}
+
+fn bench_patrastore_by_source_50(ignored) {
+    patrastore_by_source(_b_ps_query, str_from("svc-bench"));
+    return 0;
+}
+
 fn main() {
     alloc_init();
     fl_init();
@@ -137,6 +180,37 @@ fn main() {
         i += 1;
     }
 
+    # PatraStore bench setup. Three independent stores: one always
+    # SYNC_FULL (per-call fsync), one toggled to BATCH inside
+    # patrastore_append_batch, one pre-loaded for read benches.
+    patra_init();
+    sys_unlink("/tmp/libro_bench_ps_full.patra");
+    sys_unlink("/tmp/libro_bench_ps_full.patra.wal");
+    sys_unlink("/tmp/libro_bench_ps_batch.patra");
+    sys_unlink("/tmp/libro_bench_ps_batch.patra.wal");
+    sys_unlink("/tmp/libro_bench_ps_query.patra");
+    sys_unlink("/tmp/libro_bench_ps_query.patra.wal");
+    _b_ps_full  = patrastore_open(str_from("/tmp/libro_bench_ps_full.patra"));
+    _b_ps_batch = patrastore_open(str_from("/tmp/libro_bench_ps_batch.patra"));
+    _b_ps_query = patrastore_open(str_from("/tmp/libro_bench_ps_query.patra"));
+    # Opt into the STR src_idx for the read store to bench the
+    # indexed path. Append benches stay un-indexed to measure the
+    # raw write hot path without the per-insert index update.
+    patrastore_create_source_index(_b_ps_query);
+    # 50 entries with the bench source pinned to "svc-bench" so the
+    # by_source query has a hit rate worth measuring.
+    var bench_chain = chain_new();
+    var bj = 0;
+    while (bj < 50) {
+        chain_append(bench_chain, SEV_INFO, str_from("svc-bench"),
+            str_from("bench-act"), _b_det);
+        bj = bj + 1;
+    }
+    _b_ps_entries_50 = chain_entries(bench_chain);
+    # Pre-populate the read-bench store so load_all + by_source have
+    # something to read.
+    patrastore_append_batch(_b_ps_query, _b_ps_entries_50);
+
     var benches = vec_new();
 
     var b1 = bench_new("export_jsonl_100");
@@ -171,12 +245,37 @@ fn main() {
     bench_run(b8, &bench_filestore_load, 100);
     vec_push(benches, b8);
 
+    var b9 = bench_new("patra_append_50_full");
+    bench_run(b9, &bench_patrastore_append_50_full, 5);
+    vec_push(benches, b9);
+
+    var b10 = bench_new("patra_append_50_batch");
+    bench_run(b10, &bench_patrastore_append_50_batch, 5);
+    vec_push(benches, b10);
+
+    var b11 = bench_new("patra_load_all_50");
+    bench_run(b11, &bench_patrastore_load_all_50, 50);
+    vec_push(benches, b11);
+
+    var b12 = bench_new("patra_by_source_50");
+    bench_run(b12, &bench_patrastore_by_source_50, 50);
+    vec_push(benches, b12);
+
     println("");
     bench_report_all(benches);
     bench_history_write("libro_io", benches);
 
     file_close(_b_dev_null);
     sys_unlink("/tmp/libro_bench_fs.jsonl");
+    patrastore_close(_b_ps_full);
+    patrastore_close(_b_ps_batch);
+    patrastore_close(_b_ps_query);
+    sys_unlink("/tmp/libro_bench_ps_full.patra");
+    sys_unlink("/tmp/libro_bench_ps_full.patra.wal");
+    sys_unlink("/tmp/libro_bench_ps_batch.patra");
+    sys_unlink("/tmp/libro_bench_ps_batch.patra.wal");
+    sys_unlink("/tmp/libro_bench_ps_query.patra");
+    sys_unlink("/tmp/libro_bench_ps_query.patra.wal");
     return 0;
 }
 

@@ -2459,6 +2459,147 @@ fn test_patrastore_persistence() {
 }
 
 # ================================================================
+# 2.4.0 perf-tier coverage: sync mode, batch append, prepared
+# statements, indexed by-source query.
+# ================================================================
+
+fn test_patrastore_sync_mode_default_full() {
+    sys_unlink("/tmp/libro_test_ps_sync1.patra");
+    sys_unlink("/tmp/libro_test_ps_sync1.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_sync1.patra"));
+    assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
+        "patrastore: sync defaults to FULL");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_sync1.patra");
+    sys_unlink("/tmp/libro_test_ps_sync1.patra.wal");
+}
+
+fn test_patrastore_sync_mode_switch() {
+    sys_unlink("/tmp/libro_test_ps_sync2.patra");
+    sys_unlink("/tmp/libro_test_ps_sync2.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_sync2.patra"));
+    patrastore_set_sync_mode(ps, PATRA_SYNC_BATCH);
+    assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_BATCH,
+        "patrastore: switched to BATCH");
+    patrastore_set_sync_mode(ps, PATRA_SYNC_FULL);
+    assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
+        "patrastore: switched back to FULL");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_sync2.patra");
+    sys_unlink("/tmp/libro_test_ps_sync2.patra.wal");
+}
+
+fn test_patrastore_append_batch_correctness() {
+    # Bulk-append via patrastore_append_batch must produce the same
+    # rows as N individual patrastore_append calls. The sync mode is
+    # internally toggled to BATCH for the loop; correctness comes from
+    # patra's WAL contract regardless of sync mode.
+    sys_unlink("/tmp/libro_test_ps_batch.patra");
+    sys_unlink("/tmp/libro_test_ps_batch.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_batch.patra"));
+    var det = str_from("{}");
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("svc-a"), str_from("act-1"), det);
+    chain_append(c, SEV_WARNING, str_from("svc-b"), str_from("act-2"), det);
+    chain_append(c, SEV_ERROR, str_from("svc-a"), str_from("act-3"), det);
+    var entries = chain_entries(c);
+    var ok = patrastore_append_batch(ps, entries);
+    assert(ok == 3, "append_batch: 3 entries inserted");
+    assert(patrastore_len(ps) == 3, "append_batch: row count matches");
+    # Sync mode restored to caller's prior mode (FULL by default).
+    assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
+        "append_batch: sync mode restored to FULL");
+    var loaded = patrastore_load_all(ps);
+    assert(vec_len(loaded) == 3, "append_batch: load_all returns 3");
+    var loaded_last = vec_get(loaded, 2);
+    assert(entry_severity(loaded_last) == SEV_ERROR,
+        "append_batch: last entry severity preserved");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_batch.patra");
+    sys_unlink("/tmp/libro_test_ps_batch.patra.wal");
+}
+
+fn test_patrastore_append_batch_preserves_caller_batch() {
+    # If the caller is already in SYNC_BATCH mode (e.g. doing a larger
+    # bulk-import window), patrastore_append_batch must NOT downgrade
+    # them back to FULL on return.
+    sys_unlink("/tmp/libro_test_ps_batch2.patra");
+    sys_unlink("/tmp/libro_test_ps_batch2.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_batch2.patra"));
+    patrastore_set_sync_mode(ps, PATRA_SYNC_BATCH);
+    var det = str_from("{}");
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    patrastore_append_batch(ps, chain_entries(c));
+    assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_BATCH,
+        "append_batch: preserves caller's BATCH mode");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_batch2.patra");
+    sys_unlink("/tmp/libro_test_ps_batch2.patra.wal");
+}
+
+fn test_patrastore_prepared_stmts_survive_open() {
+    # The prepared SELECT and COUNT statements should be ready by the
+    # time patrastore_load_all / patrastore_len are first called. This
+    # is regression coverage for the 2.4.0 prepare-once-at-open path:
+    # an off-by-one in the open sequence (preparing before the table
+    # exists) would yield 0-handles and the queries would silently
+    # fall through to the unprepared dispatch.
+    sys_unlink("/tmp/libro_test_ps_prep.patra");
+    sys_unlink("/tmp/libro_test_ps_prep.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_prep.patra"));
+    assert(_patrastore_select_stmt(ps) != 0,
+        "patrastore: select_stmt prepared at open");
+    assert(_patrastore_count_stmt(ps) != 0,
+        "patrastore: count_stmt prepared at open");
+    # Fire both prepared paths to confirm they actually work.
+    var det = str_from("{}");
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
+    patrastore_append(ps, e);
+    assert(patrastore_len(ps) == 1, "prepared count returns 1");
+    var loaded = patrastore_load_all(ps);
+    assert(vec_len(loaded) == 1, "prepared select returns 1 row");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_prep.patra");
+    sys_unlink("/tmp/libro_test_ps_prep.patra.wal");
+}
+
+fn test_patrastore_indexed_by_source() {
+    # Coverage for the opt-in STR-keyed src_idx — patra 1.7.0 STR btree.
+    # Functional check: by_source still returns the right rows after
+    # the consumer creates the index (regression guard against the
+    # index corrupting the query). Perf delta is captured in the benches.
+    # The index is opt-in (not auto-created at open) — see the rationale
+    # comment on patrastore_create_source_index.
+    sys_unlink("/tmp/libro_test_ps_idx.patra");
+    sys_unlink("/tmp/libro_test_ps_idx.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_idx.patra"));
+    assert(patrastore_create_source_index(ps) == PATRA_OK,
+        "src_idx created");
+    # Idempotent — a second create returns PATRA_ERR_EXISTS, not an error.
+    var second = patrastore_create_source_index(ps);
+    assert(second == PATRA_OK || second == PATRA_ERR_EXISTS,
+        "src_idx re-create is idempotent");
+    var det = str_from("{}");
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("kernel"),     str_from("syscall"), det);
+    chain_append(c, SEV_INFO, str_from("aegis"),      str_from("event"),   det);
+    chain_append(c, SEV_INFO, str_from("kernel"),     str_from("trap"),    det);
+    chain_append(c, SEV_INFO, str_from("daimon"),     str_from("audit"),   det);
+    chain_append(c, SEV_INFO, str_from("kernel"),     str_from("fault"),   det);
+    patrastore_append_batch(ps, chain_entries(c));
+    var kernel_rows = patrastore_by_source(ps, str_from("kernel"));
+    assert(vec_len(kernel_rows) == 3, "indexed by_source: 3 kernel rows");
+    var aegis_rows = patrastore_by_source(ps, str_from("aegis"));
+    assert(vec_len(aegis_rows) == 1, "indexed by_source: 1 aegis row");
+    var none_rows = patrastore_by_source(ps, str_from("nonexistent"));
+    assert(vec_len(none_rows) == 0, "indexed by_source: 0 rows for unknown source");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_idx.patra");
+    sys_unlink("/tmp/libro_test_ps_idx.patra.wal");
+}
+
+# ================================================================
 # Main — run all tests
 # ================================================================
 
@@ -2660,6 +2801,14 @@ fn main() {
     test_patrastore_by_source();
     test_patrastore_transaction();
     test_patrastore_persistence();
+
+    test_group("PatraStore (perf tier — 2.4.0)");
+    test_patrastore_sync_mode_default_full();
+    test_patrastore_sync_mode_switch();
+    test_patrastore_append_batch_correctness();
+    test_patrastore_append_batch_preserves_caller_batch();
+    test_patrastore_prepared_stmts_survive_open();
+    test_patrastore_indexed_by_source();
 
     test_group("Gap coverage");
     test_retention_keep_duration();

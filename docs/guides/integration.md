@@ -355,6 +355,99 @@ ed25519_hex_sig | mldsa65_hex_sig
 `sigil_verify_hybrid`. The pipe character is unambiguous because
 hex digits never include `|`. Length: 128 + 1 + 6618 = 6747 chars.
 
+## PatraStore — performance tier (2.4.0)
+
+libro 2.4.0 wires patra 1.7–1.9's perf surface (prepared statements,
+group commit, STR-keyed btree indexes) into the PatraStore API
+without changing the existing call shape. Existing consumers see no
+behaviour change; opt-in knobs unlock real-disk speedups on bulk
+write and indexed read paths.
+
+### Bulk append with batched fsync
+
+```cyrius
+# Replaces N individual patrastore_append calls in a loop:
+var ok = patrastore_append_batch(ps, entries_vec);
+# `ok` is the count of successful inserts. The fn internally toggles
+# patra to SYNC_BATCH mode for the loop and flushes + restores the
+# caller's prior sync mode before returning.
+```
+
+Patra's `SYNC_BATCH` mode amortizes fdatasync across multiple
+mutating writes — auto-flushes every 64 writes (the `PATRA_BATCH_FLUSH_N`
+threshold), on `patra_flush`, on `patra_close`, or on switch back to
+`SYNC_FULL`. Documented speedup on real-disk btrfs/nvme is ~64×
+(per the patra 1.8.0 changelog: 19.5 ms/insert SYNC_FULL → 306 µs/insert
+SYNC_BATCH amortized for 500-insert bulk loops).
+
+**Durability contract**: a successful `patrastore_append_batch` means
+all entries are in OS page cache and visible to the same process. The
+final `patrastore_flush` ensures they survive a crash; without that
+flush, up to 63 entries could be lost (the auto-flush window).
+
+**Tmpfs caveat**: on `/tmp` (tmpfs) fdatasync is a no-op and the
+SYNC_FULL vs SYNC_BATCH delta vanishes. libro's bench rows
+(`patra_append_50_full` / `patra_append_50_batch` in
+`libro_bench_io`) run on `/tmp` and show ~3% delta — that's
+bookkeeping overhead, not the real-disk win. To measure the real
+win, point a bench at a btrfs/nvme path.
+
+### Consumer-driven sync-mode control
+
+For workloads that bulk-import across multiple `patrastore_append_batch`
+calls (e.g. a full-chain replay from an archive), the consumer can
+hold the BATCH window open across calls:
+
+```cyrius
+patrastore_set_sync_mode(ps, PATRA_SYNC_BATCH);
+patrastore_append_batch(ps, batch_1);    # preserves caller's BATCH
+patrastore_append_batch(ps, batch_2);    # still in BATCH
+patrastore_flush(ps);                    # one fdatasync for both
+patrastore_set_sync_mode(ps, PATRA_SYNC_FULL);
+```
+
+`patrastore_append_batch` checks the caller's sync mode at entry and
+restores it before returning, so it composes cleanly with this
+pattern.
+
+### Indexed by-source queries
+
+By default PatraStore has no secondary indexes — every
+`patrastore_by_source` call scans the table. For consumers that
+filter by source frequently and have many entries, opt in to a
+STR-keyed btree index:
+
+```cyrius
+var ps = patrastore_open(path);
+patrastore_create_source_index(ps);  # one-time setup; idempotent
+# Subsequent by_source calls take the O(log N) btree path.
+var kernel_rows = patrastore_by_source(ps, str_from("kernel"));
+```
+
+**Trade-off**: the index makes every subsequent
+`patrastore_append` slower — every insert must also update the
+btree page. Patra's published numbers (1.7.1 changelog) show ~21%
+speedup on STR-equality SELECT at 500 entries; the per-insert
+overhead is in the single-digit-µs range on real disk.
+
+Heuristic for whether to opt in:
+
+- Query-heavy + selective (`vec_len(by_source(...)) << total`): yes.
+- Write-heavy + rare source filters: no — the index slows the
+  write hot path without payoff.
+- Mixed: bench both with your actual workload shape before deciding.
+
+### Prepared SELECT and COUNT statements (transparent)
+
+`patrastore_load_all` and `patrastore_len` use patra prepared
+statements internally — parsed once at `patrastore_open`, finalized
+at `patrastore_close`. This skips the ~8 µs tokenize+parse step per
+call. No API change; the gain is automatic for existing consumers.
+
+`patrastore_append` and `patrastore_by_source` stay un-prepared
+because their SQL is value-templated per call (patra has no bind-
+parameter API as of 1.9.3).
+
 ## Hardening — Landlock sandbox for PatraStore
 
 PatraStore opens `.patra` files at consumer-supplied paths. A

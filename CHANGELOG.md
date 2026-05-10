@@ -5,6 +5,124 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-05-10
+
+**PatraStore performance tier.** Wires patra 1.7–1.9's three perf
+features (prepared statements, group commit, STR-keyed btree
+indexes) into the PatraStore API. Existing consumers see no
+behaviour change — the prepared-statement work is transparent, and
+the BATCH-mode + index APIs are opt-in. The opt-in shape is
+deliberate: each knob trades a real-disk write-path cost for a
+read-path speedup, and the right choice depends on the consumer's
+workload mix.
+
+### Added
+
+- **`patrastore_set_sync_mode(s, mode)` / `patrastore_get_sync_mode(s)`
+  / `patrastore_flush(s)`** — thin wrappers over patra 1.8.0's group-
+  commit API. Default after `patrastore_open` is `PATRA_SYNC_FULL`
+  (durable on every mutating exec); switch to `PATRA_SYNC_BATCH` to
+  amortize fdatasync across writes (auto-flushes every 64).
+- **`patrastore_append_batch(s, entries)`** — bulk-append vec of
+  entries with sync mode auto-toggled. Internally: save caller's
+  mode, switch to BATCH, loop appends, flush, restore. Returns the
+  count of successful inserts. Composes cleanly with consumer-held
+  BATCH windows (caller already in BATCH stays in BATCH on return).
+- **`patrastore_create_source_index(s)`** — opt-in STR-keyed btree
+  index on the `src` column (patra 1.7.0). Converts
+  `patrastore_by_source` from O(N) full-scan to O(log N) btree
+  probe + filter. Idempotent. Documented trade-off: per-insert
+  cost rises because every append must also update the index page.
+- **Prepared SELECT and COUNT statements** behind `patrastore_load_all`
+  and `patrastore_len`. Parsed once at `patrastore_open`, finalized
+  at `patrastore_close`. Skips the ~8 µs tokenize+parse step per
+  read call. Transparent — no API change.
+- **16 new test assertions** across 6 perf-tier test fns: sync
+  mode default, sync mode switch, append_batch correctness,
+  append_batch preserves caller's BATCH mode, prepared statements
+  populated at open, indexed by_source roundtrip + idempotent index
+  creation. 417 → 435 total (counting hybrid sig + new perf).
+- **4 new bench rows** in `libro_bench_io`: `patra_append_50_full`,
+  `patra_append_50_batch`, `patra_load_all_50`, `patra_by_source_50`.
+
+### Changed
+
+- **`_patrastore` struct extended from 2 to 4 fields** (16 → 32 bytes).
+  New slots: `select_stmt`, `count_stmt` (prepared statement handles,
+  0 until `patrastore_open` populates them). Underscore-prefixed
+  internal-only — no public layout test pinned to the old shape.
+- **`patrastore_open` populates the two prepared statement handles**
+  after `_patrastore_ensure_table` confirms the table exists. The
+  ordering matters: preparing before the table is created would
+  silently yield 0-handles and the read paths would fall through to
+  the unprepared dispatch.
+- **`patrastore_close` finalizes both prepared statements** before
+  closing the db. `patra_finalize(0)` is a no-op so this is safe on
+  the partial-init path (e.g. if `patrastore_open` failed early).
+- **`patrastore_load_all` / `patrastore_len`** check for prepared-
+  statement handles and route through `patra_query_prepared` when
+  available; fall back to the un-prepared `patra_query` if the
+  handle is 0 (defensive; shouldn't happen on a properly-opened
+  store).
+- **`benches/libro_io.bcyr`** picks up `lib/patra.cyr` +
+  `src/patra_store.cyr` for the new patra bench rows. Three
+  independent stores (full-mode appends, batch-mode appends,
+  pre-loaded reads) — the read store opts into the src index so the
+  `patra_by_source_50` row exercises the indexed path.
+
+### Performance (/tmp tmpfs, x86_64)
+
+| Bench                  | Time     | Notes |
+|------------------------|---------:|-------|
+| `patra_append_50_full` | 2.31 ms  | Per-insert: ~46 µs |
+| `patra_append_50_batch`| 2.22 ms  | ~3% faster on tmpfs |
+| `patra_load_all_50`    | 575 µs   | Uses prepared SELECT |
+| `patra_by_source_50`   | 591 µs   | Uses src_idx (opt-in) |
+
+The full-vs-batch delta is invisible on tmpfs because fdatasync is
+a no-op there — same caveat documented in patra's own 1.8.0 bench
+notes. Real-disk btrfs/nvme runs show ~64× speedup per patra's
+upstream numbers (19.5 ms → 306 µs per insert amortized in
+500-insert loops). libro's bench rows here are useful for catching
+regressions in the bookkeeping overhead (mode toggles, prepared
+dispatch, index update).
+
+### Documentation
+
+- **`docs/guides/integration.md`** gains a "PatraStore — performance
+  tier" section: bulk append example, consumer-driven sync-mode
+  control, indexed by-source query opt-in with workload heuristic,
+  durability contract, and the tmpfs caveat for measuring the win.
+
+### Not breaking
+
+- All four new API entries (`patrastore_set_sync_mode`,
+  `patrastore_get_sync_mode`, `patrastore_flush`,
+  `patrastore_append_batch`, `patrastore_create_source_index`) are
+  pure additions.
+- `_patrastore` struct grew (4 fields vs 2), but it's
+  underscore-prefixed and consumers are expected to use the
+  `patrastore_*` API surface, not raw struct access. No tracked
+  consumer is affected.
+- The prepared-statement wiring is transparent — `patrastore_load_all`
+  and `patrastore_len` produce identical output, just faster on the
+  parse-cost dimension.
+
+### Verified
+
+- `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro` clean.
+- `./build/libro` — **435 passed, 0 failed** (was 417).
+- All three benchmark binaries build + run.
+- `./build/fuzz_libro` — all 12 harnesses survive 100-iteration runs.
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint src/*.cyr` clean.
+
+### Roadmap impact
+
+- **2.5.x — TPM-sealed `WitnessAnchor`** is next. agnosys is already
+  a transitive dep via sigil 3.0.1; needs to be promoted to a direct
+  `[deps.agnosys]` pin and a new opt-in `src/tpm_anchor.cyr` module
+  behind a `LIBRO_TPM=1` build define.
+
 ## [2.3.0] - 2026-05-10
 
 **Hybrid signing lands.** Entries can now be signed with both
