@@ -94,7 +94,8 @@ fn proof_build_signed(chain, sk) {
     var root = merkle_tree_root(tree);
     var sig = sign_tree_head(sk, root);
     var vk_hex = signing_key_verifying_hex(sk);
-    var alg = str_from(sig_alg_name(signing_key_algorithm(sk)));
+    var alg_cstr = sig_alg_name(signing_key_algorithm(sk));
+    var alg = str_new(alg_cstr, strlen(alg_cstr));
     var sth = sth_new(root, merkle_tree_leaf_count(tree), sig, vk_hex, alg);
 
     var ip = fl_alloc(48);

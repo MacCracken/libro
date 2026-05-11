@@ -338,7 +338,8 @@ fn sign_entry(sk, e) {
     var sig_hex = hex_encode_str(sig_buf, sig_size);
     var vk_hex = signing_key_verifying_hex(sk);
     var kid = signing_key_key_id(sk);
-    var alg_str = str_from(sig_alg_name(alg));
+    var alg_cstr = sig_alg_name(alg);
+    var alg_str = str_new(alg_cstr, strlen(alg_cstr));
     return entry_sig_new(ehash, sig_hex, vk_hex, kid, alg_str);
 }
 
@@ -354,7 +355,8 @@ fn _sign_entry_hybrid(sk, ehash) {
     var ed_vk_hex = signing_key_verifying_hex(sk);
     var pq_vk_hex = signing_key_verifying_hex_2(sk);
     var kid = signing_key_key_id(sk);
-    var alg_str = str_from(sig_alg_name(SIG_ALG_HYBRID));
+    var alg_cstr = sig_alg_name(SIG_ALG_HYBRID);
+    var alg_str = str_new(alg_cstr, strlen(alg_cstr));
     return entry_sig_new_hybrid(ehash, ed_sig_hex, ed_vk_hex, kid, alg_str, pq_sig_hex, pq_vk_hex);
 }
 

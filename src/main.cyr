@@ -26,6 +26,7 @@ include "lib/process.cyr"
 include "lib/ct.cyr"
 include "lib/keccak.cyr"
 include "lib/thread.cyr"
+include "lib/slice.cyr"
 include "lib/agnosys.cyr"
 include "lib/random.cyr"
 
@@ -157,10 +158,10 @@ fn test_hex_encode_zeros() {
 }
 
 fn test_ct_eq() {
-    assert(ct_eq("abc", 3, "abc", 3) == 1, "ct_eq equal");
-    assert(ct_eq("abc", 3, "abd", 3) == 0, "ct_eq differ");
-    assert(ct_eq("abc", 3, "ab", 2) == 0, "ct_eq length mismatch");
-    assert(ct_eq("", 0, "", 0) == 1, "ct_eq empty");
+    assert(ct_eq_bytes_lens("abc", 3, "abc", 3) == 1, "ct_eq equal");
+    assert(ct_eq_bytes_lens("abc", 3, "abd", 3) == 0, "ct_eq differ");
+    assert(ct_eq_bytes_lens("abc", 3, "ab", 2) == 0, "ct_eq length mismatch");
+    assert(ct_eq_bytes_lens("", 0, "", 0) == 1, "ct_eq empty");
 }
 
 fn test_constant_time_eq_str() {

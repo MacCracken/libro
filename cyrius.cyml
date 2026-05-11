@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.10.34"
+cyrius = "5.10.44"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -66,6 +66,7 @@ stdlib = [
     "freelist",
     "hashmap",
     "json",
+    "slice",
     "tagged",
     "process",
     "sakshi",
@@ -86,22 +87,24 @@ stdlib = [
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "3.0.1"
+tag = "3.1.1"
 modules = ["dist/sigil.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.9.3"
+tag = "1.9.4"
 modules = ["dist/patra.cyr"]
 
 # Agnosys provides TPM primitives + Linux syscall wrappers libro
 # uses through src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM=1).
-# Currently transitive via sigil 3.0.1; promoted to a direct pin
-# in 2.5.0 so the agnosys version libro tests against is the one
-# libro consumers get, independent of sigil's own pin movements.
-# Match sigil's 1.0.4 floor until a consumer-driven reason to
-# advance.
+# Promoted to a direct pin in 2.5.0 so the agnosys version libro
+# tests against is the one libro consumers get, independent of
+# sigil's own pin movements. Advanced past sigil's 1.0.4 floor in
+# 2.6.3 — libro's only agnosys surface is tpm_seal/tpm_unseal +
+# syscall wrappers, both unchanged across the 1.0 → 1.2 line, so
+# the direct pin tracks the latest published tag rather than the
+# transitive floor.
 [deps.agnosys]
 git = "https://github.com/MacCracken/agnosys.git"
-tag = "1.0.4"
+tag = "1.2.6"
 modules = ["dist/agnosys.cyr"]

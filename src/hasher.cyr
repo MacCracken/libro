@@ -48,7 +48,7 @@ fn hex_decode_str(hex_s) {
 # ================================================================
 
 fn constant_time_eq_str(a, b) {
-    return ct_eq(str_data(a), str_len(a), str_data(b), str_len(b));
+    return ct_eq_bytes_lens(str_data(a), str_len(a), str_data(b), str_len(b));
 }
 
 # ================================================================

@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] - 2026-05-11
+
+**Toolchain + dependency refresh.** Cyrius pin advances from
+5.10.34 to 5.10.44; sigil 3.0.1 → 3.1.1, patra 1.9.3 → 1.9.4,
+agnosys 1.0.4 → 1.2.6. Three call-site migrations to keep the
+test suite passing against the new sigil and stdlib.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "5.10.44"` (was
+  5.10.34). CI extracts this via the existing grep/sed line —
+  no YAML change required.
+- **Sigil pin**: `[deps.sigil]` `tag = "3.1.1"` (was 3.0.1).
+- **Patra pin**: `[deps.patra]` `tag = "1.9.4"` (was 1.9.3).
+- **Agnosys pin**: `[deps.agnosys]` `tag = "1.2.6"` (was 1.0.4).
+  Advanced past sigil's transitive 1.0.4 floor — libro's only
+  agnosys surface is tpm_seal/tpm_unseal + syscall wrappers,
+  both unchanged across the 1.0 → 1.2 line, so the direct pin
+  tracks the latest published tag rather than the transitive
+  floor. Comment in `cyrius.cyml` updated to record the new
+  policy.
+- **`cyrius.lock`** regenerated against the new tags.
+
+### Added
+
+- **`lib/slice.cyr` include** in `src/main.cyr` (right before
+  `lib/agnosys.cyr`). Agnosys 1.2.6 indexes slices with the
+  `s[i]` syntax that lowers to `_slice_idx_get_W` helpers from
+  stdlib `slice.cyr`; without the include the compile emits
+  `slice subscript requires include "lib/slice.cyr"`.
+- **`"slice"` entry** added to `[deps].stdlib` so `cyrius deps`
+  materialises `lib/slice.cyr` alongside the rest of the
+  vendored stdlib surface libro uses.
+
+### Fixed
+
+- **Three `str_from(sig_alg_name(...))` call sites** migrated to
+  `str_new(cstr, strlen(cstr))`. Sigil 3.1.1 annotated
+  `sig_alg_name`'s return as `: i64` (previously untyped); the
+  cyrius 5.10.44 dispatcher then routes `str_from(i64)` to
+  `str_from_int`, which formats the cstr pointer as a decimal
+  string ("5160205" instead of "ML-DSA-65"). `str_new` has no
+  int-typed overload, so the call wraps the cstr as a Str
+  without dispatching through the int path.
+  - `src/signing.cyr` (single-alg `sign_entry` + hybrid
+    `_sign_entry_hybrid`)
+  - `src/proof.cyr` (sth construction in `proof_build`)
+- **`ct_eq` → `ct_eq_bytes_lens`** rename. Sigil retired its
+  hand-rolled `ct_eq` at 3.0.2 in favour of the stdlib
+  `ct_eq_bytes_lens` (dual-length variant). Libro was still on
+  3.0.1 so the old name resolved; the bump to 3.1.1 left
+  `ct_eq` undefined. Migrated:
+  - `src/hasher.cyr` (`constant_time_eq_str` wrapper)
+  - `src/main.cyr` (`test_ct_eq` battery, 4 calls)
+
+### Verified
+
+- Build clean (`CYRIUS_DCE=1 cyrius build src/main.cyr build/libro`).
+- Test suite: **502 passed, 0 failed** (unchanged total).
+- LIBRO_TPM build: **514 passed, 0 failed** (unchanged total).
+- All three bench binaries (`libro_core`, `libro_io`,
+  `libro_proof`) compile clean with DCE.
+- Fuzz harness (`fuzz/fuzz_libro.fcyr`) — all 12 targets
+  pass, no crashes.
+- `cyrfmt --check src/*.cyr` clean; `cyrius lint` clean except
+  for the one pre-existing >120-char line literal in main.cyr.
+- `dist/libro.cyr` regenerated via `cyrius distlib` — 5549
+  lines, header reports `Version: 2.6.3`.
+
 ## [2.6.2] - 2026-05-10
 
 **Raw-offset CI guard extended to the remaining derived structs.**
