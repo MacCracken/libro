@@ -8,6 +8,19 @@ Forward work only. Release detail lives in
 
 Open items, sequenced fastest-to-land first, reactive items last.
 
+- [ ] **P2 — Migrate `constant_time_eq_str` to `ct_eq_bytes_lens`.**
+  `src/hasher.cyr:51` (and the regenerated `dist/libro.cyr:116`)
+  still calls bare `ct_eq(a, alen, b, blen)`. Sigil 3.0.2 retired
+  the name in favour of `ct_eq_bytes_lens` (same signature, same
+  branchless constant-time semantics — pure rename); sigil 3.0.1's
+  dist already ships under a banner where the alias is gone, so
+  consumers pinned to libro 2.5+ link against a missing symbol
+  and have to ship a one-line shim (see argonaut 1.5.1's
+  `src/compat.cyr` + `[deps.argonaut_compat]` self-reference).
+  Self-contained fix: rename the call site + `test_ct_eq`
+  helpers in `src/main.cyr:159–163`; regenerate dist; bump
+  sigil floor pin in `cyrius.cyml` to whatever first ships the
+  rename. No upstream blocker.
 - [ ] **RFC 6901 JSON Pointer queries** (`/entries/0/hash` etc.).
   Cyrius 5.7.40+ ships the parser. Adds a public API surface that
   feeds into `QueryFilter` for CLI tools or config-driven retention

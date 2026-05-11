@@ -1,0 +1,2 @@
+error:<source>:2: expected '{', got '('
+  at fail: fn=1/4096 ident=14/131072 var=0/8192 fixup=0/32768
