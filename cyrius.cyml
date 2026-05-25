@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.10.44"
+cyrius = "6.0.1"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -87,12 +87,12 @@ stdlib = [
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "3.1.1"
+tag = "3.4.3"
 modules = ["dist/sigil.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.9.4"
+tag = "1.9.5"
 modules = ["dist/patra.cyr"]
 
 # Agnosys provides TPM primitives + Linux syscall wrappers libro
@@ -106,5 +106,5 @@ modules = ["dist/patra.cyr"]
 # transitive floor.
 [deps.agnosys]
 git = "https://github.com/MacCracken/agnosys.git"
-tag = "1.2.6"
+tag = "1.2.7"
 modules = ["dist/agnosys.cyr"]

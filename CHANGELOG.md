@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4] - 2026-05-25
+
+**Toolchain + dependency refresh.** Cyrius pin advances across
+the 5 → 6 major boundary (5.10.44 → 6.0.1); sigil 3.1.1 → 3.4.3,
+patra 1.9.4 → 1.9.5, agnosys 1.2.6 → 1.2.7. Unlike 2.6.3, the
+major compiler bump required **no source migrations** — every
+`src/*.cyr` is byte-for-byte unchanged. libro compiles clean
+(default + `-D LIBRO_TPM`), lints and formats clean, and the
+full suite passes (502 default / 514 TPM).
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.0.1"` (was
+  5.10.44) — first crossing of the 5 → 6 major line. CI extracts
+  this via the existing grep/sed line; no YAML change required.
+- **Sigil pin**: `[deps.sigil]` `tag = "3.4.3"` (was 3.1.1).
+- **Patra pin**: `[deps.patra]` `tag = "1.9.5"` (was 1.9.4).
+- **Agnosys pin**: `[deps.agnosys]` `tag = "1.2.7"` (was 1.2.6).
+  Patch bump within the existing direct-pin policy (libro's only
+  agnosys surface is tpm_seal/tpm_unseal + syscall wrappers,
+  unchanged across the line).
+- **`cyrius.lock`** regenerated against the new tags; the
+  toolchain-bundled stdlib snapshot (incl. sakshi 2.2.5) advanced
+  with the 6.0.1 pin, reflected in the recorded hashes.
+- **`dist/libro.cyr`** rebuilt with `cyrius distlib`; the only
+  delta is the version header (source content unchanged), so the
+  committed bundle stays current with the tag.
+
 ## [2.6.3] - 2026-05-11
 
 **Toolchain + dependency refresh.** Cyrius pin advances from
