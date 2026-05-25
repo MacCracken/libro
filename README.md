@@ -13,7 +13,7 @@ Libro provides an append-only, SHA-256 hash-linked audit chain where every event
 libro (Cyrius library, single-file compilation)
   ├── 21 library modules under src/ + 1 opt-in (src/tpm_anchor.cyr, -D LIBRO_TPM)
   ├── SHA-256 (FIPS 180-4) + Ed25519 (RFC 8032) via sigil
-  ├── SQL persistence via patra (v1.1.1 bundled)
+  ├── SQL persistence via patra (v1.9.5 bundled)
   ├── Nested scalar-aware canonical JSON hashing
   ├── Distribution artifact: committed dist/libro.cyr per DEPS-PATTERN.md
   └── CI-enforced gates: manifest completeness, raw-offset guards,
@@ -71,7 +71,7 @@ cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests (435 tests default / 443 with -D LIBRO_TPM, 0 failures expected)
+# Run tests (502 tests default / 514 with -D LIBRO_TPM, 0 failures expected)
 ./build/libro
 
 # Run benchmarks
@@ -79,7 +79,7 @@ CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./
 CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
 CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
 
-# Run fuzz (11 targets, no-crash assertions, ~10 s)
+# Run fuzz (12 targets, no-crash assertions, ~10 s)
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 30 ./build/fuzz_libro
 ```
 
@@ -145,13 +145,13 @@ assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 ## Project structure
 
 ```
-src/main.cyr             Entry point + 435/443 inline tests (default / LIBRO_TPM)
+src/main.cyr             Entry point + 502/514 inline tests (default / LIBRO_TPM)
 src/*.cyr                21 library modules + src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM)
 benches/libro_core.bcyr  18 core benchmarks (sha256/chain/merkle/sign/PQ/hybrid)
 benches/libro_io.bcyr    12 i/o benchmarks (export/review/anchor/stream/filestore/patra perf)
 benches/libro_proof.bcyr  2 proof-build benchmarks (unsigned + signed)
 benches/bench_history.cyr Opt-in CSV history emitter (LIBRO_BENCH_HISTORY env var)
-fuzz/fuzz_libro.fcyr    1 harness, 11 fuzz targets
+fuzz/fuzz_libro.fcyr    1 harness, 12 fuzz targets
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib, committed)
 lib/                    Vendored stdlib copies + sigil + patra bundles
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml version field

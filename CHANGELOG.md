@@ -33,6 +33,21 @@ full suite passes (502 default / 514 TPM).
   delta is the version header (source content unchanged), so the
   committed bundle stays current with the tag.
 
+### Docs
+
+- **Root-doc refresh** to current state: `README.md` (502/514
+  tests, 12 fuzz targets, bundled patra v1.9.5), `CLAUDE.md`
+  (version 2.6.4, toolchain pin 6.0.1, test/bench/binary/dist
+  counts, patra version), and the `docs/doc-health.md` ledger.
+  The 2.6.3 and 2.6.4 dep bumps were never propagated to the
+  secondary docs, so `dependency-watch`, `testing`, `threat-model`,
+  `standards-mapping`, and `integration` are flagged stale in the
+  ledger for a follow-up pass.
+- **Binary-size metric note**: under cyrius 6.0.x, `CYRIUS_DCE=1`
+  NOPs dead code (~630 KB NOPed) but no longer strips it, so the
+  DCE and non-DCE binaries are byte-identical (~1.1 MB). The
+  prior ~456 KB figure reflected 5.x DCE, which stripped.
+
 ## [2.6.3] - 2026-05-11
 
 **Toolchain + dependency refresh.** Cyrius pin advances from
