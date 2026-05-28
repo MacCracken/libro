@@ -49,17 +49,16 @@ jobs:
         run: cyrius deps
 
       - name: Verify dep hashes
-        # cyrius 6.0.1's `cyrius deps` clobbers the working-tree
-        # cyrius.lock to "0 deps locked" (empty) on every run, so
-        # `cyrius deps --verify` reads the empty file and fails. Verify
-        # the resolved lib/ bytes against the COMMITTED lock from git
-        # instead. Mirrors ci.yml — see the long note there.
+        # Verify the resolved lib/ bytes against the lock COMMITTED in
+        # git (not the working-tree lock) via sha256sum. Deliberately
+        # stricter than `cyrius deps --verify` after a resolve — see the
+        # long note in ci.yml. An empty/missing committed lock is a hard
+        # failure.
         run: |
-          if ! git show HEAD:cyrius.lock > /tmp/committed.lock 2>/dev/null \
-             || [ ! -s /tmp/committed.lock ]; then
-            echo "::warning::committed cyrius.lock missing or empty — skipping hash verification"
-            exit 0
-          fi
+          git show HEAD:cyrius.lock > /tmp/committed.lock 2>/dev/null || {
+            echo "FAIL: committed cyrius.lock not found at HEAD"; exit 1; }
+          [ -s /tmp/committed.lock ] || {
+            echo "FAIL: committed cyrius.lock is empty — regenerate with 'cyrius deps' and commit"; exit 1; }
           sha256sum -c /tmp/committed.lock
 
       - name: Build (DCE)
@@ -92,10 +91,12 @@ jobs:
       - name: Archive
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # cyrius deps/build/distlib above all clobber the working-tree
-          # cyrius.lock to 0 bytes under 6.0.1. Restore the committed
-          # lock so the shipped asset (and its SHA256SUMS entry) is the
-          # real pinned lock, not an empty file.
+          # Ship exactly the lock committed at the tag. Under cyrius
+          # 6.0.14 the working-tree lock stays byte-identical to the
+          # committed one across deps/build/distlib, so this is a
+          # provenance guarantee (effectively a no-op restore) rather
+          # than the repair of the 6.0.1 empty-lock clobber it originally
+          # worked around.
           git checkout HEAD -- cyrius.lock
           git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
           cp dist/libro.cyr "libro-${TAG}.cyr"

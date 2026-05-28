@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — libro
 
-> **Last refresh**: 2026-05-25 (2.6.4 toolchain bump — root docs README / CLAUDE / CHANGELOG / VERSION refreshed to cyrius 6.0.1, patra 1.9.5, 502/514 tests, 32 benches, 12 fuzz targets, ~1.1 MB binary. The 2.6.3 **and** 2.6.4 dep-pin bumps were never propagated to the secondary docs, so `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` are flagged 🟡 stale below.) Prior: 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup + 2.6.2 wrap-up). | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-28 (2.6.5 toolchain bump — root docs README / CLAUDE / CHANGELOG / VERSION refreshed to cyrius 6.0.14, sigil 3.5.7, patra 1.10.3, agnosys 1.2.8; 502/514 tests unchanged. Zero source migrations; the `-D LIBRO_TPM` build that broke under 6.0.1 builds clean again under 6.0.14. The 2.6.3 / 2.6.4 / 2.6.5 dep-pin bumps still haven't been propagated to the secondary docs, so `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` remain flagged 🟡 stale below.) Prior: 2026-05-25 (2.6.4 toolchain bump to 6.0.1); 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup + 2.6.2 wrap-up). | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`libro`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo dep pin drift lives in [`development/dependency-watch.md`](development/dependency-watch.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Libro is a cryptographic audit-chain library every Cyrius audit-event consumer (daimon, aegis, stiva, sigil, ark) depends on — stale API / trust-model / verification docs propagate downstream, so doc currency carries weight. The doc surface is moderate (~25 files) and most are load-bearing.
@@ -22,7 +22,7 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 | Bucket | Count | What it means |
 |---|---|---|
 | ✅ **Fresh** | 8 | CHANGELOG, README, CLAUDE, VERSION, doc-health (refreshed in the 2.6.4 pass); roadmap, architecture/overview, quickstart, tpm-anchors (no current-pin claims, still accurate). |
-| 🟡 **Stale — refresh in place** | 5 | `dependency-watch`, `testing`, `threat-model`, `standards-mapping`, `integration` — all cite pre-2.6.3 pins (cyrius 5.10.34 / sigil 3.0.1 / patra 1.9.3 / agnosys 1.0.4) and, for `testing`, pre-2.6.4 assertion counts (443/451). Need a pass to cyrius 6.0.1 / sigil 3.4.3 / patra 1.9.5 / agnosys 1.2.7 and 502/514 tests. The 2.6.3 dep bump never propagated here; 2.6.4 widened the gap. |
+| 🟡 **Stale — refresh in place** | 5 | `dependency-watch`, `testing`, `threat-model`, `standards-mapping`, `integration` — all cite pre-2.6.3 pins (cyrius 5.10.34 / sigil 3.0.1 / patra 1.9.3 / agnosys 1.0.4) and, for `testing`, pre-2.6.4 assertion counts (443/451). Need a pass to cyrius 6.0.14 / sigil 3.5.7 / patra 1.10.3 / agnosys 1.2.8 and 502/514 tests. The 2.6.3 dep bump never propagated here; 2.6.4 and 2.6.5 widened the gap. |
 | 🟠 **Read-through outstanding** | 0 | All cleared in the non-release docs pass. |
 | 🔵 **No version-tied claims today** | 4 | `SECURITY.md`, `CODE_OF_CONDUCT.md`, `LICENSE`, `CONTRIBUTING.md`, `DEPS-PATTERN.md`. None reference current version numbers or moving APIs. |
 | 📦 **Date-stamped historical record** | 2 | `docs/audit/2026-04-19-audit.md` (1.x P(-1) audit), `docs/audit/2026-04-19-audit-2.0.md` (2.0.0 audit). Point-in-time reports; the date is in the filename. |
@@ -55,9 +55,17 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 - ✅ `docs/doc-health.md` — this pass: header + bucket table + Tier 1 rows refreshed; the 5 secondary docs that never absorbed the 2.6.3/2.6.4 dep bumps flagged 🟡 stale.
 - ⚠️ **Known structural drift left untouched** (pre-existing, not version-tied): CLAUDE.md "Project Structure" still says "20 files" / "263 inline tests + 20 module includes" and omits `chain_io` from its module list — actual is 21 library modules + `tpm_anchor` (22 includes) and 172 `test_` fns. Not corrected here to keep the pass scoped to the toolchain bump.
 
-**Outstanding after 2.6.4 (next docs pass):**
+**Doc cleanup completed in the 2.6.5 release pass (2026-05-28):**
 
-- 🟡 `docs/development/dependency-watch.md` — external-dep table still shows the **pre-2.6.3** pins; this is the canonical pin-tracking doc, so it carries top priority.
+- ✅ `README.md` — bundled patra `v1.9.5` → **v1.10.3**. Test/fuzz/bench counts unchanged (no source changes).
+- ✅ `CLAUDE.md` — Project Identity version 2.6.4 → **2.6.5 (2026-05-28)**, language pin 6.0.1 → **6.0.14**; Dependencies + Project Structure bundled patra `v1.9.5` → **v1.10.3**; CI/Release toolchain pin `6.0.1` → **6.0.14**.
+- ✅ `CHANGELOG.md` — `[2.6.5]` entry (cyrius 6.0.1 → 6.0.14 within the 6.0 line, zero source migrations; sigil 3.4.3 → 3.5.7, patra 1.9.5 → 1.10.3, agnosys 1.2.7 → 1.2.8; LIBRO_TPM build recovered; lock + dist regenerated).
+- ✅ `docs/doc-health.md` — this pass: header + bucket table + Tier 1 rows refreshed; stale-doc targets re-pinned to the 6.0.14 stack.
+- ⚠️ **Known structural drift left untouched** (pre-existing, not version-tied): CLAUDE.md "Project Structure" still says "20 files" / "263 inline tests + 20 module includes" and omits `chain_io` from its module list. Carried over from the 2.6.4 note; left scoped out of the toolchain bump.
+
+**Outstanding after 2.6.5 (next docs pass):**
+
+- 🟡 `docs/development/dependency-watch.md` — external-dep table still shows the **pre-2.6.3** pins; this is the canonical pin-tracking doc, so it carries top priority. Target: cyrius 6.0.14 / sigil 3.5.7 / patra 1.10.3 / agnosys 1.2.8.
 - 🟡 `docs/guides/testing.md` — assertion counts (350/443/451) and the cyrius 5.10.34 reference are stale.
 - 🟡 `docs/development/threat-model.md`, `docs/compliance/standards-mapping.md` — supply-chain blocks cite `cyrius = "5.10.34"`.
 - 🟡 `docs/guides/integration.md` — Post-Quantum / Hybrid / PatraStore sections pin sigil 3.0.1 / patra 1.9.3.
@@ -68,14 +76,14 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-05-25 | ✅ Fresh | 2.6.4 pass: test counts → 502/514, fuzz → 12 targets, bundled patra → v1.9.5. Architecture diagram (21 + 1 opt-in), bench counts (18/12/2), quality-gates list all still current. |
-| `CHANGELOG.md` | 2026-05-25 | ✅ Fresh | Source of truth for shipped work. Entries through 2.6.4 (cyrius 6.0.1 toolchain bump, zero source migrations). |
-| `CLAUDE.md` | 2026-05-25 | ✅ Fresh | Durable rules. Project Identity + Current State + Dependencies + CI/Release toolchain pin refreshed in 2.6.4 pass. Pre-existing structural drift in "Project Structure" (20 vs 21 modules, "263 inline tests") left untouched — see the 2.6.4 cleanup note above. |
+| `README.md` | 2026-05-28 | ✅ Fresh | 2.6.5 pass: bundled patra → v1.10.3. Test counts (502/514), fuzz (12 targets), architecture diagram (21 + 1 opt-in), bench counts (18/12/2), quality-gates list all still current. |
+| `CHANGELOG.md` | 2026-05-28 | ✅ Fresh | Source of truth for shipped work. Entries through 2.6.5 (cyrius 6.0.14 toolchain bump, zero source migrations). |
+| `CLAUDE.md` | 2026-05-28 | ✅ Fresh | Durable rules. Project Identity + Dependencies + CI/Release toolchain pin refreshed in 2.6.5 pass (6.0.14, patra v1.10.3). Pre-existing structural drift in "Project Structure" (20 vs 21 modules, "263 inline tests") left untouched — see the 2.6.5 cleanup note above. |
 | `CONTRIBUTING.md` | 2026-04-19 | 🔵 No version-tied claims | Process doc. |
 | `SECURITY.md` | 2026-04-19 | 🔵 No version-tied claims | Reporting policy + scope. |
 | `CODE_OF_CONDUCT.md` | 2026-03-21 | 🔵 No version-tied claims | Standard. |
 | `DEPS-PATTERN.md` | 2026-04-19 | 🔵 No version-tied claims | The `dist/libro.cyr` distribution contract. Patra is the reference. |
-| `VERSION` | 2026-05-25 | ✅ Fresh | `2.6.4` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-05-28 | ✅ Fresh | `2.6.5` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 No version-tied claims | GPL-3.0-only. |
 
 ---
@@ -85,8 +93,8 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `roadmap.md` | 2026-05-10 | ✅ Fresh | Forward-facing only as of 2.6.2: open 2.6.x items (RFC 6901 pointers / proof_to_json bench re-investigation / JSON streaming), ecosystem-blocked threads, items tracked in other repos, and ideas. Release history was moved out — CHANGELOG owns release detail. |
-| `threat-model.md` | 2026-05-10 | 🟡 Stale | Threat content (T2/T6/T13/T14, residual-risk table) still holds, but the supply-chain block pins `cyrius = "5.10.34"`. Refresh to 6.0.1. |
-| `dependency-watch.md` | 2026-05-10 | 🟡 Stale | **Top priority** — this is the canonical pin-tracking doc and its external-dep table still shows the pre-2.6.3 pins (cyrius 5.10.34 / sigil 3.0.1 / patra 1.9.3 / agnosys 1.0.4). Needs cyrius 6.0.1 / sigil 3.4.3 / patra 1.9.5 / agnosys 1.2.7, plus a note on the 5 → 6 major-line crossing. |
+| `threat-model.md` | 2026-05-10 | 🟡 Stale | Threat content (T2/T6/T13/T14, residual-risk table) still holds, but the supply-chain block pins `cyrius = "5.10.34"`. Refresh to 6.0.14. |
+| `dependency-watch.md` | 2026-05-10 | 🟡 Stale | **Top priority** — this is the canonical pin-tracking doc and its external-dep table still shows the pre-2.6.3 pins (cyrius 5.10.34 / sigil 3.0.1 / patra 1.9.3 / agnosys 1.0.4). Needs cyrius 6.0.14 / sigil 3.5.7 / patra 1.10.3 / agnosys 1.2.8, plus a note on the 5 → 6 major-line crossing. |
 
 ---
 
@@ -131,7 +139,7 @@ Date-stamped point-in-time reports. Each P(-1) hardening pass per CLAUDE.md cade
 |---|---|---|---|
 | `quickstart.md` | 2026-05-10 | ✅ Fresh | Refreshed in post-2.6.0 docs pass: "21 modules" line now notes the 2.5.0 opt-in `src/tpm_anchor.cyr` (build with `-D LIBRO_TPM`). |
 | `testing.md` | 2026-05-10 | 🟡 Stale | Assertion counts (350 / 443 default / 451 LIBRO_TPM) are pre-2.6.4 — actual is **502 / 514**. Also references cyrius 5.10.34. Bench/fuzz/category structure still accurate. |
-| `integration.md` | 2026-05-10 | 🟡 Stale | Consumer patterns still valid, but the Post-Quantum / Hybrid / PatraStore sections pin sigil 3.0.1 / patra 1.9.3. Refresh to sigil 3.4.3 / patra 1.9.5. |
+| `integration.md` | 2026-05-10 | 🟡 Stale | Consumer patterns still valid, but the Post-Quantum / Hybrid / PatraStore sections pin sigil 3.0.1 / patra 1.9.3. Refresh to sigil 3.5.7 / patra 1.10.3. |
 | `tpm-anchors.md` | 2026-05-10 | ✅ Fresh | New in 2.5.0. TPM trust model + build flow + PCR-policy alternatives + persistence semantics. |
 
 ---
@@ -140,7 +148,7 @@ Date-stamped point-in-time reports. Each P(-1) hardening pass per CLAUDE.md cade
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `standards-mapping.md` | 2026-05-10 | 🟡 Stale | Coverage matrix + crypto-guarantees + algorithms tables still hold, but the supply-chain block pins `cyrius = "5.10.34"`. Refresh to 6.0.1. |
+| `standards-mapping.md` | 2026-05-10 | 🟡 Stale | Coverage matrix + crypto-guarantees + algorithms tables still hold, but the supply-chain block pins `cyrius = "5.10.34"`. Refresh to 6.0.14. |
 
 ---
 

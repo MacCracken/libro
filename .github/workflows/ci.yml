@@ -44,27 +44,28 @@ jobs:
         run: cyrius deps
 
       - name: Verify dep hashes
-        # cyrius 6.0.1's `cyrius deps` rewrites the working-tree
-        # cyrius.lock to "0 deps locked" (a 0-byte file) on EVERY run —
-        # even a clean fresh-runner resolve that exits 0 and populates
-        # lib/ correctly. The lock writer is broken, not the resolver.
-        # So `cyrius deps --verify` reads the just-clobbered lock and
-        # dies with "no cyrius.lock found", which is what turned this
-        # job red right after the 5.10.x → 6.0.1 bump.
+        # The previous step resolved lib/ from the cyrius.cyml pins.
+        # Verify those resolved bytes against the lock COMMITTED in git
+        # (pulled via `git show`, not the working tree) with plain
+        # sha256sum. This is deliberately stricter than running
+        # `cyrius deps --verify` here: because "Resolve dependencies"
+        # already rewrote the working-tree lock, a native --verify would
+        # only re-check that freshly-written file (a trivial pass),
+        # whereas comparing the resolved bytes against the git-committed
+        # lock also catches a tag bump in cyrius.cyml whose regenerated
+        # lock was never committed.
         #
-        # patra sidesteps this by never running `cyrius deps` in CI, but
-        # libro can't: it pins sigil/patra/agnosys tags NEWER than the
-        # toolchain snapshot, so it must resolve. Instead we verify the
-        # resolved lib/ bytes against the COMMITTED lock pulled straight
-        # from git (immune to the working-tree clobber) using plain
-        # sha256sum — no dependence on cyrius's broken lock machinery,
-        # and stricter than patra, which does no hash check at all.
+        # (Under cyrius 6.0.14 `cyrius deps` writes a stable, deterministic
+        # 35-entry lock. The 6.0.1-era empty-lock clobber — "0 deps locked"
+        # on every run — that originally forced this coreutils path is
+        # fixed, but verifying against the committed lock stays the
+        # stricter check, so we keep it. An empty/missing committed lock
+        # is now a hard failure, not a skip.)
         run: |
-          if ! git show HEAD:cyrius.lock > /tmp/committed.lock 2>/dev/null \
-             || [ ! -s /tmp/committed.lock ]; then
-            echo "::warning::committed cyrius.lock missing or empty — skipping hash verification"
-            exit 0
-          fi
+          git show HEAD:cyrius.lock > /tmp/committed.lock 2>/dev/null || {
+            echo "FAIL: committed cyrius.lock not found at HEAD"; exit 1; }
+          [ -s /tmp/committed.lock ] || {
+            echo "FAIL: committed cyrius.lock is empty — regenerate with 'cyrius deps' and commit"; exit 1; }
           sha256sum -c /tmp/committed.lock
 
       - name: Manifest completeness ([lib] modules ⊇ main.cyr includes)

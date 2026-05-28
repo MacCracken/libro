@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5] - 2026-05-28
+
+**Toolchain + dependency refresh.** Cyrius pin advances within the
+6.0 line (6.0.1 → 6.0.14); sigil 3.4.3 → 3.5.7, patra 1.9.5 →
+1.10.3, agnosys 1.2.7 → 1.2.8. As with 2.6.4, the bump required
+**no source migrations** — every `src/*.cyr` is byte-for-byte
+unchanged. libro compiles clean (default + `-D LIBRO_TPM`), lints
+and formats clean, and the full suite passes (502 default / 514
+TPM). The `-D LIBRO_TPM` build, which failed to compile under the
+6.0.1 syscalls refactor, builds and passes again under 6.0.14 with
+agnosys 1.2.8 — no libro-side change was needed.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.0.14"` (was 6.0.1).
+  CI extracts this via the existing grep/sed line; no YAML change
+  required.
+- **Sigil pin**: `[deps.sigil]` `tag = "3.5.7"` (was 3.4.3).
+- **Patra pin**: `[deps.patra]` `tag = "1.10.3"` (was 1.9.5) —
+  first crossing onto the 1.10 line. libro's patra surface
+  (SQL-backed store in `src/patra_store.cyr`) compiles and passes
+  unchanged.
+- **Agnosys pin**: `[deps.agnosys]` `tag = "1.2.8"` (was 1.2.7).
+  Patch bump within the existing direct-pin policy (libro's only
+  agnosys surface is tpm_seal/tpm_unseal + syscall wrappers,
+  unchanged across the line).
+- **`cyrius.lock`** regenerated against the new tags — `cyrius
+  deps` under 6.0.14 produces a full 35-entry lock (the 6.0.1-era
+  empty-lock clobber is no longer observed).
+- **`dist/libro.cyr`** rebuilt with `cyrius distlib`; deltas are
+  the version header (2.6.4 → 2.6.5) plus cosmetic blank-line
+  collapsing from the 6.0.14 distlib — source content unchanged.
+
 ## [2.6.4] - 2026-05-25
 
 **Toolchain + dependency refresh.** Cyrius pin advances across
