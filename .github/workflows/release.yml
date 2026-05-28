@@ -46,20 +46,10 @@ jobs:
         run: cyrius --version
 
       - name: Resolve dependencies
+        # No lock verification, matching patra/sigil and ci.yml: the
+        # cyrius.cyml [deps.*] tag pins are the contract; cyrius.lock is
+        # gitignored and not shipped.
         run: cyrius deps
-
-      - name: Verify dep hashes
-        # Verify the resolved lib/ bytes against the lock COMMITTED in
-        # git (not the working-tree lock) via sha256sum. Deliberately
-        # stricter than `cyrius deps --verify` after a resolve — see the
-        # long note in ci.yml. An empty/missing committed lock is a hard
-        # failure.
-        run: |
-          git show HEAD:cyrius.lock > /tmp/committed.lock 2>/dev/null || {
-            echo "FAIL: committed cyrius.lock not found at HEAD"; exit 1; }
-          [ -s /tmp/committed.lock ] || {
-            echo "FAIL: committed cyrius.lock is empty — regenerate with 'cyrius deps' and commit"; exit 1; }
-          sha256sum -c /tmp/committed.lock
 
       - name: Build (DCE)
         run: |
@@ -91,16 +81,12 @@ jobs:
       - name: Archive
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # Ship exactly the lock committed at the tag. Under cyrius
-          # 6.0.14 the working-tree lock stays byte-identical to the
-          # committed one across deps/build/distlib, so this is a
-          # provenance guarantee (effectively a no-op restore) rather
-          # than the repair of the 6.0.1 empty-lock clobber it originally
-          # worked around.
-          git checkout HEAD -- cyrius.lock
+          # cyrius.lock is gitignored and not a distribution artifact
+          # (matches patra/sigil) — it is not archived or shipped. The
+          # consumer contract is dist/libro.cyr + the cyrius.cyml pins.
           git archive --format=tar.gz --prefix="libro-${TAG}/" -o "libro-${TAG}-src.tar.gz" HEAD
           cp dist/libro.cyr "libro-${TAG}.cyr"
-          sha256sum libro-*.tar.gz libro-*.cyr build/libro cyrius.lock > SHA256SUMS
+          sha256sum libro-*.tar.gz libro-*.cyr build/libro > SHA256SUMS
 
       - name: Extract changelog
         run: |
@@ -115,5 +101,4 @@ jobs:
             libro-*.tar.gz
             libro-*.cyr
             build/libro
-            cyrius.lock
             SHA256SUMS

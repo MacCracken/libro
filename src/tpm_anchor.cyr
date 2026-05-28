@@ -38,9 +38,19 @@ enum TpmAnchorVerify {
 }
 
 # ================================================================
-# TpmAnchor — derived accessors:
+# TpmAnchor — accessors:
 #   tpm_anchor_inner, tpm_anchor_sealed_ctx, tpm_anchor_pcr_indices,
 #   tpm_anchor_output_dir (+ _set_ setters)
+#
+# Hand-written, NOT `#derive(accessors)`. The default build already
+# carries 30 `#derive(accessors)` structs; under cyrius 6.0.14 making
+# tpm_anchor the 31st tips a compiler limit in the derive path and the
+# `-D LIBRO_TPM` build fails with a bare `compile … FAIL` (no
+# diagnostic). Bisected 2026-05-28: a single 1-field `#derive` struct
+# included after the 20 libro modules reproduces it; the same struct
+# with hand-written load64/store64 accessors builds. Field offsets here
+# mirror tpm_anchor_new's store64 layout below; `ta` is the canonical
+# tpm_anchor param (CI raw-offset allowlist + specific-struct guard).
 #
 # Fields:
 #   inner          — pointer to libro's anchor struct (the
@@ -56,8 +66,17 @@ enum TpmAnchorVerify {
 #                    sealed.pub / sealed.priv. Caller controls
 #                    persistence and cleanup.
 # ================================================================
-#derive(accessors)
 struct tpm_anchor { inner; sealed_ctx; pcr_indices; output_dir; }
+
+fn tpm_anchor_inner(ta)        { return load64(ta); }
+fn tpm_anchor_sealed_ctx(ta)   { return load64(ta + 8); }
+fn tpm_anchor_pcr_indices(ta)  { return load64(ta + 16); }
+fn tpm_anchor_output_dir(ta)   { return load64(ta + 24); }
+
+fn tpm_anchor_set_inner(ta, v)        { store64(ta, v); }
+fn tpm_anchor_set_sealed_ctx(ta, v)   { store64(ta + 8, v); }
+fn tpm_anchor_set_pcr_indices(ta, v)  { store64(ta + 16, v); }
+fn tpm_anchor_set_output_dir(ta, v)   { store64(ta + 24, v); }
 
 # ================================================================
 # Construction — seal the inner anchor's self-hash.

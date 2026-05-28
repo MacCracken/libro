@@ -172,6 +172,7 @@ Quirks still worth knowing:
 1. **Local variable clobbering** — still possible across deeply nested call chains. Not a guaranteed bug, but if a local's value looks wrong after a function call, try promoting it to a global as a workaround. Several `_ps_*` globals in `src/patra_store.cyr` exist for this reason.
 2. **Freelist vs bump allocator discipline** — `fl_alloc` + `fl_free` for individually-freed structs; `alloc()` for long-lived collections. Mixing them is correct but easy to reason about wrong.
 3. **Single-pass compiler** — forward references across function boundaries work via fixups (cap 16384 in 5.4.2, up from 8192), but include order still matters for type/struct visibility.
+4. **256-entry type/struct table cap (6.0.x)** — the compilation unit caps at 256 type definitions (structs + enums + type aliases, across all includes). The 257th fails with a bare `compile … FAIL`, no diagnostic, exit 1. libro's `-D LIBRO_TPM` build sits right at the boundary; `tpm_anchor` uses **hand-written** `load64`/`store64` accessors instead of `#derive(accessors)` to stay under (the derive's type-table entries tipped it over — see CHANGELOG [2.6.5]). If a future struct/enum addition triggers a bare `FAIL`, this cap is the first suspect. Filed upstream: cyrius `docs/development/issues/2026-05-28-type-table-256-cap-silent-fail.md`.
 
 ### Resolved (stop treating as bugs in 5.4.2)
 

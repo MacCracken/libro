@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — libro
 
-> **Last refresh**: 2026-05-28 (2.6.5 toolchain bump — root docs README / CLAUDE / CHANGELOG / VERSION refreshed to cyrius 6.0.14, sigil 3.5.7, patra 1.10.3, agnosys 1.2.8; 502/514 tests unchanged. Zero source migrations; the `-D LIBRO_TPM` build that broke under 6.0.1 builds clean again under 6.0.14. The 2.6.3 / 2.6.4 / 2.6.5 dep-pin bumps still haven't been propagated to the secondary docs, so `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` remain flagged 🟡 stale below.) Prior: 2026-05-25 (2.6.4 toolchain bump to 6.0.1); 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup + 2.6.2 wrap-up). | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-05-28 (2.6.5 toolchain bump — root docs README / CLAUDE / CHANGELOG / VERSION refreshed to cyrius 6.0.14, sigil 3.5.7, patra 1.10.3, agnosys 1.2.8; 502/514 tests. One targeted source change: `src/tpm_anchor.cyr` swapped `#derive(accessors)` for hand-written accessors to dodge cyrius's silent 256-entry type-table cap, which was breaking the `-D LIBRO_TPM` build under 6.0.14 (upstream issue filed). `cyrius.lock` is now gitignored (patra/sigil convention). The 2.6.3 / 2.6.4 / 2.6.5 dep-pin bumps still haven't been propagated to the secondary docs, so `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` remain flagged 🟡 stale below.) Prior: 2026-05-25 (2.6.4 toolchain bump to 6.0.1); 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup + 2.6.2 wrap-up). | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`libro`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo dep pin drift lives in [`development/dependency-watch.md`](development/dependency-watch.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Libro is a cryptographic audit-chain library every Cyrius audit-event consumer (daimon, aegis, stiva, sigil, ark) depends on — stale API / trust-model / verification docs propagate downstream, so doc currency carries weight. The doc surface is moderate (~25 files) and most are load-bearing.
@@ -57,9 +57,12 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 
 **Doc cleanup completed in the 2.6.5 release pass (2026-05-28):**
 
-- ✅ `README.md` — bundled patra `v1.9.5` → **v1.10.3**. Test/fuzz/bench counts unchanged (no source changes).
-- ✅ `CLAUDE.md` — Project Identity version 2.6.4 → **2.6.5 (2026-05-28)**, language pin 6.0.1 → **6.0.14**; Dependencies + Project Structure bundled patra `v1.9.5` → **v1.10.3**; CI/Release toolchain pin `6.0.1` → **6.0.14**.
-- ✅ `CHANGELOG.md` — `[2.6.5]` entry (cyrius 6.0.1 → 6.0.14 within the 6.0 line, zero source migrations; sigil 3.4.3 → 3.5.7, patra 1.9.5 → 1.10.3, agnosys 1.2.7 → 1.2.8; LIBRO_TPM build recovered; lock + dist regenerated).
+- ✅ `README.md` — bundled patra `v1.9.5` → **v1.10.3**. Test/fuzz/bench counts unchanged (502/514).
+- ✅ `CLAUDE.md` — Project Identity version 2.6.4 → **2.6.5 (2026-05-28)**, language pin 6.0.1 → **6.0.14**; Dependencies + Project Structure bundled patra `v1.9.5` → **v1.10.3**; CI/Release toolchain pin `6.0.1` → **6.0.14**; added Known-Quirk #4 (256-entry type-table cap).
+- ✅ `CHANGELOG.md` — `[2.6.5]` entry: cyrius 6.0.1 → 6.0.14; sigil 3.4.3 → 3.5.7, patra 1.9.5 → 1.10.3, agnosys 1.2.7 → 1.2.8. **Fixed**: `-D LIBRO_TPM` build (cyrius 256-type-cap — `tpm_anchor` now uses hand-written accessors). **Changed**: `cyrius.lock` gitignored (not committed/verified/shipped, matching patra/sigil); dist regenerated.
+- ✅ `src/tpm_anchor.cyr` — dropped `#derive(accessors)` for four hand-written `load64`/`store64` getters + setters (`ta`, already allowlisted). The only `src/*.cyr` change in 2.6.5.
+- ✅ `.github/workflows/ci.yml` + `release.yml` — removed the committed-lock `sha256sum -c` verify step and the lock from release assets/SHA256SUMS (matches patra/sigil).
+- ✅ cyrius upstream — filed `docs/development/issues/2026-05-28-type-table-256-cap-silent-fail.md` + repro.
 - ✅ `docs/doc-health.md` — this pass: header + bucket table + Tier 1 rows refreshed; stale-doc targets re-pinned to the 6.0.14 stack.
 - ⚠️ **Known structural drift left untouched** (pre-existing, not version-tied): CLAUDE.md "Project Structure" still says "20 files" / "263 inline tests + 20 module includes" and omits `chain_io` from its module list. Carried over from the 2.6.4 note; left scoped out of the toolchain bump.
 
@@ -77,7 +80,7 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `README.md` | 2026-05-28 | ✅ Fresh | 2.6.5 pass: bundled patra → v1.10.3. Test counts (502/514), fuzz (12 targets), architecture diagram (21 + 1 opt-in), bench counts (18/12/2), quality-gates list all still current. |
-| `CHANGELOG.md` | 2026-05-28 | ✅ Fresh | Source of truth for shipped work. Entries through 2.6.5 (cyrius 6.0.14 toolchain bump, zero source migrations). |
+| `CHANGELOG.md` | 2026-05-28 | ✅ Fresh | Source of truth for shipped work. Entries through 2.6.5 (cyrius 6.0.14 toolchain bump; TPM-build fix via hand-written `tpm_anchor` accessors; `cyrius.lock` gitignored). |
 | `CLAUDE.md` | 2026-05-28 | ✅ Fresh | Durable rules. Project Identity + Dependencies + CI/Release toolchain pin refreshed in 2.6.5 pass (6.0.14, patra v1.10.3). Pre-existing structural drift in "Project Structure" (20 vs 21 modules, "263 inline tests") left untouched — see the 2.6.5 cleanup note above. |
 | `CONTRIBUTING.md` | 2026-04-19 | 🔵 No version-tied claims | Process doc. |
 | `SECURITY.md` | 2026-04-19 | 🔵 No version-tied claims | Reporting policy + scope. |

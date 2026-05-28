@@ -9,13 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Toolchain + dependency refresh.** Cyrius pin advances within the
 6.0 line (6.0.1 → 6.0.14); sigil 3.4.3 → 3.5.7, patra 1.9.5 →
-1.10.3, agnosys 1.2.7 → 1.2.8. As with 2.6.4, the bump required
-**no source migrations** — every `src/*.cyr` is byte-for-byte
-unchanged. libro compiles clean (default + `-D LIBRO_TPM`), lints
-and formats clean, and the full suite passes (502 default / 514
-TPM). The `-D LIBRO_TPM` build, which failed to compile under the
-6.0.1 syscalls refactor, builds and passes again under 6.0.14 with
-agnosys 1.2.8 — no libro-side change was needed.
+1.10.3, agnosys 1.2.7 → 1.2.8. The bump required one targeted source
+change (the `tpm_anchor` accessors, below) to keep the `-D LIBRO_TPM`
+build compiling; every other `src/*.cyr` is byte-for-byte unchanged.
+libro compiles clean (default + `-D LIBRO_TPM`), lints and formats
+clean, and the full suite passes (**502 default / 514 TPM**) against
+the canonical 6.0.14 stdlib.
+
+### Fixed
+
+- **`-D LIBRO_TPM` build no longer fails to compile.** Since the 6.0.1
+  syscalls refactor the opt-in TPM build died with a bare `compile …
+  FAIL` (no diagnostic). Root cause (bisected 2026-05-28): cyrius has a
+  **256-entry type/struct table cap** that fails silently on the 257th
+  definition. libro's TPM build sits right at that boundary; `enum
+  TpmAnchorVerify` + `struct tpm_anchor` + its `#derive(accessors)`
+  tipped it over (the default build stays under). Fix: `tpm_anchor`
+  drops `#derive(accessors)` for four hand-written `load64`/`store64`
+  getters + setters (`ta` was already the allowlisted raw-offset param),
+  which removes the derive's type-table pressure. Filed upstream as
+  cyrius `docs/development/issues/2026-05-28-type-table-256-cap-silent-fail.md`.
 
 ### Changed
 
@@ -31,9 +44,12 @@ agnosys 1.2.8 — no libro-side change was needed.
   Patch bump within the existing direct-pin policy (libro's only
   agnosys surface is tpm_seal/tpm_unseal + syscall wrappers,
   unchanged across the line).
-- **`cyrius.lock`** regenerated against the new tags — `cyrius
-  deps` under 6.0.14 produces a full 35-entry lock (the 6.0.1-era
-  empty-lock clobber is no longer observed).
+- **`cyrius.lock` is no longer committed.** It is now gitignored
+  (alongside `lib/`), matching the patra/sigil convention. Under
+  cyrius 6.0.x the lock records the toolchain's stdlib hashes, which
+  track the exact installed snapshot and drift between dev machines
+  and CI; the cyrius.cyml `[deps.*]` tag pins are the contract. CI
+  and release run `cyrius deps` but no longer verify or ship the lock.
 - **`dist/libro.cyr`** rebuilt with `cyrius distlib`; deltas are
   the version header (2.6.4 → 2.6.5) plus cosmetic blank-line
   collapsing from the 6.0.14 distlib — source content unchanged.

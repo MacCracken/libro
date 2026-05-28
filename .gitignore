@@ -7,6 +7,15 @@
 # version sitting in tree (matches agnosys/patra/yukti convention).
 /lib/
 
+# Resolver lockfile — NOT a distribution contract. The dep pins in
+# cyrius.cyml [deps.*] (git tags) are the source of truth; `cyrius
+# deps` regenerates cyrius.lock locally. Under cyrius 6.0.x the lock
+# records the full resolved set including the toolchain's stdlib,
+# whose hashes track the exact installed snapshot — so a committed
+# lock drifts between dev machines and CI. patra/sigil run `cyrius
+# deps` in CI but never verify or ship the lock; libro matches.
+/cyrius.lock
+
 # Editor / IDE
 *.swp
 *.swo
