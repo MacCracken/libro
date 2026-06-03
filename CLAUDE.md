@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.7.0 (2026-06-03)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.0.51 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.7.1 (2026-06-03)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.0.53 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -148,7 +148,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.0.51"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.0.53"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -164,21 +164,25 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.0.51)
+## Known Cyrius Compiler Quirks (6.0.53)
 
-> ## ⚠️ BIG NOTE — TPM-build cap was MIS-DIAGNOSED (corrected in 2.7.0)
+> ## ⚠️ BIG NOTE — sigil 3.6.0 needs `lib/thread_local.cyr` before it (or SIGILL)
 >
-> The `-D LIBRO_TPM` build is gated by the **per-file `#derive` cap
-> (max 64)** — NOT the 256-entry type/struct *table* cap that **2.6.5
-> wrongly blamed**. cyrius 6.0.51 raised the table cap 256 → 1024, and
-> that change **unblocks nothing here** — the 64-`#derive` cap is the
-> real limit and is unchanged (now diagnosed explicitly:
-> `error: too many #derive structs in one file (max 64)`). **Keep
-> `src/tpm_anchor.cyr`'s hand-written `load64`/`store64` accessors — do
-> NOT "restore" `#derive(accessors)` thinking the cap was raised.**
-> Full detail in quirk #4. Upstream record-correction issue:
-> `cyrius/docs/development/issues/2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md`
-> (repro lives in `/tmp`, never committed to the cyrius repo).
+> Since 2.7.1 (sigil 3.6.0), `lib/thread_local.cyr` **must be included
+> before `lib/sigil.cyr`** (it is, in `src/main.cyr`, right after
+> `thread.cyr`; and listed in `[deps] stdlib`). sigil 3.6.0's
+> `crypto_scratch` banks per-thread crypto working arrays over cyrius
+> 6.0.52 TLS and calls `thread_local_init/get/set`. **Omit it and the
+> binary LINKS FINE but SIGILLs at runtime** (exit 132, zero output) —
+> it does NOT fail to compile, so a build-only check won't catch it.
+> Always run the suite, not just build. If a future stdlib/sigil bump
+> reintroduces a bare SIGILL on startup, a missing TLS-prerequisite
+> include is the first suspect.
+>
+> *(Resolved, for history: the `-D LIBRO_TPM` per-file `#derive` cap —
+> see quirk #4. cyrius 6.0.53 raised it 64 → 512, so `tpm_anchor` is
+> back to `#derive(accessors)` and the 2.6.5 hand-written-accessor
+> workaround is gone as of 2.7.1.)*
 
 Most cc3-era workarounds documented in earlier libro versions are now resolved.
 Quirks still worth knowing:
@@ -186,7 +190,8 @@ Quirks still worth knowing:
 1. **Local variable clobbering** — still possible across deeply nested call chains. Not a guaranteed bug, but if a local's value looks wrong after a function call, try promoting it to a global as a workaround. Several `_ps_*` globals in `src/patra_store.cyr` exist for this reason.
 2. **Freelist vs bump allocator discipline** — `fl_alloc` + `fl_free` for individually-freed structs; `alloc()` for long-lived collections. Mixing them is correct but easy to reason about wrong.
 3. **Single-pass compiler** — forward references across function boundaries work via fixups (cap 16384 in 5.4.2, up from 8192), but include order still matters for type/struct visibility.
-4. **Per-file `#derive` struct cap (max 64)** — a single compilation unit (main.cyr + all its `include`s, flattened) may carry at most 64 `#derive(...)` structs. libro's `-D LIBRO_TPM` build pulls in agnosys (39 `#derive` structs) on top of libro's own ~27; adding `tpm_anchor` as a 65th `#derive` tips it over. That is why `src/tpm_anchor.cyr` uses **hand-written** `load64`/`store64` accessors instead of `#derive(accessors)`. The default (non-TPM) build doesn't include agnosys, so it sits well under the cap. **6.0.51 reports this explicitly** — `error: too many #derive structs in one file (max 64)` — re-verified 2026-06-03 by restoring the derive and rebuilding. Under 6.0.14 the same condition was a *silent* `compile … FAIL` (no diagnostic). **Note:** 2.6.5 mis-attributed this to the separate 256-entry type/struct *table* cap; 6.0.51 raised that table cap to 1024, but it is not the limit that bites the TPM build — the 64-`#derive` cap is, and it is unchanged. If a future `#derive` addition triggers a bare `FAIL` (older toolchain) or the `max 64` diagnostic, this cap is the suspect. Upstream: the corrected record is cyrius `docs/development/issues/2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md`; the original (mis-attributed, now resolved) is `archived/2026-05-28-type-table-256-cap-silent-fail.md`.
+4. **Per-file `#derive` struct cap — now 512 (was 64; raised in 6.0.53).** A single compilation unit (main.cyr + all its `include`s, flattened) may carry at most **512** `#derive(...)` structs. libro is nowhere near that. *History:* through 6.0.51 the cap was **64**, and libro's `-D LIBRO_TPM` build (agnosys's 39 `#derive` + libro's 27 + a derived `tpm_anchor`) tripped it, so 2.6.5 hand-wrote `tpm_anchor`'s accessors. 6.0.53 raised the cap to 512 (verified: 512 builds, 513 fails `error: too many #derive structs in one file (max 512)`), and 2.7.1 restored `#derive(accessors)` on `tpm_anchor` and dropped the workaround. *Footnote:* 2.6.5 originally mis-attributed the 64-cap failure to the separate 256-entry type/struct *table* cap (6.0.51 raised that one to 1024); the `#derive` cap was always the real blocker. Upstream record: cyrius `docs/development/issues/2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md` (resolved by the 64 → 512 raise); original mis-attribution archived at `archived/2026-05-28-type-table-256-cap-silent-fail.md`.
+5. **TLS-backed stdlib modules must precede their consumers.** `lib/thread_local.cyr` (cyrius ≥ 6.0.52) installs per-thread storage via the CPU thread-pointer register; modules that bank state over it (sigil 3.6.0's `crypto_scratch`) must be `include`d *after* it. Wrong order links cleanly but SIGILLs at first use. See the BIG NOTE above.
 
 ### Resolved (stop treating as bugs in 5.4.2)
 
@@ -196,4 +201,5 @@ Quirks still worth knowing:
 - Undefined functions — now a **compile-time error**, not a silent NULL stub (was Bug #26 source).
 - 256-initialized-global cap — **removed**.
 - Fixup table cap — **raised to 16384** (was 8192).
-- 256-entry type/struct table cap — **raised to 1024** in 6.0.51 (was 256). Distinct from the per-file `#derive` cap in quirk 4; not the TPM-build blocker.
+- 256-entry type/struct table cap — **raised to 1024** in 6.0.51 (was 256). Distinct from the per-file `#derive` cap in quirk 4; was never the TPM-build blocker.
+- Per-file `#derive` cap — **raised to 512** in 6.0.53 (was 64). This *was* the real `-D LIBRO_TPM` blocker; the 2.6.5 `tpm_anchor` hand-written-accessor workaround was removed in 2.7.1. See quirk 4.

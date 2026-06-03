@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.0.51"
+cyrius = "6.0.53"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -75,6 +75,7 @@ stdlib = [
     "ct",
     "keccak",
     "thread",
+    "thread_local",
     "bench",
     "fnptr",
     "random",
@@ -87,7 +88,7 @@ stdlib = [
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "3.5.7"
+tag = "3.6.0"
 modules = ["dist/sigil.cyr"]
 
 [deps.patra]
@@ -106,5 +107,5 @@ modules = ["dist/patra.cyr"]
 # transitive floor.
 [deps.agnosys]
 git = "https://github.com/MacCracken/agnosys.git"
-tag = "1.2.8"
+tag = "1.3.2"
 modules = ["dist/agnosys.cyr"]

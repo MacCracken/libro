@@ -45,11 +45,6 @@ Open items, sequenced fastest-to-land first, reactive items last.
 Items genuinely blocked on upstream capability. Each names the
 unblocker.
 
-- [ ] **Parallel batch verify hot path.** Sigil 3.0.0 shipped the
-  parallel `sv_verify_batch` infrastructure but the workers
-  serialize on the full-call mutex (correctness-only, 0.96–1.04×
-  serial throughput in 3.0). Unblocker: sigil 3.1's alloc-free
-  verify-hot-path rewrite.
 - [ ] **Multi-node chain sync (federated audit).** Unblocker: an
   AGNOS-level federation protocol. Libro would layer a second
   meta-chain over the existing `WitnessAnchor` primitive for

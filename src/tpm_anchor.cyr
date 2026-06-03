@@ -42,22 +42,19 @@ enum TpmAnchorVerify {
 #   tpm_anchor_inner, tpm_anchor_sealed_ctx, tpm_anchor_pcr_indices,
 #   tpm_anchor_output_dir (+ _set_ setters)
 #
-# Hand-written, NOT `#derive(accessors)`. The `-D LIBRO_TPM` build
-# pulls in agnosys (39 `#derive` structs) on top of libro's own ~27;
-# adding tpm_anchor's derive pushes the compilation unit past cyrius's
-# per-file `#derive` cap (max 64). Under 6.0.14 this failed as a bare
-# `compile … FAIL` with no diagnostic; 6.0.51 reports it explicitly:
-# `error: too many #derive structs in one file (max 64)` — re-verified
-# 2026-06-03 by restoring the derive and rebuilding `-D LIBRO_TPM`.
+# Standard `#derive(accessors)` — the compiler generates the getters
+# and `_set_` setters from the field list. Construction still uses raw
+# store64 (see tpm_anchor_new below), mirroring the anchor/receipt
+# idiom in anchoring.cyr; `ta` stays the allowlisted raw-offset param.
 #
-# NOTE: 2.6.5 mis-attributed this to cyrius's 256-entry type/struct
-# *table* cap. That cap is real and 6.0.51 separately raised it to
-# 1024, but it is NOT the limit that bites the TPM build — the
-# per-file `#derive` cap (64) is, and it is unchanged. Hand-written
-# load64/store64 accessors keep the TPM build under it. Field offsets
-# here mirror tpm_anchor_new's store64 layout below; `ta` is the
-# canonical tpm_anchor param (CI raw-offset allowlist + specific-struct
-# guard).
+# History: 2.6.5 hand-wrote load64/store64 accessors because the
+# `-D LIBRO_TPM` build (agnosys's 39 `#derive` structs + libro's 27 +
+# tpm_anchor's would-be derive) tripped cyrius's per-file `#derive` cap
+# of 64. 6.0.53 raised that cap to 512 (verified: 512 builds, 513 fails
+# `max 512`), so the derive is back and the hand-written accessors are
+# gone. (Aside: 2.6.5 mis-blamed the 256-entry type-table cap, which is
+# a separate limit 6.0.51 raised to 1024; the derive cap was always the
+# real one — see cyrius issue 2026-06-03-derive-struct-cap-64.)
 #
 # Fields:
 #   inner          — pointer to libro's anchor struct (the
@@ -73,17 +70,8 @@ enum TpmAnchorVerify {
 #                    sealed.pub / sealed.priv. Caller controls
 #                    persistence and cleanup.
 # ================================================================
+#derive(accessors)
 struct tpm_anchor { inner; sealed_ctx; pcr_indices; output_dir; }
-
-fn tpm_anchor_inner(ta)        { return load64(ta); }
-fn tpm_anchor_sealed_ctx(ta)   { return load64(ta + 8); }
-fn tpm_anchor_pcr_indices(ta)  { return load64(ta + 16); }
-fn tpm_anchor_output_dir(ta)   { return load64(ta + 24); }
-
-fn tpm_anchor_set_inner(ta, v)        { store64(ta, v); }
-fn tpm_anchor_set_sealed_ctx(ta, v)   { store64(ta + 8, v); }
-fn tpm_anchor_set_pcr_indices(ta, v)  { store64(ta + 16, v); }
-fn tpm_anchor_set_output_dir(ta, v)   { store64(ta + 24, v); }
 
 # ================================================================
 # Construction — seal the inner anchor's self-hash.

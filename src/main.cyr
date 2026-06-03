@@ -26,6 +26,11 @@ include "lib/process.cyr"
 include "lib/ct.cyr"
 include "lib/keccak.cyr"
 include "lib/thread.cyr"
+# thread_local.cyr (cyrius >= 6.0.52) must precede sigil — sigil 3.6.0's
+# crypto_scratch banks per-thread crypto working arrays over TLS and
+# calls thread_local_init/get/set. Without it sigil links but SIGILLs at
+# runtime. Requires syscalls + alloc (included above).
+include "lib/thread_local.cyr"
 include "lib/slice.cyr"
 include "lib/agnosys.cyr"
 include "lib/random.cyr"

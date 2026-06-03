@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-06-03
+
+**Toolchain + dependency refresh; TPM `#derive` workaround removed.**
+Cyrius pin 6.0.51 → 6.0.53; sigil 3.5.7 → 3.6.0; agnosys 1.2.8 → 1.3.2;
+patra unchanged (1.10.3, already latest). Two source changes, both
+enabled by the toolchain/dep bumps. libro compiles clean (default +
+`-D LIBRO_TPM`), lints and formats clean, full suite passes
+(**502 default / 514 TPM**) on the 6.0.53 stack.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.0.53"` (was 6.0.51).
+- **Sigil pin**: `[deps.sigil]` `tag = "3.6.0"` (was 3.5.7). 3.6.0
+  ships truly-parallel `sv_verify_batch` (drops the per-call mutex;
+  ~3.42× at 64 artifacts / 4 workers) via cyrius 6.0.52 thread-local
+  storage. libro inherits the speedup on its batch-verify path with no
+  API change. This retires the **"Parallel batch verify hot path"**
+  item from the roadmap's *Ecosystem-blocked* list — the unblocker
+  (sigil's alloc-free, now lock-free verify hot path) has shipped.
+- **Agnosys pin**: `[deps.agnosys]` `tag = "1.3.2"` (was 1.2.8).
+  libro's surface (tpm_seal/tpm_unseal + syscall wrappers) is unchanged
+  across the 1.2 → 1.3 line; TPM build + tests pass.
+- **`dist/libro.cyr`** regenerated; only the version header moved
+  (`tpm_anchor` is not bundled).
+
+### Added
+
+- **`lib/thread_local.cyr` to the stdlib include set** (`[deps] stdlib`
+  + `src/main.cyr`, ordered before sigil). **Required by sigil 3.6.0:**
+  its `crypto_scratch` banks per-thread crypto working arrays over
+  cyrius 6.0.52 TLS and calls `thread_local_init/get/set`. Without the
+  module included before sigil, the binary **links but SIGILLs at
+  runtime** (reads an uninitialised thread pointer) — it does not fail
+  to compile. Caught here by running the suite, not just building it.
+
+### Removed
+
+- **Hand-written `tpm_anchor` accessors → back to `#derive(accessors)`.**
+  cyrius 6.0.53 raised the per-file `#derive` cap 64 → **512** (verified:
+  512 builds, 513 fails `max 512`), so the 2.6.5 workaround is no longer
+  needed. `struct tpm_anchor` is a normal `#derive(accessors)` struct
+  again; the four hand-written `load64`/`store64` getters + setters are
+  gone. `tpm_anchor_new` still constructs via raw `store64` (`ta` stays
+  the allowlisted raw-offset param), mirroring the anchor/receipt idiom.
+
 ## [2.7.0] - 2026-06-03
 
 **Toolchain refresh + TPM-build root-cause correction.** Cyrius pin
