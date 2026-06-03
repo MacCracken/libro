@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-06-03
+
+**Toolchain refresh + TPM-build root-cause correction.** Cyrius pin
+advances within the 6.0 line (6.0.14 → 6.0.51); dependency pins
+(sigil 3.5.7, patra 1.10.3, agnosys 1.2.8) are unchanged. No source
+*logic* changed — the only `src/*.cyr` edit is a corrected comment in
+`tpm_anchor.cyr`. libro compiles clean (default + `-D LIBRO_TPM`),
+lints and formats clean, and the full suite passes (**502 default /
+514 TPM**) against the canonical 6.0.51 stdlib.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.0.51"` (was 6.0.14).
+  CI extracts this via the existing grep/sed line; no YAML change
+  required.
+- **`dist/libro.cyr`** rebuilt with `cyrius distlib`; the only delta
+  is the version header (2.6.5 → 2.7.0) — bundled source unchanged
+  (`tpm_anchor` is not part of the dist bundle).
+
+### Fixed
+
+- **Corrected the `-D LIBRO_TPM` root-cause attribution.** 2.6.5
+  recorded the TPM-build compile failure as the **256-entry
+  type/struct table cap**. Re-testing under 6.0.51 (by restoring
+  `#derive(accessors)` on `tpm_anchor` and rebuilding) shows that was
+  a mis-attribution: the failure is the **per-file `#derive` struct
+  cap (max 64)**. The TPM build pulls in agnosys (39 `#derive`
+  structs) on top of libro's own ~27; `tpm_anchor`'s derive would be
+  the 65th. 6.0.51 now reports this explicitly — `error: too many
+  #derive structs in one file (max 64)` — where 6.0.14 failed
+  silently (`compile … FAIL`, no diagnostic). The hand-written
+  `load64`/`store64` accessors added in 2.6.5 are the correct fix and
+  **remain in place**; only the explanatory comment changed. See
+  CLAUDE.md "Known Cyrius Compiler Quirks" §4.
+
+### Notes
+
+- **256-entry type/struct table cap raised to 1024** in 6.0.51 (was
+  256). This is a genuine upstream improvement, but — per the Fixed
+  item above — it is *not* the limit that gated the TPM build, so it
+  unblocks no libro work today. Recorded for future struct/enum
+  growth headroom.
+
 ## [2.6.5] - 2026-05-28
 
 **Toolchain + dependency refresh.** Cyrius pin advances within the

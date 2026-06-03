@@ -42,15 +42,22 @@ enum TpmAnchorVerify {
 #   tpm_anchor_inner, tpm_anchor_sealed_ctx, tpm_anchor_pcr_indices,
 #   tpm_anchor_output_dir (+ _set_ setters)
 #
-# Hand-written, NOT `#derive(accessors)`. The default build already
-# carries 30 `#derive(accessors)` structs; under cyrius 6.0.14 making
-# tpm_anchor the 31st tips a compiler limit in the derive path and the
-# `-D LIBRO_TPM` build fails with a bare `compile … FAIL` (no
-# diagnostic). Bisected 2026-05-28: a single 1-field `#derive` struct
-# included after the 20 libro modules reproduces it; the same struct
-# with hand-written load64/store64 accessors builds. Field offsets here
-# mirror tpm_anchor_new's store64 layout below; `ta` is the canonical
-# tpm_anchor param (CI raw-offset allowlist + specific-struct guard).
+# Hand-written, NOT `#derive(accessors)`. The `-D LIBRO_TPM` build
+# pulls in agnosys (39 `#derive` structs) on top of libro's own ~27;
+# adding tpm_anchor's derive pushes the compilation unit past cyrius's
+# per-file `#derive` cap (max 64). Under 6.0.14 this failed as a bare
+# `compile … FAIL` with no diagnostic; 6.0.51 reports it explicitly:
+# `error: too many #derive structs in one file (max 64)` — re-verified
+# 2026-06-03 by restoring the derive and rebuilding `-D LIBRO_TPM`.
+#
+# NOTE: 2.6.5 mis-attributed this to cyrius's 256-entry type/struct
+# *table* cap. That cap is real and 6.0.51 separately raised it to
+# 1024, but it is NOT the limit that bites the TPM build — the
+# per-file `#derive` cap (64) is, and it is unchanged. Hand-written
+# load64/store64 accessors keep the TPM build under it. Field offsets
+# here mirror tpm_anchor_new's store64 layout below; `ta` is the
+# canonical tpm_anchor param (CI raw-offset allowlist + specific-struct
+# guard).
 #
 # Fields:
 #   inner          — pointer to libro's anchor struct (the

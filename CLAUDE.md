@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.6.5 (2026-05-28)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.0.14 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.7.0 (2026-06-03)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.0.51 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -148,7 +148,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.0.14"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.0.51"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -164,7 +164,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (5.4.2)
+## Known Cyrius Compiler Quirks (6.0.51)
 
 Most cc3-era workarounds documented in earlier libro versions are now resolved.
 Quirks still worth knowing:
@@ -172,7 +172,7 @@ Quirks still worth knowing:
 1. **Local variable clobbering** — still possible across deeply nested call chains. Not a guaranteed bug, but if a local's value looks wrong after a function call, try promoting it to a global as a workaround. Several `_ps_*` globals in `src/patra_store.cyr` exist for this reason.
 2. **Freelist vs bump allocator discipline** — `fl_alloc` + `fl_free` for individually-freed structs; `alloc()` for long-lived collections. Mixing them is correct but easy to reason about wrong.
 3. **Single-pass compiler** — forward references across function boundaries work via fixups (cap 16384 in 5.4.2, up from 8192), but include order still matters for type/struct visibility.
-4. **256-entry type/struct table cap (6.0.x)** — the compilation unit caps at 256 type definitions (structs + enums + type aliases, across all includes). The 257th fails with a bare `compile … FAIL`, no diagnostic, exit 1. libro's `-D LIBRO_TPM` build sits right at the boundary; `tpm_anchor` uses **hand-written** `load64`/`store64` accessors instead of `#derive(accessors)` to stay under (the derive's type-table entries tipped it over — see CHANGELOG [2.6.5]). If a future struct/enum addition triggers a bare `FAIL`, this cap is the first suspect. Filed upstream: cyrius `docs/development/issues/2026-05-28-type-table-256-cap-silent-fail.md`.
+4. **Per-file `#derive` struct cap (max 64)** — a single compilation unit (main.cyr + all its `include`s, flattened) may carry at most 64 `#derive(...)` structs. libro's `-D LIBRO_TPM` build pulls in agnosys (39 `#derive` structs) on top of libro's own ~27; adding `tpm_anchor` as a 65th `#derive` tips it over. That is why `src/tpm_anchor.cyr` uses **hand-written** `load64`/`store64` accessors instead of `#derive(accessors)`. The default (non-TPM) build doesn't include agnosys, so it sits well under the cap. **6.0.51 reports this explicitly** — `error: too many #derive structs in one file (max 64)` — re-verified 2026-06-03 by restoring the derive and rebuilding. Under 6.0.14 the same condition was a *silent* `compile … FAIL` (no diagnostic). **Note:** 2.6.5 mis-attributed this to the separate 256-entry type/struct *table* cap; 6.0.51 raised that table cap to 1024, but it is not the limit that bites the TPM build — the 64-`#derive` cap is, and it is unchanged. If a future `#derive` addition triggers a bare `FAIL` (older toolchain) or the `max 64` diagnostic, this cap is the suspect. Filed upstream: cyrius `docs/development/issues/2026-05-28-type-table-256-cap-silent-fail.md`.
 
 ### Resolved (stop treating as bugs in 5.4.2)
 
@@ -182,3 +182,4 @@ Quirks still worth knowing:
 - Undefined functions — now a **compile-time error**, not a silent NULL stub (was Bug #26 source).
 - 256-initialized-global cap — **removed**.
 - Fixup table cap — **raised to 16384** (was 8192).
+- 256-entry type/struct table cap — **raised to 1024** in 6.0.51 (was 256). Distinct from the per-file `#derive` cap in quirk 4; not the TPM-build blocker.

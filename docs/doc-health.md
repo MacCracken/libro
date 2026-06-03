@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — libro
 
-> **Last refresh**: 2026-05-28 (2.6.5 toolchain bump — root docs README / CLAUDE / CHANGELOG / VERSION refreshed to cyrius 6.0.14, sigil 3.5.7, patra 1.10.3, agnosys 1.2.8; 502/514 tests. One targeted source change: `src/tpm_anchor.cyr` swapped `#derive(accessors)` for hand-written accessors to dodge cyrius's silent 256-entry type-table cap, which was breaking the `-D LIBRO_TPM` build under 6.0.14 (upstream issue filed). `cyrius.lock` is now gitignored (patra/sigil convention). The 2.6.3 / 2.6.4 / 2.6.5 dep-pin bumps still haven't been propagated to the secondary docs, so `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` remain flagged 🟡 stale below.) Prior: 2026-05-25 (2.6.4 toolchain bump to 6.0.1); 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup + 2.6.2 wrap-up). | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-06-03 (2.7.0 toolchain bump — cyrius pin 6.0.14 → **6.0.51** (dep pins unchanged: sigil 3.5.7 / patra 1.10.3 / agnosys 1.2.8); 502/514 tests. No source logic changed — the lone `src/*.cyr` edit is a corrected comment in `tpm_anchor.cyr`: the `-D LIBRO_TPM` build blocker is the **per-file `#derive` cap (max 64)**, not the 256-entry type-table cap recorded in 2.6.5 (which 6.0.51 separately raised to 1024). 6.0.51 now diagnoses the derive cap explicitly. Hand-written accessors stay. The secondary docs `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` remain 🟡 stale on pre-2.6.3 pins.) Prior: 2026-05-28 (2.6.5 toolchain bump — root docs README / CLAUDE / CHANGELOG / VERSION refreshed to cyrius 6.0.14, sigil 3.5.7, patra 1.10.3, agnosys 1.2.8; 502/514 tests. One targeted source change: `src/tpm_anchor.cyr` swapped `#derive(accessors)` for hand-written accessors to dodge cyrius's silent 256-entry type-table cap, which was breaking the `-D LIBRO_TPM` build under 6.0.14 (upstream issue filed). `cyrius.lock` is now gitignored (patra/sigil convention). The 2.6.3 / 2.6.4 / 2.6.5 dep-pin bumps still haven't been propagated to the secondary docs, so `dependency-watch` / `testing` / `threat-model` / `standards-mapping` / `integration` remain flagged 🟡 stale below.) Prior: 2026-05-25 (2.6.4 toolchain bump to 6.0.1); 2026-05-10 (initial audit at 2.6.0 + non-release docs cleanup + 2.6.2 wrap-up). | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`libro`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo dep pin drift lives in [`development/dependency-watch.md`](development/dependency-watch.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Libro is a cryptographic audit-chain library every Cyrius audit-event consumer (daimon, aegis, stiva, sigil, ark) depends on — stale API / trust-model / verification docs propagate downstream, so doc currency carries weight. The doc surface is moderate (~25 files) and most are load-bearing.
@@ -66,9 +66,17 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 - ✅ `docs/doc-health.md` — this pass: header + bucket table + Tier 1 rows refreshed; stale-doc targets re-pinned to the 6.0.14 stack.
 - ⚠️ **Known structural drift left untouched** (pre-existing, not version-tied): CLAUDE.md "Project Structure" still says "20 files" / "263 inline tests + 20 module includes" and omits `chain_io` from its module list. Carried over from the 2.6.4 note; left scoped out of the toolchain bump.
 
-**Outstanding after 2.6.5 (next docs pass):**
+**Doc cleanup completed in the 2.7.0 release pass (2026-06-03):**
 
-- 🟡 `docs/development/dependency-watch.md` — external-dep table still shows the **pre-2.6.3** pins; this is the canonical pin-tracking doc, so it carries top priority. Target: cyrius 6.0.14 / sigil 3.5.7 / patra 1.10.3 / agnosys 1.2.8.
+- ✅ `CLAUDE.md` — Project Identity version 2.6.5 → **2.7.0 (2026-06-03)**, language pin 6.0.14 → **6.0.51**; CI/Release toolchain pin `6.0.14` → **6.0.51**; Known-Quirk #4 rewritten from "256-entry type-table cap" to the **per-file `#derive` cap (max 64)** with the corrected root-cause; Resolved list gained "256 type/struct table cap raised to 1024 in 6.0.51".
+- ✅ `CHANGELOG.md` — `[2.7.0]` entry: cyrius 6.0.14 → 6.0.51 (dep pins unchanged). **Fixed**: corrected the `-D LIBRO_TPM` root-cause attribution (per-file `#derive` cap, not the type-table cap); hand-written accessors stay. **Notes**: 256 type-table cap raised to 1024 upstream (not the TPM blocker).
+- ✅ `src/tpm_anchor.cyr` — corrected the accessor-block comment to name the real cap (per-file `#derive`, max 64) and 6.0.51's explicit diagnostic. No code change; hand-written accessors unchanged.
+- ✅ `dist/libro.cyr` — regenerated; only the version header changed (`tpm_anchor` isn't bundled).
+- ✅ `docs/doc-health.md` — this pass: header refreshed to the 6.0.51 stack.
+
+**Outstanding after 2.7.0 (next docs pass):**
+
+- 🟡 `docs/development/dependency-watch.md` — external-dep table still shows the **pre-2.6.3** pins; this is the canonical pin-tracking doc, so it carries top priority. Target: cyrius 6.0.51 / sigil 3.5.7 / patra 1.10.3 / agnosys 1.2.8.
 - 🟡 `docs/guides/testing.md` — assertion counts (350/443/451) and the cyrius 5.10.34 reference are stale.
 - 🟡 `docs/development/threat-model.md`, `docs/compliance/standards-mapping.md` — supply-chain blocks cite `cyrius = "5.10.34"`.
 - 🟡 `docs/guides/integration.md` — Post-Quantum / Hybrid / PatraStore sections pin sigil 3.0.1 / patra 1.9.3.
