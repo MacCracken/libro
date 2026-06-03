@@ -166,13 +166,27 @@ docs/ (when earned):
 
 ## Known Cyrius Compiler Quirks (6.0.51)
 
+> ## ⚠️ BIG NOTE — TPM-build cap was MIS-DIAGNOSED (corrected in 2.7.0)
+>
+> The `-D LIBRO_TPM` build is gated by the **per-file `#derive` cap
+> (max 64)** — NOT the 256-entry type/struct *table* cap that **2.6.5
+> wrongly blamed**. cyrius 6.0.51 raised the table cap 256 → 1024, and
+> that change **unblocks nothing here** — the 64-`#derive` cap is the
+> real limit and is unchanged (now diagnosed explicitly:
+> `error: too many #derive structs in one file (max 64)`). **Keep
+> `src/tpm_anchor.cyr`'s hand-written `load64`/`store64` accessors — do
+> NOT "restore" `#derive(accessors)` thinking the cap was raised.**
+> Full detail in quirk #4. Upstream record-correction issue:
+> `cyrius/docs/development/issues/2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md`
+> (repro lives in `/tmp`, never committed to the cyrius repo).
+
 Most cc3-era workarounds documented in earlier libro versions are now resolved.
 Quirks still worth knowing:
 
 1. **Local variable clobbering** — still possible across deeply nested call chains. Not a guaranteed bug, but if a local's value looks wrong after a function call, try promoting it to a global as a workaround. Several `_ps_*` globals in `src/patra_store.cyr` exist for this reason.
 2. **Freelist vs bump allocator discipline** — `fl_alloc` + `fl_free` for individually-freed structs; `alloc()` for long-lived collections. Mixing them is correct but easy to reason about wrong.
 3. **Single-pass compiler** — forward references across function boundaries work via fixups (cap 16384 in 5.4.2, up from 8192), but include order still matters for type/struct visibility.
-4. **Per-file `#derive` struct cap (max 64)** — a single compilation unit (main.cyr + all its `include`s, flattened) may carry at most 64 `#derive(...)` structs. libro's `-D LIBRO_TPM` build pulls in agnosys (39 `#derive` structs) on top of libro's own ~27; adding `tpm_anchor` as a 65th `#derive` tips it over. That is why `src/tpm_anchor.cyr` uses **hand-written** `load64`/`store64` accessors instead of `#derive(accessors)`. The default (non-TPM) build doesn't include agnosys, so it sits well under the cap. **6.0.51 reports this explicitly** — `error: too many #derive structs in one file (max 64)` — re-verified 2026-06-03 by restoring the derive and rebuilding. Under 6.0.14 the same condition was a *silent* `compile … FAIL` (no diagnostic). **Note:** 2.6.5 mis-attributed this to the separate 256-entry type/struct *table* cap; 6.0.51 raised that table cap to 1024, but it is not the limit that bites the TPM build — the 64-`#derive` cap is, and it is unchanged. If a future `#derive` addition triggers a bare `FAIL` (older toolchain) or the `max 64` diagnostic, this cap is the suspect. Filed upstream: cyrius `docs/development/issues/2026-05-28-type-table-256-cap-silent-fail.md`.
+4. **Per-file `#derive` struct cap (max 64)** — a single compilation unit (main.cyr + all its `include`s, flattened) may carry at most 64 `#derive(...)` structs. libro's `-D LIBRO_TPM` build pulls in agnosys (39 `#derive` structs) on top of libro's own ~27; adding `tpm_anchor` as a 65th `#derive` tips it over. That is why `src/tpm_anchor.cyr` uses **hand-written** `load64`/`store64` accessors instead of `#derive(accessors)`. The default (non-TPM) build doesn't include agnosys, so it sits well under the cap. **6.0.51 reports this explicitly** — `error: too many #derive structs in one file (max 64)` — re-verified 2026-06-03 by restoring the derive and rebuilding. Under 6.0.14 the same condition was a *silent* `compile … FAIL` (no diagnostic). **Note:** 2.6.5 mis-attributed this to the separate 256-entry type/struct *table* cap; 6.0.51 raised that table cap to 1024, but it is not the limit that bites the TPM build — the 64-`#derive` cap is, and it is unchanged. If a future `#derive` addition triggers a bare `FAIL` (older toolchain) or the `max 64` diagnostic, this cap is the suspect. Upstream: the corrected record is cyrius `docs/development/issues/2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md`; the original (mis-attributed, now resolved) is `archived/2026-05-28-type-table-256-cap-silent-fail.md`.
 
 ### Resolved (stop treating as bugs in 5.4.2)
 
