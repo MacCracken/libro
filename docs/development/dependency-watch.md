@@ -9,10 +9,10 @@ and what to watch when upgrading.
 
 | Dep | Pin field | Current | Resolved by | Purpose |
 |-----|-----------|---------|-------------|---------|
-| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **5.10.34** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
-| sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`    | **3.0.1** | `cyrius deps` → `lib/sigil.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, HMAC, HKDF, AES-GCM, hex, constant-time compare |
-| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`    | **1.9.3** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
-| agnosys          | `cyrius.cyml` `[deps.agnosys] tag = "…"`  | **1.0.4** | `cyrius deps` → `lib/agnosys.cyr` | TPM 2.0 primitives + Landlock syscall wrappers (opt-in via `-D LIBRO_TPM`) |
+| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.1.23** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
+| sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`    | **3.7.8** | `cyrius deps` → `lib/sigil.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, HMAC, HKDF, AES-GCM, hex, constant-time compare |
+| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`    | **1.11.0** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
+| agnosys          | `cyrius.cyml` `[deps.agnosys] tag = "…"`  | **1.4.1** | `cyrius deps` → `lib/agnosys.cyr` | TPM 2.0 primitives + Landlock syscall wrappers (opt-in via `-D LIBRO_TPM`) |
 
 Zero third-party crates. No transitive graph to audit. Agnosys was promoted from transitive (via sigil 3.0.1) to a direct pin in 2.5.0 so libro controls the version independently of sigil's pin movements.
 
@@ -58,12 +58,14 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   the canonical installer (`scripts/install.sh` via curl, or
   `cyriusly install <ver>` which calls it) is enough to change the
   toolchain.
-- Every toolchain bump needs a full test + fuzz + bench pass (435
-  default / 443 with `-D LIBRO_TPM`, 12 fuzz targets, 32 benches
+- Every toolchain bump needs a full test + fuzz + bench pass (502
+  default / 514 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
   across three binaries) because codegen changes can surface subtle
   behavioral deltas. 2.1.0 jumped 5.4.7 → 5.10.34 in one step —
   pulled `secret var`, `getrandom`, `lib/ct.cyr`, `lib/keccak.cyr`,
-  `lib/random.cyr`, and the canonical installer flow.
+  `lib/random.cyr`, and the canonical installer flow. 2.7.2 crossed
+  the 6.0 → 6.1 minor line (6.0.53 → 6.1.23) with zero source
+  migrations.
 - Watch the **fixup-table cap** — cc5 5.4.2 raised it to 16384 (from
   8192 in cc3); 5.10.x preserved it. All three bench binaries sit
   comfortably under the cap (the 2.0.5 split into core/io/proof gave
@@ -89,10 +91,13 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   implementations; none is FIPS 140-3 validated (see
   `docs/compliance/standards-mapping.md` §FIPS 140-3).
 - Sigil 3.0.0 shipped parallel-batch-verify infrastructure
-  (`sv_verify_batch`) but the workers serialize on a full-call mutex
-  in 3.0 (correctness-only, ~1× serial throughput). Libro stays
-  serial until sigil 3.1's alloc-free verify-hot-path rewrite —
-  tracked on the roadmap as ecosystem-blocked.
+  (`sv_verify_batch`) but the workers serialized on a full-call mutex
+  through the 3.0–3.5 line (correctness-only, ~1× serial throughput).
+  **sigil 3.6.0 (libro 2.7.1) made it truly parallel** — dropped the
+  per-call mutex over cyrius 6.0.52 thread-local storage (~3.42× at
+  64 artifacts / 4 workers). Libro inherits the speedup on its
+  batch-verify path with no API change; the former roadmap
+  ecosystem-blocked item is retired.
 
 ### patra
 - Provides SQL storage for `PatraStore` (`src/patra_store.cyr`).
@@ -118,9 +123,12 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   hardening recipe in `docs/guides/integration.md`.
 - Promoted from transitive-via-sigil to a direct pin in 2.5.0 so
   libro controls the agnosys version independently of sigil's
-  pin movements. Matches sigil 3.0.1's floor at 1.0.4.
+  pin movements. Originally matched sigil's 1.0.4 transitive floor;
+  the direct pin has since advanced past it (2.6.3 onward, now
+  **1.4.1**) — libro's only agnosys surface is `tpm_seal`/`tpm_unseal`
+  + syscall wrappers, both unchanged across the 1.0 → 1.4 line.
 - Default builds (no `-D LIBRO_TPM`) still pull `lib/agnosys.cyr`
-  into the include set because sigil 3.0.1 bundle references
+  into the include set because the sigil bundle references
   agnosys-side symbols (TPM-adjacent and Landlock enums). DCE
   strips the unused TPM functions in the default build.
 
@@ -160,6 +168,13 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   `src/tpm_anchor.cyr` (build with `-D LIBRO_TPM`). agnosys's
   `tpm_seal`/`tpm_unseal` primitives are the backend; default
   builds don't link this surface.
+- **v2.7.1 → 2.7.2**: no new primitives — toolchain/dependency
+  refresh. sigil 3.6.0 made `sv_verify_batch` truly parallel (lock-
+  free over cyrius 6.0.52 TLS); sigil 3.6.0+ requires
+  `lib/thread_local.cyr` included before `lib/sigil.cyr` (else the
+  binary links but SIGILLs at first crypto use). 2.7.2 advanced the
+  stack to cyrius 6.1.23 / sigil 3.7.8 / patra 1.11.0 / agnosys
+  1.4.1 with no source-logic change.
 
 ## Watch list (ecosystem)
 
@@ -177,11 +192,11 @@ Items the roadmap tracks as blocked on upstream capability (from
   agnosys 1.0.4's `tpm_seal`/`tpm_unseal`. Opt-in
   `src/tpm_anchor.cyr` behind `-D LIBRO_TPM`; default builds keep
   no agnosys-TPM surface linked.
-- **Parallel batch verify** — sigil 3.0.0 shipped the
-  infrastructure (`sv_verify_batch`) but the workers serialize on
-  a full-call mutex (correctness-only, ~1× serial throughput in
-  3.0). Sigil 3.1's alloc-free verify-hot-path rewrite is the
-  actual unblocker; libro stays serial until then.
+- **Parallel batch verify** — ✅ **shipped via sigil 3.6.0 (libro
+  2.7.1)**. The 3.0 `sv_verify_batch` infrastructure serialized on a
+  full-call mutex; 3.6.0 dropped it over cyrius 6.0.52 thread-local
+  storage for true parallelism (~3.42× at 64 artifacts / 4 workers).
+  Libro inherits the speedup with no API change.
 - **Multi-node chain sync** — blocked on an AGNOS-level federation
   protocol; libro would gain a second meta-chain layer over the
   existing WitnessAnchor primitive.

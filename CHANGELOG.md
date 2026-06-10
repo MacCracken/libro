@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.2] - 2026-06-10
+
+**Toolchain + dependency refresh; long-standing `proof_to_json` bench
+unblocked.** Cyrius pin 6.0.53 → 6.1.23 (6.0 → 6.1 minor-line crossing);
+sigil 3.6.0 → 3.7.8; patra 1.10.3 → 1.11.0; agnosys 1.3.2 → 1.4.1. No
+source *logic* changed. libro compiles clean (default + `-D LIBRO_TPM`),
+lints and formats clean, full suite passes (**502 default / 514 TPM**) and
+all benches + the fuzz harness run clean on the 6.1.23 stack.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.1.23"` (was 6.0.53). The
+  6.0 → 6.1 crossing required no source migrations — clean build + full
+  suite on the first pass.
+- **Sigil pin**: `[deps.sigil]` `tag = "3.7.8"` (was 3.6.0). libro's
+  surface (SHA-256, Ed25519, HMAC, `ct_eq_bytes_lens`, hex) is unchanged
+  across the 3.6 → 3.7 line; suite + batch-verify path pass unchanged.
+- **Patra pin**: `[deps.patra]` `tag = "1.11.0"` (was 1.10.3); bundled
+  `lib/patra.cyr` tracks it. PatraStore tests + perf-tier benches pass.
+- **Agnosys pin**: `[deps.agnosys]` `tag = "1.4.1"` (was 1.3.2). libro's
+  surface (tpm_seal/tpm_unseal + syscall wrappers) is unchanged across the
+  1.3 → 1.4 line; TPM build + tests pass.
+- **`dist/libro.cyr`** regenerated (5481 lines); only the version header
+  moved — no bundled-source change.
+
+### Added
+
+- **`proof_to_json_25` benchmark shipped in `benches/libro_proof.bcyr`**
+  (benches 32 → **33**). Measuring `proof_to_json(ip)` inside a `bench_run`
+  loop had triggered a bench-context control-flow hijack/SIGILL since 2.0.5
+  (carried open on the roadmap; the same call always passed in the test
+  suite). Re-tested against cyrius 6.1.23: **resolved** — the bench runs
+  clean (`proof_to_json_25: ~218us avg`). The bench now ships with
+  `proof_json.cyr` + its `store`/`export`/`file_store` include closure.
+  Retires the roadmap *"Re-investigate `proof_to_json` bench-context
+  control-flow hijack"* item.
+
+### Notes
+
+- **Roadmap P2 (`constant_time_eq_str` → `ct_eq_bytes_lens`) was already
+  complete.** `src/hasher.cyr` and the `src/main.cyr` test helpers already
+  call `ct_eq_bytes_lens`; there are zero bare `ct_eq(` call sites in source
+  or in `dist/libro.cyr`. The roadmap entry described a pre-migration state
+  that no longer existed — closed as done, no code change.
+- Secondary docs (`dependency-watch`, `testing`, `threat-model`,
+  `standards-mapping`, `integration`) refreshed off their pre-2.6.3 pins to
+  the 6.1.23 / 3.7.8 / 1.11.0 / 1.4.1 stack — the doc-health "Outstanding
+  after 2.7.1" backlog.
+
 ## [2.7.1] - 2026-06-03
 
 **Toolchain + dependency refresh; TPM `#derive` workaround removed.**

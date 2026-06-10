@@ -13,7 +13,7 @@ Libro provides an append-only, SHA-256 hash-linked audit chain where every event
 libro (Cyrius library, single-file compilation)
   ├── 21 library modules under src/ + 1 opt-in (src/tpm_anchor.cyr, -D LIBRO_TPM)
   ├── SHA-256 (FIPS 180-4) + Ed25519 (RFC 8032) via sigil
-  ├── SQL persistence via patra (v1.10.3 bundled)
+  ├── SQL persistence via patra (v1.11.0 bundled)
   ├── Nested scalar-aware canonical JSON hashing
   ├── Distribution artifact: committed dist/libro.cyr per DEPS-PATTERN.md
   └── CI-enforced gates: manifest completeness, raw-offset guards,
@@ -58,7 +58,7 @@ Consumers:
 ## Coverage
 
 - **373 inline tests** across unit / integration / layout-invariant / gap coverage
-- **24 benchmarks** across three bench binaries (`libro_core` 14 + `libro_io` 8 + `libro_proof` 2)
+- **33 benchmarks** across three bench binaries (`libro_core` 18 + `libro_io` 12 + `libro_proof` 3)
 - **12 fuzz targets** in a single harness (sha256, hex decode, DER, entry create, chain ops, sig verify, JSON parse, topic match, chain_import, filestore_verify_streamed, canonical_json_hash, proof_from_json)
 - **CI history** — each run emits bench rows to `bench-history.csv` tagged with commit SHA, retained as a workflow artifact
 
@@ -140,7 +140,7 @@ assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 | `chain_io`       | Portable chain snapshot — `chain_export` / `chain_import` JSONL round-trip |
 | `patra_store`    | SQL-backed backend via patra with indexed queries |
 | `streaming`      | MQTT-style pub/sub with `*` and `#` wildcards |
-| `proof_json`     | JSON emitter for `IntegrityProof` — separate module so bench binaries can exclude |
+| `proof_json`     | JSON emitter for `IntegrityProof` — separate module; `libro_proof` benches it (`proof_to_json_25`) since 2.7.2 |
 
 ## Project structure
 
@@ -149,7 +149,7 @@ src/main.cyr             Entry point + 502/514 inline tests (default / LIBRO_TPM
 src/*.cyr                21 library modules + src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM)
 benches/libro_core.bcyr  18 core benchmarks (sha256/chain/merkle/sign/PQ/hybrid)
 benches/libro_io.bcyr    12 i/o benchmarks (export/review/anchor/stream/filestore/patra perf)
-benches/libro_proof.bcyr  2 proof-build benchmarks (unsigned + signed)
+benches/libro_proof.bcyr  3 proof-path benchmarks (unsigned + signed + to_json)
 benches/bench_history.cyr Opt-in CSV history emitter (LIBRO_BENCH_HISTORY env var)
 fuzz/fuzz_libro.fcyr    1 harness, 12 fuzz targets
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib, committed)

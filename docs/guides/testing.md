@@ -3,16 +3,16 @@
 ## Running the Full Suite
 
 ```bash
-# Build and run all tests (350 assertions expected, 0 failures)
+# Build and run all tests (502 assertions expected, 0 failures)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro && ./build/libro
 
-# Fuzz harness (11 targets, no-crash asserts, ~10 s)
+# Fuzz harness (12 targets, no-crash asserts, ~10 s)
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && \
     timeout 30 ./build/fuzz_libro
 
 # Optional: opt-in TPM build (default skips agnosys's tpm_seal surface)
 CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm && \
-    ./build/libro_tpm   # 451 assertions: 443 default + 8 TPM-gated
+    ./build/libro_tpm   # 514 assertions: 502 default + 12 TPM-gated
 
 # Benchmarks (three binaries — cc5 5.4.2 fixup-table cap forced the core/io
 # split in 1.2.0; libro_proof.bcyr added later for proof-path coverage)
@@ -72,18 +72,19 @@ The group list, in declaration order:
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 443 assertions default / 451 with `-D LIBRO_TPM`** across
+**Total: 502 assertions default / 514 with `-D LIBRO_TPM`** across
 these groups. Count moves with every sprint; the source of truth is
 the output of `./build/libro`, not this document.
 
 ## Benchmarks
 
-Three bench binaries ship 32 benchmarks total. The original core/io
+Three bench binaries ship 33 benchmarks total. The original core/io
 split landed in 1.2.0 because cc5 5.4.2's 16384 fixup-table cap
 couldn't hold a single combined binary after the 2.0 canonical-JSON
 walker landed. A third binary (`libro_proof.bcyr`) was added for
-proof-build benches. The 2.2 / 2.3 / 2.4 cycle added rows for PQ /
-hybrid signing + PatraStore perf knobs.
+proof-path benches. The 2.2 / 2.3 / 2.4 cycle added rows for PQ /
+hybrid signing + PatraStore perf knobs; 2.7.2 added `proof_to_json_25`
+once cyrius 6.1.23 cleared the long-standing bench-context hijack.
 
 ### libro_core (18 benchmarks)
 
@@ -101,19 +102,20 @@ hybrid signing + PatraStore perf knobs.
 | `sign_entry` | 1000 | Ed25519 sign |
 | `verify_sig` | 1000 | Ed25519 verify |
 | `mldsa65_sign_entry` | 100 | ML-DSA-65 sign (FIPS 204, sigil 3.0) |
-| `mldsa65_verify_sig` | 100 | ML-DSA-65 verify (2.1 ms — faster than Ed25519 in sigil 3.0) |
+| `mldsa65_verify_sig` | 100 | ML-DSA-65 verify (~2.2 ms — faster than Ed25519 verify; ML-DSA shipped via sigil 3.0) |
 | `hybrid_sign_entry` | 100 | Ed25519 + ML-DSA-65 sign (sum-of-two) |
 | `hybrid_verify_sig` | 100 | Ed25519 + ML-DSA-65 verify AND-mode |
 | `query_filter_100` | 1000 | `chain_query` over 100 entries |
 | `proof_unsigned_100` | 10 | unsigned integrity-proof build |
 | `hex_encode_32b` | 10000 | 32-byte hex encode |
 
-### libro_proof (2 benchmarks)
+### libro_proof (3 benchmarks)
 
 | Benchmark | Iterations | Target |
 |-----------|------------|--------|
 | `proof_build_unsigned_25` | 3 | `proof_build_unsigned` + `proof_with_all_inclusions` over 25 entries |
 | `proof_build_signed_25`   | 3 | signed variant (Ed25519 tree head) |
+| `proof_to_json_25`        | 3 | canonical-JSON serialization of a fully-inclusioned proof |
 
 Iteration counts are deliberately low — each proof-build iteration
 allocates an iproof + merkle tree + N inclusion proofs via the bump
@@ -122,16 +124,17 @@ grows without bound (there's no `alloc_reset` mid-bench), so heap
 pressure pushes into multi-GB territory. 25 entries × 3 iters keeps
 the run bounded while still exercising the O(N log N) path.
 
-**`proof_to_json` benches are intentionally not shipped here.** Every
-attempt to measure `proof_to_json(ip)` inside `bench_run` triggers
-a control-flow hijack: cc5 5.4.x manifested as ~25 Hz main()
-re-entry; cyrius 5.10.34 (re-tested in 2.1.1 + 2.2.0 + 2.5.0)
-manifests as SIGILL on the first bench iteration. Same class of
-bug, different surface. The same call works correctly in the test
-suite (`test_proof_to_json_*` + `test_proof_from_json_roundtrip_full`
-all pass, 443 tests green), so the bug is bench-context-specific
-to `proof_json.cyr` rather than `proof_to_json` itself. Filed in
-the bench file header for future cyrius bug-pass cycles to close.
+**`proof_to_json_25` shipped in 2.7.2.** For years, measuring
+`proof_to_json(ip)` inside `bench_run` triggered a control-flow
+hijack: cc5 5.4.x manifested as ~25 Hz main() re-entry; cyrius
+5.10.34 (re-tested in 2.1.1 + 2.2.0 + 2.5.0) manifested as SIGILL on
+the first bench iteration. The same call always passed in the test
+suite (`test_proof_to_json_*` + `test_proof_from_json_roundtrip_full`),
+so the bug was bench-context-specific to `proof_json.cyr` rather than
+`proof_to_json` itself. Re-tested against cyrius 6.1.23: **resolved.**
+The bench now ships (with `proof_json.cyr` + its `store`/`export`/
+`file_store` include closure) and runs clean (`proof_to_json_25:
+~218 µs avg`).
 
 ### libro_io (12 benchmarks)
 
@@ -269,7 +272,7 @@ They exist to prevent regression of classes already caught in audits:
 | Manifest completeness | 2.0.1 (refined 2.5.0) | `[lib] modules` drifting from `src/main.cyr` includes; 2.5.0 skip `#ifdef`-gated includes for opt-in modules |
 | Specific-struct raw-offset guard | 2.0.1 + 2.0.2 | `load64(c+N)`, `load64(ip+N)`, etc. outside defining file |
 | Per-file allowlist | 2.0.4 (extended 2.5.0) | new raw-offset param names appearing in unregistered files; 2.5.0 registers `ta` for `src/tpm_anchor.cyr` |
-| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (443 → 451 assertions) |
+| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (502 → 514 assertions) |
 | Dist freshness | 1.1.1 | `dist/libro.cyr` missing or stale vs `src/` |
 | Version parity (release only) | 1.1.1 | VERSION / cyrius.cyml / dist header / git tag disagreement |
 

@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.7.1 (2026-06-03)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.0.53 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.7.2 (2026-06-10)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.1.23 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -26,7 +26,7 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 ## Current State
 
 - **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra + agnosys
-- **Benchmarks**: 32 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 2 — split because cc5 5.4.2's 16384 fixup-table cap)
+- **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 502 default / 514 with `-D LIBRO_TPM` (all pass)
 - **Binary**: ~1.1 MB (default; LIBRO_TPM build similar). Under cyrius 6.0.x, DCE NOPs dead code (~520 KB NOPed in the default build) but no longer shrinks the binary — `CYRIUS_DCE=1` and a plain build are byte-identical. The ~456 KB figure was 5.x-era, where DCE stripped.
@@ -35,7 +35,7 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, HMAC, hex, constant-time compare (Cyrius stdlib `lib/sigil.cyr`)
-- **patra** — SQL-backed storage (bundled v1.10.3 at `lib/patra.cyr`, resynced from upstream `dist/patra.cyr`)
+- **patra** — SQL-backed storage (bundled v1.11.0 at `lib/patra.cyr`, resynced from upstream `dist/patra.cyr`)
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -113,8 +113,9 @@ src/*.cyr               Library modules (20 files: error, hasher, entry, verify,
                         query, retention, chain, store, export, review, merkle,
                         signing, anchoring, timestamping, proof, kernel_audit,
                         file_store, patra_store, streaming, proof_json)
-benches/libro_core.bcyr 14 core benchmarks (crypto/chain/merkle/sign/batch)
-benches/libro_io.bcyr    8 i/o benchmarks (export/review/anchor/stream/filestore)
+benches/libro_core.bcyr 18 core benchmarks (crypto/chain/merkle/sign/batch)
+benches/libro_io.bcyr   12 i/o benchmarks (export/review/anchor/stream/filestore)
+benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_json)
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
@@ -148,7 +149,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.0.53"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.1.23"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -164,7 +165,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.0.53)
+## Known Cyrius Compiler Quirks (6.1.23)
 
 > ## ⚠️ BIG NOTE — sigil 3.6.0 needs `lib/thread_local.cyr` before it (or SIGILL)
 >

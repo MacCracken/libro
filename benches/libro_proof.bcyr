@@ -1,18 +1,17 @@
-# libro_proof.bcyr — proof-build benchmarks (unsigned + signed).
+# libro_proof.bcyr — proof-path benchmarks (build unsigned/signed + to_json).
 #
 # Third bench binary. Adds dedicated coverage for the proof-building
 # path, which was deferred in 2.0.2 because neither existing bench
 # binary had headroom for the extra modules under cc5 5.4.2's 16384
 # fixup-table cap.
 #
-# NOTE — the originally planned `proof_to_json_*_25` benches are
-# NOT shipped here. Every attempt to measure `proof_to_json(ip)`
-# inside a bench_run loop triggers a control-flow hijack. The
-# same `proof_to_json` call works correctly in the test suite
-# (test_proof_to_json_unsigned / _null_on_zero / _fields_present
-# all pass in src/main.cyr). Narrowed to a bench-context
-# interaction with proof_json.cyr; root cause not yet isolated.
-# Filed as a follow-up — see docs/development/roadmap.md.
+# proof_to_json bench — RESOLVED, shipped in 2.7.2.
+# For years a `proof_to_json(ip)` call inside a bench_run loop triggered a
+# control-flow hijack here (the same call always passed in the test suite —
+# test_proof_to_json_unsigned / _null_on_zero / _fields_present in
+# src/main.cyr). Re-tested against each toolchain bump; gone as of cyrius
+# 6.1.23. The bench now ships with proof_json.cyr (+ its store/export/
+# file_store closure) included and runs clean.
 #
 # Re-test history:
 # - 2.0.5 / cyrius 5.4.7 — main() re-enters ~25 Hz, banner spams.
@@ -23,6 +22,8 @@
 #     #4 0x42199b → #5 0x4acb7e → #6 0x4b1bda
 #   Bench addition was attempted in 2.1.1 development; reverted
 #   pending root-cause work.
+# - 2.7.2 / cyrius 6.1.23 — RESOLVED. proof_to_json benches cleanly
+#   (no hijack, no SIGILL); bench shipped.
 #
 # Run: cyrius build benches/libro_proof.bcyr build/libro_bench_proof
 #      ./build/libro_bench_proof
@@ -60,16 +61,21 @@ include "src/verify.cyr"
 include "src/query.cyr"
 include "src/retention.cyr"
 include "src/chain.cyr"
+include "src/store.cyr"
+include "src/export.cyr"
 include "src/merkle.cyr"
 include "src/signing.cyr"
 include "src/anchoring.cyr"
 include "src/proof.cyr"
+include "src/file_store.cyr"
+include "src/proof_json.cyr"
 
 include "benches/bench_history.cyr"
 
 var _b_chain = 0;
 var _b_det = 0;
 var _b_sk = 0;
+var _b_ip = 0;
 
 fn bench_proof_build_unsigned(ignored) {
     var ip = proof_build_unsigned(_b_chain);
@@ -80,6 +86,13 @@ fn bench_proof_build_unsigned(ignored) {
 fn bench_proof_build_signed(ignored) {
     var ip = proof_build_signed(_b_chain, _b_sk);
     proof_with_all_inclusions(ip);
+    return 0;
+}
+
+# Serialize a pre-built, fully-inclusioned proof to canonical JSON.
+# _b_ip is built once in main() so the bench measures only proof_to_json.
+fn bench_proof_to_json(ignored) {
+    proof_to_json(_b_ip);
     return 0;
 }
 
@@ -113,6 +126,14 @@ fn main() {
     var b2 = bench_new("proof_build_signed_25");
     bench_run(b2, &bench_proof_build_signed, 3);
     vec_push(benches, b2);
+
+    # Build the proof once (unsigned + all inclusions), then bench only
+    # the JSON serialization path.
+    _b_ip = proof_build_unsigned(_b_chain);
+    proof_with_all_inclusions(_b_ip);
+    var b3 = bench_new("proof_to_json_25");
+    bench_run(b3, &bench_proof_to_json, 3);
+    vec_push(benches, b3);
 
     println("");
     bench_report_all(benches);

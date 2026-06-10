@@ -204,12 +204,15 @@ The `signing_key` and `verifying_key` struct *layouts* don't
 change — those fields are pointers, and the buffers behind them
 just allocate to the right size for the chosen algorithm.
 
-### Performance (sigil 3.0.1, x86_64 dev host)
+### Performance (sigil 3.7.8 / cyrius 6.1.23, x86_64 dev host)
 
 | Op | Ed25519 | ML-DSA-65 | Notes |
 |----|--------:|----------:|-------|
-| `sign_entry`         | 1.1 ms | 3.5 ms | PQ sign rejection-loops average 4–5 iterations |
-| `verify_entry_signature` | 6.6 ms | 2.1 ms | ML-DSA verify is faster than Ed25519 verify in this build |
+| `sign_entry`         | 1.1 ms | 14.3 ms | PQ sign rejection-loops dominate; ~10× Ed25519 sign |
+| `verify_entry_signature` | 6.6 ms | 2.2 ms | ML-DSA verify is ~3× faster than Ed25519 verify in this build |
+
+(For reference, hybrid Ed25519+ML-DSA-65 on the same host: `sign_entry`
+3.9 ms, `verify_entry_signature` 8.6 ms — both keys exercised.)
 
 Per-entry signing in the millisecond range is fine for audit
 workloads (one entry per kernel-audit / aegis-event / stiva-state-

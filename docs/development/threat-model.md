@@ -377,16 +377,16 @@ The equivalent discipline is enforced through:
 
 ## Supply chain
 
-- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "5.10.34"`.
+- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.1.23"`.
   CI reads this field and installs the exact toolchain via the
   canonical `scripts/install.sh` flow. No wildcard ranges.
-- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.0.1"`.
+- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.7.8"`.
   `cyrius deps` resolves deterministically. Pins libro to sigil's
   full FIPS 204 ML-DSA stack.
-- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.9.3"`.
+- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.11.0"`.
   Same as above. Pins the prepared-statement / group-commit /
   STR-btree feature set.
-- **agnosys pin** in `cyrius.cyml` `[deps.agnosys] tag = "1.0.4"`.
+- **agnosys pin** in `cyrius.cyml` `[deps.agnosys] tag = "1.4.1"`.
   Direct pin (promoted from transitive-via-sigil in 2.5.0).
   Default builds DCE the TPM surface; opt-in via `-D LIBRO_TPM`.
 - **Zero third-party deps** beyond the Cyrius toolchain + sigil +
