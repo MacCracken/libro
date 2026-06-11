@@ -377,10 +377,10 @@ The equivalent discipline is enforced through:
 
 ## Supply chain
 
-- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.1.23"`.
+- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.1.35"`.
   CI reads this field and installs the exact toolchain via the
   canonical `scripts/install.sh` flow. No wildcard ranges.
-- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.7.8"`.
+- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.7.10"`.
   `cyrius deps` resolves deterministically. Pins libro to sigil's
   full FIPS 204 ML-DSA stack.
 - **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.11.0"`.

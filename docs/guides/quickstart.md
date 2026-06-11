@@ -47,9 +47,8 @@ include "lib/syscalls.cyr"
 include "lib/io.cyr"
 include "lib/freelist.cyr"
 include "lib/hashmap.cyr"
-include "lib/json.cyr"
+include "lib/bayan.cyr"       # json + bigint (cyrius 6.1.25 carve)
 include "lib/sakshi.cyr"
-include "lib/bigint.cyr"
 include "lib/chrono.cyr"
 include "lib/sigil.cyr"       # SHA-256 + Ed25519 + ct_eq
 include "lib/patra.cyr"       # SQL storage (only if you need PatraStore)

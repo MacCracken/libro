@@ -204,7 +204,7 @@ The `signing_key` and `verifying_key` struct *layouts* don't
 change — those fields are pointers, and the buffers behind them
 just allocate to the right size for the chosen algorithm.
 
-### Performance (sigil 3.7.8 / cyrius 6.1.23, x86_64 dev host)
+### Performance (sigil 3.7.10 / cyrius 6.1.35, x86_64 dev host)
 
 | Op | Ed25519 | ML-DSA-65 | Notes |
 |----|--------:|----------:|-------|

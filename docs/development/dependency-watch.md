@@ -9,8 +9,8 @@ and what to watch when upgrading.
 
 | Dep | Pin field | Current | Resolved by | Purpose |
 |-----|-----------|---------|-------------|---------|
-| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.1.23** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
-| sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`    | **3.7.8** | `cyrius deps` → `lib/sigil.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, HMAC, HKDF, AES-GCM, hex, constant-time compare |
+| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.1.35** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
+| sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`    | **3.7.10** | `cyrius deps` → `lib/sigil.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, HMAC, HKDF, AES-GCM, hex, constant-time compare |
 | patra            | `cyrius.cyml` `[deps.patra] tag = "…"`    | **1.11.0** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
 | agnosys          | `cyrius.cyml` `[deps.agnosys] tag = "…"`  | **1.4.1** | `cyrius deps` → `lib/agnosys.cyr` | TPM 2.0 primitives + Landlock syscall wrappers (opt-in via `-D LIBRO_TPM`) |
 
@@ -26,8 +26,8 @@ includes so the manifest stays load-bearing.
 |---------------|---------|
 | `alloc`       | Bump allocator for long-lived buffers |
 | `assert`      | Test assertions |
+| `bayan`       | Bundled data-format dist (cyrius 6.1.25 carve) — supplies `json` parse/build (canonical-JSON hashing) and `bigint` (timestamping DER); also bundles base64/csv/toml/cyml/u128. Back-compat shim forwards legacy `json_*`/`bigint_*` names. |
 | `bench`       | Nanosecond benchmarking harness |
-| `bigint`      | Arbitrary-precision integer ops (used by timestamping DER) |
 | `chrono`      | Civil date arithmetic, epoch-to-RFC-3339 conversion |
 | `ct`          | Constant-time helpers (`ct_eq_bytes`, `ct_select`) — sigil dep |
 | `fmt`         | Integer / hex formatting |
@@ -36,7 +36,6 @@ includes so the manifest stays load-bearing.
 | `fs`          | Filesystem helpers (path ops, stat) — sigil/patra dep |
 | `hashmap`     | String-keyed hash table (FNV-1a) |
 | `io`          | File I/O (`file_open`, `read`, `write`, `close`, flock) |
-| `json`        | JSON parse/build (used alongside libro's nested byte-walker) |
 | `keccak`      | SHA-3 / SHAKE-128/256 — sigil ML-DSA-65 dep (2.2.0) |
 | `process`     | Subprocess helpers — agnosys TPM dep |
 | `random`      | `getrandom(2)` wrapper (2.1.1 hardening: replaces `/dev/urandom` reads) |
@@ -175,6 +174,14 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   binary links but SIGILLs at first crypto use). 2.7.2 advanced the
   stack to cyrius 6.1.23 / sigil 3.7.8 / patra 1.11.0 / agnosys
   1.4.1 with no source-logic change.
+- **v2.7.3**: no new primitives — toolchain refresh to cyrius
+  **6.1.35** + sigil **3.7.10** (patra 1.11.0 / agnosys 1.4.1
+  already latest). The sigil bump is **required**: cyrius 6.1.35
+  hard-errors on a missing `include`, and sigil 3.7.8's dist left
+  bare `include "src/sha_ni.cyr"` / `src/aes_ni.cyr` lines that
+  3.7.10 `#ifndef`-guards. Also migrated the stdlib `json`/`bigint`
+  includes to the bundled **`bayan`** dist (6.1.25 carve); the
+  back-compat shim keeps `json_*`/`bigint_*` call sites unchanged.
 
 ## Watch list (ecosystem)
 

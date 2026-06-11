@@ -212,10 +212,10 @@ windows.
 
 Libro's supply chain is short and auditable:
 
-- **Cyrius toolchain**: pinned in `cyrius.cyml` `cyrius = "6.1.23"`.
+- **Cyrius toolchain**: pinned in `cyrius.cyml` `cyrius = "6.1.35"`.
   CI reads this field and installs exactly that toolchain via the
   canonical `scripts/install.sh` flow.
-- **sigil**: pinned in `cyrius.cyml` `[deps.sigil] tag = "3.7.8"`
+- **sigil**: pinned in `cyrius.cyml` `[deps.sigil] tag = "3.7.10"`
   (`lib/sigil.cyr` resolved by `cyrius deps`). Carries the FIPS 204
   ML-DSA-65 stack libro 2.2+ depends on.
 - **patra**: pinned in `cyrius.cyml` `[deps.patra] tag = "1.11.0"`

@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.3] - 2026-06-11
+
+**Toolchain refresh + stdlib `bayan` carve migration.** Cyrius pin
+6.1.23 → 6.1.35; sigil 3.7.8 → 3.7.10 (**required** by the new
+toolchain). No source *logic* changed — only the stdlib module names
+libro `include`s. libro compiles clean (default + `-D LIBRO_TPM`),
+lints and formats clean, full suite passes (**502 default / 514 TPM**)
+and all 33 benches + the fuzz harness run clean on the 6.1.35 stack.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.1.35"` (was 6.1.23).
+- **Sigil pin**: `[deps.sigil]` `tag = "3.7.10"` (was 3.7.8) —
+  **required, not cosmetic.** cyrius 6.1.35 **hard-errors on a missing
+  `include`** (previously a soft skip). sigil 3.7.8's `dist/sigil.cyr`
+  carried bare `include "src/sha_ni.cyr"` / `include "src/aes_ni.cyr"`
+  lines that distlib left un-inlined; under 6.1.35 those abort the
+  build (`cannot open include file: src/sha_ni.cyr`). sigil 3.7.10
+  wraps them in `#ifndef _SIGIL_SHA_NI_INCLUDED` (and the aes_ni
+  equivalent) and `#define`s the marker where the bundle inlines the
+  module, so the redundant include self-skips. libro's sigil surface
+  (SHA-256, Ed25519, HMAC, `ct_eq_bytes_lens`, hex) is unchanged.
+- **stdlib `json` + `bigint` → `bayan` carve (cyrius 6.1.25).** The
+  6.1.x line consolidated the former `json`/`bigint`/`base64`/`csv`/
+  `toml`/`cyml`/`u128` stdlib modules into one bundled `bayan` dist;
+  the standalone `lib/json.cyr` / `lib/bigint.cyr` no longer ship in
+  the 6.1.35 snapshot. Migrated `[deps] stdlib` (`"json"`, `"bigint"`
+  → `"bayan"`) and every `include "lib/json.cyr"` → `include
+  "lib/bayan.cyr"` (dropping the now-redundant `lib/bigint.cyr`
+  include) across `src/main.cyr`, all three benches, the fuzz harness,
+  and the `tests/` repros. **No call-site changes** — `bayan`'s
+  back-compat shim forwards the legacy `json_*` / `bigint_*` names, and
+  libro's only surface is `json_parse` / `json_get` (canonical-JSON
+  hashing). libro makes zero direct `bigint_*` calls; the old standalone
+  `bigint` include was dead weight.
+- **Patra / Agnosys pins** unchanged — `[deps.patra]` `1.11.0` and
+  `[deps.agnosys]` `1.4.1` are still the latest published tags; both
+  surfaces are unchanged on the 6.1.35 stack (PatraStore tests + perf
+  benches, TPM build + tests pass).
+- **`dist/libro.cyr`** regenerated; only the version header moved — the
+  bundled source (libro's own `[lib]` modules) is byte-identical, since
+  the carve touched only stdlib `include` lines, not bundled code.
+
+### Notes
+
+- `proof_to_json_25` holds at **~222us avg** on 6.1.35 (was ~218us on
+  6.1.23) — within run-to-run noise; the 2.7.2 bench-context fix stays
+  resolved.
+
 ## [2.7.2] - 2026-06-10
 
 **Toolchain + dependency refresh; long-standing `proof_to_json` bench

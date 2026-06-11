@@ -17,10 +17,13 @@ include "lib/syscalls.cyr"
 include "lib/io.cyr"
 include "lib/fs.cyr"
 include "lib/fmt.cyr"
-include "lib/json.cyr"
+# bayan (cyrius 6.1.25 carve) bundles the former json/bigint/base64/csv/
+# toml/cyml/u128 stdlib modules into one dist with a back-compat shim that
+# forwards the legacy json_*/bigint_* names. libro's only surface here is
+# json_parse/json_get (canonical-JSON hashing) — covered by the shim.
+include "lib/bayan.cyr"
 include "lib/sakshi.cyr"
 include "lib/chrono.cyr"
-include "lib/bigint.cyr"
 include "lib/tagged.cyr"
 include "lib/process.cyr"
 include "lib/ct.cyr"
