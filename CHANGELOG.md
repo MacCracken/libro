@@ -19,14 +19,19 @@ and all 33 benches + the fuzz harness run clean on the 6.1.35 stack.
 - **Cyrius pin**: `cyrius.cyml` `cyrius = "6.1.35"` (was 6.1.23).
 - **Sigil pin**: `[deps.sigil]` `tag = "3.7.10"` (was 3.7.8) —
   **required, not cosmetic.** cyrius 6.1.35 **hard-errors on a missing
-  `include`** (previously a soft skip). sigil 3.7.8's `dist/sigil.cyr`
-  carried bare `include "src/sha_ni.cyr"` / `include "src/aes_ni.cyr"`
-  lines that distlib left un-inlined; under 6.1.35 those abort the
-  build (`cannot open include file: src/sha_ni.cyr`). sigil 3.7.10
-  wraps them in `#ifndef _SIGIL_SHA_NI_INCLUDED` (and the aes_ni
-  equivalent) and `#define`s the marker where the bundle inlines the
-  module, so the redundant include self-skips. libro's sigil surface
-  (SHA-256, Ed25519, HMAC, `ct_eq_bytes_lens`, hex) is unchanged.
+  `include`** (previously a soft skip). sigil's `dist/sigil.cyr`
+  inlines the SHA-NI / AES-NI modules *and* retains an opt-in
+  `include "src/sha_ni.cyr"` / `include "src/aes_ni.cyr"` — the
+  intended path for source-tree consumers that pull in only
+  `src/sha256.cyr` and need the hardware-dispatch infrastructure. In
+  3.7.8 those opt-in includes were unguarded, so in the bundle (where
+  the file is absent from the fold) 6.1.35 aborts the build
+  (`cannot open include file: src/sha_ni.cyr`). sigil 3.7.10 wraps
+  them in `#ifndef _SIGIL_SHA_NI_INCLUDED` (and the aes_ni equivalent)
+  and `#define`s the marker where the bundle inlines the module, so
+  the redundant include self-skips — the proper fix for the dual
+  consumption model. libro's sigil surface (SHA-256, Ed25519, HMAC,
+  `ct_eq_bytes_lens`, hex) is unchanged.
 - **stdlib `json` + `bigint` → `bayan` carve (cyrius 6.1.25).** The
   6.1.x line consolidated the former `json`/`bigint`/`base64`/`csv`/
   `toml`/`cyml`/`u128` stdlib modules into one bundled `bayan` dist;

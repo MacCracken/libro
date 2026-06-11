@@ -177,9 +177,11 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
 - **v2.7.3**: no new primitives — toolchain refresh to cyrius
   **6.1.35** + sigil **3.7.10** (patra 1.11.0 / agnosys 1.4.1
   already latest). The sigil bump is **required**: cyrius 6.1.35
-  hard-errors on a missing `include`, and sigil 3.7.8's dist left
-  bare `include "src/sha_ni.cyr"` / `src/aes_ni.cyr` lines that
-  3.7.10 `#ifndef`-guards. Also migrated the stdlib `json`/`bigint`
+  hard-errors on a missing `include`, and sigil 3.7.8's dist carried
+  *unguarded* opt-in `include "src/sha_ni.cyr"` / `src/aes_ni.cyr`
+  lines (the intended path for source-tree consumers) that 3.7.10
+  `#ifndef`-guards so the bundle's redundant include self-skips. Also
+  migrated the stdlib `json`/`bigint`
   includes to the bundled **`bayan`** dist (6.1.25 carve); the
   back-compat shim keeps `json_*`/`bigint_*` call sites unchanged.
 
