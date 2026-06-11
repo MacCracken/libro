@@ -1862,7 +1862,14 @@ fn test_proof_from_json_legacy_path_accepted() {
     # would fail (side bit was lost in the emission), but the
     # parser shouldn't crash on the legacy shape: archival proofs
     # written by older libro versions still need to be readable.
-    var legacy = str_from("{\"tree_head\":{\"root\":\"deadbeef\",\"tree_size\":1,\"timestamp\":\"2026-01-01T00:00:00Z\",\"signature\":null,\"verifying_key\":null,\"algorithm\":null},\"entries\":[],\"inclusions\":[{\"index\":0,\"leaf\":\"abc\",\"root\":\"deadbeef\",\"path\":[\"aa\",\"bb\"]}]}");
+    # split across str_cat pieces to stay under the 120-char line cap;
+    # the concatenation is byte-identical to the original single literal.
+    var lj1 = str_from("{\"tree_head\":{\"root\":\"deadbeef\",\"tree_size\":1,");
+    var lj2 = str_from("\"timestamp\":\"2026-01-01T00:00:00Z\",\"signature\":null,");
+    var lj3 = str_from("\"verifying_key\":null,\"algorithm\":null},\"entries\":[],");
+    var lj4 = str_from("\"inclusions\":[{\"index\":0,\"leaf\":\"abc\",\"root\":\"deadbeef\",");
+    var lj5 = str_from("\"path\":[\"aa\",\"bb\"]}]}");
+    var legacy = str_cat(str_cat(str_cat(lj1, lj2), str_cat(lj3, lj4)), lj5);
     var ip = proof_from_json(legacy);
     assert(ip != 0, "legacy bare-string path: parser doesn't crash");
     var inclusions = iproof_inclusions(ip);
