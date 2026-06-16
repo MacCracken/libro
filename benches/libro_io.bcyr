@@ -26,6 +26,10 @@ include "lib/process.cyr"
 include "lib/ct.cyr"
 include "lib/keccak.cyr"
 include "lib/thread.cyr"
+# thread_local MUST precede sigil — sigil 3.6.0+ crypto_scratch banks
+# per-thread arrays over TLS; omit it and the binary links but SIGILLs
+# at first crypto use (exit 132). See CLAUDE.md BIG NOTE.
+include "lib/thread_local.cyr"
 include "lib/agnosys.cyr"
 include "lib/random.cyr"
 include "lib/sigil.cyr"

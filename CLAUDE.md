@@ -180,6 +180,20 @@ docs/ (when earned):
 > reintroduces a bare SIGILL on startup, a missing TLS-prerequisite
 > include is the first suspect.
 >
+> **This applies to EVERY harness that includes `lib/sigil.cyr`, not
+> just `src/main.cyr`.** The three benches (`benches/libro_*.bcyr`),
+> the fuzz harness (`fuzz/fuzz_libro.fcyr`), and the sigil-using
+> standalone repros (`tests/patra.cyr`, `tests/patra_standalone.cyr`,
+> `tests/fixup_limit_repro.cyr`) each need their own
+> `include "lib/thread_local.cyr"` before `lib/sigil.cyr` — they don't
+> inherit main.cyr's. They went un-updated from 2.7.1 until **2.7.4**,
+> when sigil 3.7.14 first exercised the TLS `crypto_scratch` path those
+> harnesses hit and CI's bench/fuzz **run** step started core-dumping
+> (build was always clean — the tell is `warning: undefined function
+> 'thread_local_init/set/get'` in the build log just before the SIGILL).
+> When adding a new sigil-using harness, copy main.cyr's
+> `thread.cyr → thread_local.cyr → … → sigil.cyr` ordering.
+>
 > *(Resolved, for history: the `-D LIBRO_TPM` per-file `#derive` cap —
 > see quirk #4. cyrius 6.0.53 raised it 64 → 512, so `tpm_anchor` is
 > back to `#derive(accessors)` and the 2.6.5 hand-written-accessor

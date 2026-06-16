@@ -32,6 +32,7 @@ include "lib/sakshi.cyr"
 include "lib/chrono.cyr"
 
 # --- sigil (4,259 lines) ---
+include "lib/thread_local.cyr"  # must precede sigil (crypto_scratch TLS) — else SIGILL
 include "lib/sigil.cyr"
 
 # --- patra (3,013 lines) ---

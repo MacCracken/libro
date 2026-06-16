@@ -19,6 +19,7 @@ include "lib/tagged.cyr"
 include "lib/sakshi.cyr"
 include "lib/chrono.cyr"
 include "lib/bayan.cyr"
+include "lib/thread_local.cyr"  # must precede sigil (crypto_scratch TLS) — else SIGILL
 include "lib/sigil.cyr"
 include "lib/patra.cyr"
 

@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Toolchain + dependency refresh.** Cyrius pin 6.1.35 → 6.2.11;
 sigil 3.7.10 → 3.7.14; patra 1.11.0 → 1.11.2; agnosys 1.4.1 → 1.4.3.
-No source *logic* changed — only pins. libro compiles clean
-(default + `-D LIBRO_TPM`), lints and formats clean, full suite
-passes (**502 default / 514 TPM**), and all 33 benches + the fuzz
-harness build/run clean on the 6.2.11 stack. The regenerated
-`dist/libro.cyr` is byte-identical to 2.7.3 apart from the version
-header — the source modules did not move.
+No library *logic* changed — only pins, plus a required
+`thread_local` include fix in the bench/fuzz/repro harnesses (see
+Fixed). libro compiles clean (default + `-D LIBRO_TPM`), lints and
+formats clean, full suite passes (**502 default / 514 TPM**), and all
+33 benches + the fuzz harness build *and run* clean on the 6.2.11
+stack. The regenerated `dist/libro.cyr` is byte-identical to 2.7.3
+apart from the version header — the `src/` library modules did not
+move.
 
 ### Changed
 
@@ -22,6 +24,26 @@ header — the source modules did not move.
 - **Sigil pin**: `[deps.sigil]` `tag = "3.7.14"` (was 3.7.10).
 - **Patra pin**: `[deps.patra]` `tag = "1.11.2"` (was 1.11.0).
 - **Agnosys pin**: `[deps.agnosys]` `tag = "1.4.3"` (was 1.4.1).
+
+### Fixed
+
+- **SIGILL in the bench + fuzz harnesses (CI-breaking).** The three
+  bench binaries (`benches/libro_*.bcyr`) and the fuzz harness
+  (`fuzz/fuzz_libro.fcyr`) included `lib/sigil.cyr` **without**
+  `lib/thread_local.cyr` before it. `src/main.cyr` got that include in
+  2.7.1 (sigil 3.6.0), but the standalone harnesses were never updated —
+  a latent landmine that stayed quiet only because sigil 3.7.10's
+  `crypto_scratch` didn't exercise the TLS path those harnesses hit.
+  sigil 3.7.14 does, so every harness linked clean but **SIGILL'd at
+  first crypto use (exit 132, `Illegal instruction`)** — CI's
+  `for f in benches/*.bcyr` / `fuzz/*.fcyr` run-step core-dumped. Added
+  `include "lib/thread_local.cyr"` (immediately after `lib/thread.cyr`,
+  matching main.cyr) to all three benches and the fuzz harness; also to
+  the three sigil-using standalone repros under `tests/`
+  (`patra.cyr`, `patra_standalone.cyr`, `fixup_limit_repro.cyr`), which
+  CI does not run but would SIGILL if invoked. All now run exit 0. This
+  is the exact failure mode CLAUDE.md's BIG NOTE warns about — a
+  build-only check misses it; the harness must be *run*.
 
 ### Notes
 
