@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.7.3 (2026-06-11)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.1.35 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.7.4 (2026-06-15)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.2.11 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -35,7 +35,7 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, HMAC, hex, constant-time compare (Cyrius stdlib `lib/sigil.cyr`)
-- **patra** — SQL-backed storage (bundled v1.11.0 at `lib/patra.cyr`, resynced from upstream `dist/patra.cyr`)
+- **patra** — SQL-backed storage (bundled v1.11.2 at `lib/patra.cyr`, resynced from upstream `dist/patra.cyr`)
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -119,7 +119,7 @@ benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_jso
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
-lib/                    Vendored Cyrius stdlib + patra v1.10.3 bundle
+lib/                    Vendored Cyrius stdlib + patra v1.11.2 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
 docs/                   Architecture, guides, compliance, ADRs, audit reports
@@ -149,7 +149,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.1.35"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.2.11"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -165,7 +165,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.1.35)
+## Known Cyrius Compiler Quirks (6.2.11)
 
 > ## ⚠️ BIG NOTE — sigil 3.6.0 needs `lib/thread_local.cyr` before it (or SIGILL)
 >
@@ -195,6 +195,7 @@ Quirks still worth knowing:
 5. **TLS-backed stdlib modules must precede their consumers.** `lib/thread_local.cyr` (cyrius ≥ 6.0.52) installs per-thread storage via the CPU thread-pointer register; modules that bank state over it (sigil 3.6.0's `crypto_scratch`) must be `include`d *after* it. Wrong order links cleanly but SIGILLs at first use. See the BIG NOTE above.
 6. **A missing `include` is now a HARD ERROR (cyrius ≥ 6.1.35).** Earlier toolchains soft-skipped an `include` whose file was absent; 6.1.35 aborts the build with `error: cannot open include file: <path>`. This surfaced in the 2.7.3 bump. sigil's `dist/sigil.cyr` *inlines* the sha_ni / aes_ni modules but **intentionally** retains an opt-in `include "src/sha_ni.cyr"` / `include "src/aes_ni.cyr"` — libs are opt-in: a source-tree consumer that includes only `src/sha256.cyr` relies on that line to pull in the hardware-dispatch infra. In sigil 3.7.8 those opt-in includes were **unguarded**, so inside the bundle (where the file is absent from the fold) they soft-skipped on 6.1.23 but hard-error on 6.1.35. **Fix is the sigil 3.7.10 bump** — it `#ifndef`-guards them (`_SIGIL_SHA_NI_INCLUDED` / aes_ni marker) and `#define`s the marker where the bundle inlines the module, so the redundant include self-skips. This is the correct fix for the dual consumption model, not a workaround — there is no distlib bug. If a future dep bump reintroduces `cannot open include file: src/*.cyr`, the dep shipped an *unguarded* opt-in include — bump the dep to a guarded release, don't vendor the missing file.
 7. **stdlib `bayan` / `ganita` carves (cyrius 6.1.25+).** The 6.1.x line consolidated standalone stdlib modules into bundled dists: **`bayan`** absorbs `json` / `bigint` / `base64` / `csv` / `toml` / `cyml` / `u128`; **`ganita`** absorbs `matrix` / `linalg` / `math_advanced`. The old single-module files (`lib/json.cyr`, `lib/bigint.cyr`, …) no longer ship in the snapshot, so `include "lib/json.cyr"` fails (see quirk 6). libro `include`s `lib/bayan.cyr` and lists `"bayan"` in `[deps] stdlib` (2.7.3). Each bundle carries a `_compat.cyr` shim forwarding the **legacy `json_*` / `bigint_*` names**, so call sites need no change — but the shim is a deprecation-window courtesy; prefer the canonical `bayan_*` prefix for new code.
+8. **Duplicate-global-symbol warning (cyrius ≥ 6.2.11).** The 6.2.11 linker emits `warning: duplicate symbol '<NAME>' redefined with conflicting value (last definition wins)` when two flat globals share a name. libro trips it on `ERR_IO` / `ERR_UNKNOWN` (`lib/agnosys.cyr:82-83`) — both libro's `src/error.cyr` error enum and agnosys's ported error enum define those names. This is **pre-existing and benign**: each name resolves consistently within a build and the full suite passes (502 / 514). It was silent before 6.2.11 began diagnosing it — *not* a regression from the agnosys 1.4.3 bump. Surfaced in the 2.7.4 toolchain refresh. Only act if a *value*-dependent test starts failing; a bare warning here is informational.
 
 ### Resolved (stop treating as bugs in 5.4.2)
 

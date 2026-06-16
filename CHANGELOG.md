@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.4] - 2026-06-15
+
+**Toolchain + dependency refresh.** Cyrius pin 6.1.35 → 6.2.11;
+sigil 3.7.10 → 3.7.14; patra 1.11.0 → 1.11.2; agnosys 1.4.1 → 1.4.3.
+No source *logic* changed — only pins. libro compiles clean
+(default + `-D LIBRO_TPM`), lints and formats clean, full suite
+passes (**502 default / 514 TPM**), and all 33 benches + the fuzz
+harness build/run clean on the 6.2.11 stack. The regenerated
+`dist/libro.cyr` is byte-identical to 2.7.3 apart from the version
+header — the source modules did not move.
+
+### Changed
+
+- **Cyrius pin**: `cyrius.cyml` `cyrius = "6.2.11"` (was 6.1.35).
+- **Sigil pin**: `[deps.sigil]` `tag = "3.7.14"` (was 3.7.10).
+- **Patra pin**: `[deps.patra]` `tag = "1.11.2"` (was 1.11.0).
+- **Agnosys pin**: `[deps.agnosys]` `tag = "1.4.3"` (was 1.4.1).
+
+### Notes
+
+- **New benign diagnostic under 6.2.11.** The 6.2.11 linker now warns
+  on duplicate global symbols (`duplicate symbol 'ERR_UNKNOWN' / 'ERR_IO'
+  redefined with conflicting value (last definition wins)` at
+  `lib/agnosys.cyr:82-83`). This is a *pre-existing* name collision
+  between libro's `src/error.cyr` error enum and agnosys's ported error
+  enum — both define `ERR_IO` / `ERR_UNKNOWN` as flat globals. The
+  collision is harmless (each name resolves consistently within the
+  build; all 502/514 tests pass) and was simply silent before 6.2.11
+  began diagnosing it. Not a regression from the agnosys bump.
+
 ## [2.7.3] - 2026-06-11
 
 **Toolchain refresh + stdlib `bayan` carve migration.** Cyrius pin
