@@ -33,6 +33,19 @@ unblocker.
   multi-node sync. Currently libro is single-writer per chain;
   FileStore's `flock` and PatraStore's patra-level locking handle
   single-node multi-process.
+- [ ] **Re-source the TPM primitives from sigil (agnosys → agnodrm
+  decomposition).** libro's only agnosys surface is the TPM
+  primitives `tpm_seal` / `tpm_unseal` / `tpm_detect` (pinned via
+  `dist/agnosys.cyr`); libro's own `tpm_anchor*` layer in
+  `src/tpm_anchor.cyr` wraps them and is unaffected. In the agnosys →
+  agnodrm decomposition the TPM stack moved to **sigil** (3.8.1
+  internalized `tpm_core.cyr`), so when agnosys is renamed to agnodrm
+  and vacates trust, libro swaps `[deps.agnosys]` → `[deps.sigil]` for
+  these three calls. **Unblocker: ✅ satisfied** — sigil **3.9.0**
+  promoted the trust API to `dist/sigil.cyr` (it now exports
+  `tpm_seal`/`tpm_unseal`/`tpm_detect` directly, same names libro
+  calls). **Trigger:** the agnodrm rename. No libro source change
+  beyond the dep line (`[deps.sigil]` ≥ 3.9.0) + re-vendor.
 
 ## Tracked in other repos
 

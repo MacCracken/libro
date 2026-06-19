@@ -87,7 +87,7 @@ stdlib = [
 
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "3.7.14"
+tag = "3.9.0"
 modules = ["dist/sigil.cyr"]
 
 [deps.patra]
@@ -95,16 +95,10 @@ git = "https://github.com/MacCracken/patra.git"
 tag = "1.11.2"
 modules = ["dist/patra.cyr"]
 
-# Agnosys provides TPM primitives + Linux syscall wrappers libro
-# uses through src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM=1).
-# Promoted to a direct pin in 2.5.0 so the agnosys version libro
-# tests against is the one libro consumers get, independent of
-# sigil's own pin movements. Advanced past sigil's 1.0.4 floor in
-# 2.6.3 — libro's only agnosys surface is tpm_seal/tpm_unseal +
-# syscall wrappers, both unchanged across the 1.0 → 1.2 line, so
-# the direct pin tracks the latest published tag rather than the
-# transitive floor.
-[deps.agnosys]
-git = "https://github.com/MacCracken/agnosys.git"
-tag = "1.4.3"
-modules = ["dist/agnosys.cyr"]
+# [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).
+# libro's only agnosys surface was the TPM primitives (tpm_seal / tpm_unseal /
+# tpm_detect) used by src/tpm_anchor.cyr; the agnosys → agnodrm decomposition
+# moved the trust stack into sigil, which promoted it to first-class in
+# dist/sigil.cyr at 3.9.0. So tpm now resolves from [deps.sigil] above (bumped
+# 3.7.14 → 3.9.0) and the separate agnosys pin is gone. libro's tpm_anchor.cyr
+# is unchanged — same symbol names, now sourced from sigil.

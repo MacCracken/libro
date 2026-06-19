@@ -35,7 +35,6 @@ include "lib/thread.cyr"
 # runtime. Requires syscalls + alloc (included above).
 include "lib/thread_local.cyr"
 include "lib/slice.cyr"
-include "lib/agnosys.cyr"
 include "lib/random.cyr"
 
 # ================================================================
@@ -44,7 +43,10 @@ include "lib/random.cyr"
 include "lib/patra.cyr"
 
 # ================================================================
-# Sigil — crypto primitives (SHA-256, Ed25519, HMAC, hex, ct)
+# Sigil — crypto primitives (SHA-256, Ed25519, HMAC, hex, ct) + the
+# TPM trust API (tpm_seal / tpm_unseal / tpm_detect, sigil 3.9.0) that
+# src/tpm_anchor.cyr uses. TPM was sourced from agnosys until the
+# agnosys → agnodrm decomposition moved the trust stack into sigil.
 # ================================================================
 include "lib/sigil.cyr"
 

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.5] - 2026-06-19
+
+**Re-sourced the TPM primitives from sigil (agnosys → agnodrm decomposition).**
+libro's only agnosys surface was the TPM primitives (`tpm_seal` / `tpm_unseal` /
+`tpm_detect`) used by `src/tpm_anchor.cyr`. The agnosys → agnodrm decomposition
+moved the trust stack into **sigil**, which promoted it to first-class in
+`dist/sigil.cyr` at 3.9.0.
+
+### Changed
+- **Dropped `[deps.agnosys]`**; bumped `[deps.sigil]` **3.7.14 → 3.9.0** (now the
+  TPM provider). Removed `include "lib/agnosys.cyr"` from `src/main.cyr` —
+  `tpm_anchor.cyr`'s `tpm_seal` / `tpm_unseal` / `tpm_detect` calls now resolve
+  from `lib/sigil.cyr` (same symbol names, unchanged). No library logic changed.
+- Verified: `cyrius deps` clean (sigil 3.9.0 vendored, stale `lib/agnosys.cyr`
+  pruned), `cyrius build -D LIBRO_TPM` OK — the TPM path compiles against sigil's
+  trust API.
+
 ## [2.7.4] - 2026-06-15
 
 **Toolchain + dependency refresh.** Cyrius pin 6.1.35 → 6.2.11;
