@@ -15,12 +15,17 @@ moved the trust stack into **sigil**, which promoted it to first-class in
 
 ### Changed
 - **Dropped `[deps.agnosys]`**; bumped `[deps.sigil]` **3.7.14 → 3.9.0** (now the
-  TPM provider). Removed `include "lib/agnosys.cyr"` from `src/main.cyr` —
-  `tpm_anchor.cyr`'s `tpm_seal` / `tpm_unseal` / `tpm_detect` calls now resolve
-  from `lib/sigil.cyr` (same symbol names, unchanged). No library logic changed.
+  TPM provider). Removed `include "lib/agnosys.cyr"` from **every harness** that
+  carried it — `src/main.cyr`, `fuzz/fuzz_libro.fcyr`, and the three benches
+  (`benches/libro_{core,proof,io}.bcyr`). `tpm_anchor.cyr`'s `tpm_seal` /
+  `tpm_unseal` / `tpm_detect` calls now resolve from `lib/sigil.cyr` (same symbol
+  names, unchanged). No library logic changed. (Those stale agnosys includes were
+  no-op duplicates that, against sigil 3.9.0's now-bundled trust/error stack,
+  produced last-wins symbol clashes — `luks_config_name`, `syserr_*` — and a
+  crash in `fuzz_canonical_json_hash`; dropping them clears both.)
 - Verified: `cyrius deps` clean (sigil 3.9.0 vendored, stale `lib/agnosys.cyr`
-  pruned), `cyrius build -D LIBRO_TPM` OK — the TPM path compiles against sigil's
-  trust API.
+  pruned), `cyrius build -D LIBRO_TPM` OK, all 7 fuzz harnesses pass (`fuzz_libro`
+  no crashes), and the benches build + run clean.
 
 ## [2.7.4] - 2026-06-15
 
