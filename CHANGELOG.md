@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.6] - 2026-06-21
+
+**AGNOS syscall-ABI correctness — entropy / wall-clock / file-seek.** libro's
+audit-chain primitives hardcoded Linux x86_64 syscall numbers that mis-dispatch
+on the AGNOS ring-3 target (agnos reuses ABI numbers — e.g. #8 is `dup`, not
+`lseek`), so `cyrius build --agnos` would silently misbehave at runtime.
+Source-only; Linux behavior byte-identical (symbolic forms resolve to the same
+Linux numbers via the syscall peer).
+
+### Fixed
+
+- **`src/entry.cyr` `uuid_v4` — entropy under `#ifdef CYRIUS_TARGET_AGNOS`.** agnos
+  has no `/dev/urandom`; the UUID-v4 seed now draws from `getrandom` #45
+  (RDRAND-seeded), same fail-closed contract as the Linux path. The raw
+  `syscall(1)` / `syscall(60)` fail-closed write+exit became symbolic `SYS_WRITE` /
+  `SYS_EXIT` (correct on both targets — agnos `exit` is #0, not #60).
+- **`src/entry.cyr` `get_epoch_secs` — wall-clock under `#ifdef CYRIUS_TARGET_AGNOS`.**
+  agnos `time_unix` #46 returns unix seconds in rax (no timespec); Linux keeps
+  `clock_gettime` #228.
+- **`src/chain_io.cyr` + `src/file_store.cyr` — file size/seek via symbolic
+  `SYS_LSEEK`.** Three raw `syscall(8, …)` calls (`_fs_file_size` + two SEEK_SET
+  rewinds) were Linux `lseek`, but **#8 is `dup` on agnos** → a dup'd fd returned
+  as a byte count, silently corrupting every FileStore size read. Now
+  `syscall(SYS_LSEEK, …)` (Linux #8 / agnos #58).
+
 ## [2.7.5] - 2026-06-19
 
 **Re-sourced the TPM primitives from sigil (agnosys → agnodrm decomposition).**

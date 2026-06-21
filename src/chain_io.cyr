@@ -69,7 +69,7 @@ fn chain_import(path) {
 
     var fsize = _fs_file_size(fd);
     if (fsize < 0) { fsize = 0; }
-    syscall(8, fd, 0, 0);
+    syscall(SYS_LSEEK, fd, 0, 0);   # SEEK_SET — was raw syscall(8): agnos #8=dup, lseek=#58
     var buf = alloc(fsize + 1);
     var total = 0;
     var done = 0;

@@ -59,8 +59,9 @@ var _fs_buf = 0;
 var _fs_buf_size = 0;
 
 # lseek(fd, 0, SEEK_END) — returns the file's size in bytes, or -1 on error.
+# Symbolic SYS_LSEEK (Linux #8 / agnos #58) — a raw syscall(8) is `dup` on agnos.
 fn _fs_file_size(fd) {
-    return syscall(8, fd, 0, 2);
+    return syscall(SYS_LSEEK, fd, 0, 2);
 }
 
 fn filestore_load_all(s) {
@@ -78,7 +79,7 @@ fn filestore_load_all(s) {
     # Size the read buffer to the file exactly (fall back to 4 KB for empty).
     var fsize = _fs_file_size(fd);
     if (fsize < 0) { fsize = 0; }
-    syscall(8, fd, 0, 0);  # lseek back to SEEK_SET so file_read starts at 0
+    syscall(SYS_LSEEK, fd, 0, 0);  # lseek back to SEEK_SET so file_read starts at 0
     var needed = fsize + 1;
     if (needed < 4096) { needed = 4096; }
     if (needed > _fs_buf_size) {

@@ -73,17 +73,27 @@ fn uuid_v4(buf) {
     # Fail-closed on /dev/urandom unavailability: a predictable UUID would
     # make the libro audit chain forgeable. Upstream libro 1.0.3 silently
     # ignored short reads; t-ron's vendored copy aborts instead.
+#ifdef CYRIUS_TARGET_AGNOS
+    # agnos has no /dev/urandom — draw 16 bytes from getrandom #45
+    # (RDRAND-seeded CSPRNG). Same fail-closed contract as the Linux path.
+    var got = syscall(SYS_GETRANDOM, buf, 16, 0);
+    if (got != 16) {
+        syscall(SYS_WRITE, 2, "libro: getrandom failed (fail-closed)\n", 38);
+        syscall(SYS_EXIT, 74);
+    }
+#else
     var fd = file_open("/dev/urandom", 0, 0);
     if (fd < 0) {
-        syscall(1, 2, "libro: /dev/urandom unavailable (fail-closed)\n", 46);
-        syscall(60, 74);   # EX_IOERR
+        syscall(SYS_WRITE, 2, "libro: /dev/urandom unavailable (fail-closed)\n", 46);
+        syscall(SYS_EXIT, 74);   # EX_IOERR
     }
     var got = file_read(fd, buf, 16);
     file_close(fd);
     if (got != 16) {
-        syscall(1, 2, "libro: short read from /dev/urandom (fail-closed)\n", 50);
-        syscall(60, 74);
+        syscall(SYS_WRITE, 2, "libro: short read from /dev/urandom (fail-closed)\n", 50);
+        syscall(SYS_EXIT, 74);
     }
+#endif
     # Version 4: byte 6 high nibble = 0100
     var b6 = load8(buf + 6) & 0xFF;
     store8(buf + 6, (b6 & 0x0F) | 0x40);
@@ -149,10 +159,15 @@ fn uuid_format(buf) {
 var _ts_buf = 0;
 
 fn get_epoch_secs() {
+#ifdef CYRIUS_TARGET_AGNOS
+    # agnos: time_unix #46 returns unix seconds directly in rax (no timespec).
+    return syscall(SYS_TIME_UNIX);
+#else
     if (_ts_buf == 0) { _ts_buf = alloc(16); }
     # clock_gettime(CLOCK_REALTIME=0, &timespec)
     syscall(228, 0, _ts_buf);
     return load64(_ts_buf);
+#endif
 }
 
 # Format helpers for zero-padded decimals
