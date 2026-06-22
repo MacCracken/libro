@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.7] - 2026-06-21
+
+**Dep-pin bump: patra 1.11.2 → 1.12.3 (completes the agnos M6 chain).** libro 2.7.6
+shipped its own AGNOS syscall-ABI fixes but still pinned the pre-agnos patra
+(1.11.2), whose raw `syscall(SYS_FUTEX)` / `syscall(201)` mis-dispatch on the AGNOS
+ring-3 target. patra 1.12.3 moved its mutex onto the `mutex_lock`/`mutex_unlock`
+abstraction (a no-op on single-core agnos — no `SYS_FUTEX` referenced) and routed
+the WAL salt timestamp to `time_unix`#46. Bumping the pin propagates that fix to
+libro consumers — descent's `--agnos` build now resolves patra 1.12.3 and compiles
+the full chain clean. No libro source change; Linux behavior byte-identical.
+
+### Changed
+- **`cyrius.cyml` `[deps.patra]` 1.11.2 → 1.12.3.**
+
 ## [2.7.6] - 2026-06-21
 
 **AGNOS syscall-ABI correctness — entropy / wall-clock / file-seek.** libro's
