@@ -92,7 +92,7 @@ modules = ["dist/sigil.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.11.2"
+tag = "1.12.3"
 modules = ["dist/patra.cyr"]
 
 # [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).
