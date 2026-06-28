@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.8] — 2026-06-27
+
+**Ship the `dist/libro.deps` dependency sidecar + adopt the cyrius 6.2.48 toolchain.**
+`cyrius distlib` (≥6.2.48) now emits `dist/libro.deps` alongside `dist/libro.cyr` — a
+sidecar listing the 22 stdlib `lib/` leaves the libro fold needs in scope
+(ct/keccak/random/thread/thread_local/fs/process/hashmap/slice/bayan/… captured from
+the `src/main.cyr` umbrella; the `sigil`/`patra` named-dep folds are excluded, since
+they resolve transitively). A consumer (e.g. descent) can now declare just
+`[deps.libro]` and `cyrius deps` auto-resolves the whole crypto/store stdlib surface in
+topological order, with **no hand-ordered list and no omit-one→SIGILL trap**. Toolchain
+pin 6.2.11 → **6.2.48**; sigil pin 3.9.0 → **3.9.5** (picks up the certpin `run_capture`
+5-arg fix + sigil's own sidecar). `dist/libro.cyr` itself is unchanged — the sidecar is
+purely additive.
+
 ## [2.7.7] - 2026-06-21
 
 **Dep-pin bump: patra 1.11.2 → 1.12.3 (completes the agnos M6 chain).** libro 2.7.6
