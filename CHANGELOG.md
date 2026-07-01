@@ -20,6 +20,9 @@ host and `--agnos`, and the full test battery passes **502/502**.
 - Toolchain pin `6.2.48` → `6.3.15`.
 - `sigil` dep `3.9.5` → `3.9.8`, `patra` dep `1.12.3` → `1.12.7` (both migrated
   to 6.3.15; `path=` added for local sibling resolution alongside the tags).
+- `[deps] stdlib` += `atomic`, `sync` — required by the patra 1.12.7 dist
+  (its lock-free queue + mutex primitives); `cyrius deps` errors
+  "cannot read ./lib/sync.cyr" without them.
 
 ## [2.7.8] — 2026-06-27
 

@@ -75,6 +75,8 @@ stdlib = [
     "keccak",
     "thread",
     "thread_local",
+    "atomic",
+    "sync",
     "bench",
     "fnptr",
     "random",
