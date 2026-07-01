@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.2.48"
+cyrius = "6.3.15"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -88,12 +88,13 @@ stdlib = [
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.9.5"
+tag = "3.9.8"
 modules = ["dist/sigil.cyr"]
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-tag = "1.12.3"
+path = "../patra"
+tag = "1.12.7"
 modules = ["dist/patra.cyr"]
 
 # [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.9] — 2026-06-30
+
+**Toolchain pin → 6.3.15 + dep refresh** (base-stack agnos-readiness migration,
+tier 2). No source change — libro's own code is already agnos-clean and
+buffer-safe (the ecosystem `var X[N]` stack-local audit found zero own-code
+overflows). The `file_store.cyr` append path (`file_append_locked`) is handled
+by the **stdlib** on agnos (6.3.15 `io.cyr` uses an explicit `SEEK_END`+write
+under the `LOCK_EX` hold since the agnos kernel doesn't honor `AO_APPEND` yet),
+so no libro-side guard is needed. Verified: `src/main.cyr` builds clean on both
+host and `--agnos`, and the full test battery passes **502/502**.
+
+### Changed
+- Toolchain pin `6.2.48` → `6.3.15`.
+- `sigil` dep `3.9.5` → `3.9.8`, `patra` dep `1.12.3` → `1.12.7` (both migrated
+  to 6.3.15; `path=` added for local sibling resolution alongside the tags).
+
 ## [2.7.8] — 2026-06-27
 
 **Ship the `dist/libro.deps` dependency sidecar + adopt the cyrius 6.2.48 toolchain.**
