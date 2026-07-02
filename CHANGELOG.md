@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.10] — 2026-07-02
+
+**Toolchain pin → 6.3.31 — official freelist agnos-mmap fix.** Pins cyrius `6.3.15` → `6.3.31`
+and re-syncs the vendored stdlib, landing the upstream fix for the freelist allocator's agnos
+mmap ABI. Before it, `fl_alloc` (the audit chain's allocator, reached via `chain_new` /
+`filestore_open`) issued the Linux 6-arg `mmap(addr, len, …)` with the **length in arg2** — but
+agnos `mmap#27` reads the length from **arg1** (`kernel/core/syscall.cyr`: `sys_mmap(arg1)`) →
+`mmap(0)` → 0 (MAP_FAILED) → the next store SIGSEGV'd. This crashed **libro's audit chain on
+agnos** on first use. Surfaced running `cyrius-yeomans-descent` under mirshi (descent's
+`persist_init` → `chain_new()` → `fl_alloc(32)`); root-caused + fixed upstream in cyrius 6.3.31
+(issue `2026-07-02-freelist-agnos-mmap-abi`).
+
+### Changed
+- **Toolchain pin `6.3.15` → `6.3.31`** (`cyrius.cyml`) + `cyrius lib sync` re-vendored the
+  stdlib. The synced `lib/freelist.cyr` now dispatches its mmap by target (a `_fl_mmap` helper:
+  single-arg `syscall(SYS_MMAP, length)` under `CYRIUS_TARGET_AGNOS`, the Linux/macOS 6-arg form
+  otherwise), matching the file's existing `_fl_map_flags` pattern. Non-agnos targets unchanged.
+
+### Notes
+- The fix is now the **official stdlib freelist** (byte-identical to `6.3.31`'s), not a local
+  hand-patch — it survives future `cyrius lib sync`, and benefits **every** agnos `fl_alloc`
+  consumer (libro, sigil), not just descent.
+- No `dist/libro.cyr` content change — `freelist` is a stdlib dep, not a bundled `[lib]` module;
+  the dist regen only restamps the version.
+- Verified: builds host + `--agnos`, full battery **502/502**, and descent's audit chain
+  (`persist: player saves + audit chain ready`) runs under mirshi.
+
 ## [2.7.9] — 2026-06-30
 
 **Toolchain pin → 6.3.15 + dep refresh** (base-stack agnos-readiness migration,
