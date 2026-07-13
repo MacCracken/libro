@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] — 2026-07-13
+
+**Toolchain pin → 6.4.62 (cyrius 6.4 series) + dep refresh — sigil 3.11.1, patra 1.12.9.**
+Adopts the cyrius 6.4 line and moves the crypto/storage deps to their latest tags. No libro
+source change — the full battery passes unchanged (**502** default / **514** with `-D LIBRO_TPM`),
+the fuzz harness (12 targets) and all three bench binaries build-and-**run** clean, and the
+`dist/libro.cyr` bundle is version-restamped only (no bundled-source delta; `dist/libro.deps`
+unchanged at 22 stdlib leaves). The minor version bump tracks the 6.3 → 6.4 toolchain series
+jump and the sigil 3.9 → 3.11 minor bump.
+
+### Changed
+- **Toolchain pin `6.3.31` → `6.4.62`** (`cyrius.cyml`). `rm -rf ./lib && cyrius deps` re-vendored
+  the stdlib snapshot.
+- **`sigil` `3.9.8` → `3.11.1`**, **`patra` `1.12.7` → `1.12.9`** (`[deps.*]` tags; both already on
+  the 6.4 line — sigil pins 6.4.48, patra 6.3.5, both build clean under 6.4.62). No new
+  `[deps] stdlib` entries required — `atomic`/`sync` (added in 2.7.9 for patra) still cover it.
+
+### Notes
+- **Binary grew ~1.1 MB → ~14 MB — all in `.bss`, benign.** cyrius 6.4.x promotes an oversized
+  array local past the per-fn stack budget into a zero-init **shared global** rather than risk a
+  stack overflow (compiler note: *"oversized array local kept in shared global … use alloc()"*).
+  The trigger is **sigil's banked `crypto_scratch`** (`var X[N * SIGIL_CRYPTO_BANKS]`, 64 banks) —
+  its array-local sizes are byte-identical between sigil 3.9.8 and 3.11.1, so this is purely the
+  6.4.x codegen policy, **not** the dep bump. `.text` is unchanged at ~1 MB; the ~13 MB `.bss` is
+  zero-filled and lazily mapped by the OS (negligible resident memory unless touched). The
+  distribution artifact `dist/libro.cyr` is source, not a binary — downstream consumers are
+  unaffected.
+- **New advisory lint note (informational, not enforced).** cyrius 6.4.x's lint proposes leaf libs
+  prefix their error enum (`LIBRO_ERR_*`) instead of bare `ERR_*` to avoid the flat enum-const
+  collision reserved for the sakshi base logger (proposal
+  `2026-07-11-error-enum-namespace-lint-gate`). It surfaces as a `note` on `src/error.cyr` — CI's
+  lint step is non-fatal (`cyrius lint … || true`) and the suite is unaffected. Related to the
+  pre-existing `ERR_IO`/`ERR_UNKNOWN` collision (CLAUDE.md quirk #8); the enum-namespace rename is
+  a separate concern, not part of this bump.
+- Verified end-to-end: default build **502/502**, `-D LIBRO_TPM` **514/514**, fuzz no-crash, all
+  three bench binaries run clean, `cyrfmt --check` clean, and a simulated-consumer compile of
+  `dist/libro.cyr` (chain create + append) exits 0.
+
 ## [2.7.10] — 2026-07-02
 
 **Toolchain pin → 6.3.31 — official freelist agnos-mmap fix.** Pins cyrius `6.3.15` → `6.3.31`

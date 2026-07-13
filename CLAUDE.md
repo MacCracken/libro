@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.7.4 (2026-06-15)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.2.11 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.8.0 (2026-07-13)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.4.62 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -25,17 +25,17 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 
 ## Current State
 
-- **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra + agnosys
+- **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra (agnosys dropped at the agnosys → agnodrm decomposition — TPM now sourced from sigil ≥ 3.9.0)
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 502 default / 514 with `-D LIBRO_TPM` (all pass)
-- **Binary**: ~1.1 MB (default; LIBRO_TPM build similar). Under cyrius 6.0.x, DCE NOPs dead code (~520 KB NOPed in the default build) but no longer shrinks the binary — `CYRIUS_DCE=1` and a plain build are byte-identical. The ~456 KB figure was 5.x-era, where DCE stripped.
+- **Binary**: ~14 MB (default; LIBRO_TPM similar) **as of cyrius 6.4.x** — but only ~1 MB is `.text`; the ~13 MB is zero-init `.bss` from 6.4.x promoting sigil's banked `crypto_scratch` array locals off the stack into a shared global (see quirk #9). Under 6.0.x–6.3.x it was ~1.1 MB. The `.bss` is lazily mapped (negligible RSS), and `dist/libro.cyr` is source not a binary — size is a `build/libro` metric only. DCE still NOPs dead code (~540 KB NOPed) but doesn't shrink the file; `CYRIUS_DCE=1` and a plain build are byte-identical.
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, HMAC, hex, constant-time compare (Cyrius stdlib `lib/sigil.cyr`)
-- **patra** — SQL-backed storage (bundled v1.11.2 at `lib/patra.cyr`, resynced from upstream `dist/patra.cyr`)
+- **patra** — SQL-backed storage (pinned v1.12.9 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract)
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -149,7 +149,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.2.11"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.4.62"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -165,7 +165,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.2.11)
+## Known Cyrius Compiler Quirks (6.4.62)
 
 > ## ⚠️ BIG NOTE — sigil 3.6.0 needs `lib/thread_local.cyr` before it (or SIGILL)
 >
@@ -209,7 +209,8 @@ Quirks still worth knowing:
 5. **TLS-backed stdlib modules must precede their consumers.** `lib/thread_local.cyr` (cyrius ≥ 6.0.52) installs per-thread storage via the CPU thread-pointer register; modules that bank state over it (sigil 3.6.0's `crypto_scratch`) must be `include`d *after* it. Wrong order links cleanly but SIGILLs at first use. See the BIG NOTE above.
 6. **A missing `include` is now a HARD ERROR (cyrius ≥ 6.1.35).** Earlier toolchains soft-skipped an `include` whose file was absent; 6.1.35 aborts the build with `error: cannot open include file: <path>`. This surfaced in the 2.7.3 bump. sigil's `dist/sigil.cyr` *inlines* the sha_ni / aes_ni modules but **intentionally** retains an opt-in `include "src/sha_ni.cyr"` / `include "src/aes_ni.cyr"` — libs are opt-in: a source-tree consumer that includes only `src/sha256.cyr` relies on that line to pull in the hardware-dispatch infra. In sigil 3.7.8 those opt-in includes were **unguarded**, so inside the bundle (where the file is absent from the fold) they soft-skipped on 6.1.23 but hard-error on 6.1.35. **Fix is the sigil 3.7.10 bump** — it `#ifndef`-guards them (`_SIGIL_SHA_NI_INCLUDED` / aes_ni marker) and `#define`s the marker where the bundle inlines the module, so the redundant include self-skips. This is the correct fix for the dual consumption model, not a workaround — there is no distlib bug. If a future dep bump reintroduces `cannot open include file: src/*.cyr`, the dep shipped an *unguarded* opt-in include — bump the dep to a guarded release, don't vendor the missing file.
 7. **stdlib `bayan` / `ganita` carves (cyrius 6.1.25+).** The 6.1.x line consolidated standalone stdlib modules into bundled dists: **`bayan`** absorbs `json` / `bigint` / `base64` / `csv` / `toml` / `cyml` / `u128`; **`ganita`** absorbs `matrix` / `linalg` / `math_advanced`. The old single-module files (`lib/json.cyr`, `lib/bigint.cyr`, …) no longer ship in the snapshot, so `include "lib/json.cyr"` fails (see quirk 6). libro `include`s `lib/bayan.cyr` and lists `"bayan"` in `[deps] stdlib` (2.7.3). Each bundle carries a `_compat.cyr` shim forwarding the **legacy `json_*` / `bigint_*` names**, so call sites need no change — but the shim is a deprecation-window courtesy; prefer the canonical `bayan_*` prefix for new code.
-8. **Duplicate-global-symbol warning (cyrius ≥ 6.2.11).** The 6.2.11 linker emits `warning: duplicate symbol '<NAME>' redefined with conflicting value (last definition wins)` when two flat globals share a name. libro trips it on `ERR_IO` / `ERR_UNKNOWN` (`lib/agnosys.cyr:82-83`) — both libro's `src/error.cyr` error enum and agnosys's ported error enum define those names. This is **pre-existing and benign**: each name resolves consistently within a build and the full suite passes (502 / 514). It was silent before 6.2.11 began diagnosing it — *not* a regression from the agnosys 1.4.3 bump. Surfaced in the 2.7.4 toolchain refresh. Only act if a *value*-dependent test starts failing; a bare warning here is informational.
+8. **Bare `ERR_*` error-enum names — duplicate-symbol warning (6.2.11) → namespace lint note (6.4.x).** libro's `src/error.cyr` enum uses bare `ERR_*` names (`ERR_IO`, `ERR_UNKNOWN`, …). (a) **6.2.11 linker** emitted `warning: duplicate symbol '<NAME>' redefined with conflicting value (last definition wins)` when the ported **agnosys** error enum defined the same names — benign; each resolved consistently within a build. **agnosys was dropped at the agnosys → agnodrm decomposition (TPM now sourced from sigil), so that specific collision is gone** and the warning no longer fires. (b) **6.4.x lint** now emits a `note` on `src/error.cyr:5-6` proposing leaf libs prefix their enum (`LIBRO_ERR_*`) to avoid the flat enum-const namespace reserved for the sakshi base logger (proposal `2026-07-11-error-enum-namespace-lint-gate`). Still **informational** — a `note`, not a warning/error; CI's lint step is non-fatal (`cyrius lint … || true`) and the suite passes 502 / 514. Surfaced in the 2.8.0 (6.4.62) refresh. Only act (rename the enum to `LIBRO_ERR_*` across all call sites + the CI raw-offset allowlist) if it graduates from note → enforced error, or a value-dependent test breaks.
+9. **Oversized array locals promoted to zero-init `.bss` (cyrius 6.4.x).** 6.4.x no longer keeps a large fixed-size `var X[N]` array local on the stack when it exceeds the per-fn stack budget — it puts it in a **shared global** (`.bss`), emitting `note: oversized array local kept in shared global (not per-thread) - exceeds per-fn stack budget; use alloc()` plus `warning: large static data (N bytes)`. In libro's fold the trigger is **sigil's banked `crypto_scratch`** (`var X[N * SIGIL_CRYPTO_BANKS]`, 64 banks), so the default build's binary jumped **~1.1 MB → ~14 MB** at the 6.4.62 bump — **all in `.bss`** (`.text` stays ~1 MB; `size build/libro` shows `bss ≈ 13046672`). The `.bss` is zero-filled and lazily mapped by the OS (negligible resident memory unless touched). Benign: it is a codegen policy, not a libro bug — sigil's scratch sizes are byte-identical 3.9.8 → 3.11.1 — and the shipped artifact `dist/libro.cyr` is source, not a binary. Only the `build/libro` size metric moved. Surfaced in 2.8.0.
 
 ### Resolved (stop treating as bugs in 5.4.2)
 
