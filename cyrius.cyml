@@ -87,11 +87,48 @@ stdlib = [
 # from the pinned tags. lib/ is gitignored — the contract is the tag
 # pin here, not the bytes on disk.
 
+# libro pulls a THIN sigil surface, not the monolithic dist/sigil.cyr. The full
+# bundle inlines the x509/RSA/authenticode path, whose bignum tables carry a
+# ~13 MB static (.bss) footprint that libro never uses — it balloons build/libro
+# from ~1 MB to ~14 MB. libro's actual sigil surface is sha256 + ed25519 + ML-DSA
+# (+ hybrid) + hex, so we resolve only the capability sub-bundles that cover it:
+#   dist/sigil-mldsa.cyr — ed25519 + ML-DSA + hybrid + sha512 + crypto_scratch
+#   src/sha_ni.cyr + src/sha256.cyr — SHA-256 (mldsa carries sha512, not sha256;
+#       sha_ni precedes sha256 so sha256's #ifndef-guarded sha_ni include self-skips)
+#   src/hex.cyr — standalone hex encode/decode (no bignum/x509 deps)
+#   dist/sigil-tpm.cyr — only compiled into the -D LIBRO_TPM build (tpm_anchor.cyr)
+# Result: build/libro .bss drops ~13 MB → ~75 KB. See CHANGELOG [2.8.0].
+# Feature gating (cyrius ≥ 6.3.1 `optional` + `[features]`): the TPM trust
+# surface is default-OFF. cyrius auto-includes every active [deps.*] module into
+# the compilation unit, so sigil-tpm (only used by src/tpm_anchor.cyr behind
+# -D LIBRO_TPM) must NOT sit in the always-on [deps.sigil] — it would land its
+# code + tpm2 rodata in every default binary. Instead it's an OPTIONAL dep
+# activated by the `tpm` feature (see [deps.sigil_tpm] + [features] below).
+[features]
+default = []
+tpm = ["sigil_tpm"]
+
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
 tag = "3.11.1"
-modules = ["dist/sigil.cyr"]
+modules = [
+    "dist/sigil-mldsa.cyr",
+    "src/sha_ni.cyr",
+    "src/sha256.cyr",
+    "src/hex.cyr",
+]
+
+# TPM trust API (tpm_seal / tpm_unseal / tpm_detect) — OPTIONAL, activated only
+# by the `tpm` feature for the -D LIBRO_TPM build (src/tpm_anchor.cyr). Same
+# sigil repo/tag; skipped entirely (no clone, no module copy, no auto-include)
+# when the feature is off, so default builds stay thin and tpm-free.
+[deps.sigil_tpm]
+git = "https://github.com/MacCracken/sigil.git"
+path = "../sigil"
+tag = "3.11.1"
+modules = ["dist/sigil-tpm.cyr"]
+optional = true
 
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"

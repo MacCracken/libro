@@ -7,41 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.8.0] — 2026-07-13
 
-**Toolchain pin → 6.4.62 (cyrius 6.4 series) + dep refresh — sigil 3.11.1, patra 1.12.9.**
-Adopts the cyrius 6.4 line and moves the crypto/storage deps to their latest tags. No libro
-source change — the full battery passes unchanged (**502** default / **514** with `-D LIBRO_TPM`),
-the fuzz harness (12 targets) and all three bench binaries build-and-**run** clean, and the
-`dist/libro.cyr` bundle is version-restamped only (no bundled-source delta; `dist/libro.deps`
-unchanged at 22 stdlib leaves). The minor version bump tracks the 6.3 → 6.4 toolchain series
-jump and the sigil 3.9 → 3.11 minor bump.
+**Toolchain pin → 6.4.62 + dep refresh (sigil 3.11.1, patra 1.12.9) + THIN the sigil surface:
+`build/libro` 14 MB → 724 KB.** Adopts the cyrius 6.4 line, moves the crypto/storage deps to
+their latest tags, and — the headline — stops pulling the monolithic `dist/sigil.cyr`. libro's
+actual sigil surface is SHA-256 + Ed25519 + ML-DSA (+ hybrid) + hex; the full bundle also inlines
+the x509/RSA/authenticode path, whose bignum tables carry **~13 MB of static `.bss`** libro never
+touches. Because cyrius **auto-includes every active `[deps.*]` module** into the compilation, that
+~13 MB landed in every libro binary (and every consumer's). Switching `[deps.sigil]` to the
+capability sub-bundles that cover libro's surface drops `build/libro` **~14 MB → ~724 KB** (`.bss`
+13,046,672 → 79,152 B); the three benches and the fuzz binary fall the same way (~14 MB → ~0.6 MB),
+and downstream consumers inherit it transitively (a libro-consuming binary drops to ~640 KB).
 
 ### Changed
 - **Toolchain pin `6.3.31` → `6.4.62`** (`cyrius.cyml`). `rm -rf ./lib && cyrius deps` re-vendored
   the stdlib snapshot.
-- **`sigil` `3.9.8` → `3.11.1`**, **`patra` `1.12.7` → `1.12.9`** (`[deps.*]` tags; both already on
-  the 6.4 line — sigil pins 6.4.48, patra 6.3.5, both build clean under 6.4.62). No new
-  `[deps] stdlib` entries required — `atomic`/`sync` (added in 2.7.9 for patra) still cover it.
+- **`sigil` `3.9.8` → `3.11.1`**, **`patra` `1.12.7` → `1.12.9`** (`[deps.*]` tags; both build clean
+  under 6.4.62). No new `[deps] stdlib` entries required.
+- **Thin sigil surface (`[deps.sigil]`): `dist/sigil.cyr` → `dist/sigil-mldsa.cyr` +
+  `src/sha_ni.cyr` + `src/sha256.cyr` + `src/hex.cyr`.** `sigil-mldsa` carries Ed25519 + ML-DSA +
+  hybrid + SHA-512 + `crypto_scratch`; the three standalone modules add SHA-256 and hex (which
+  `mldsa` lacks). `sha_ni` precedes `sha256` so the latter's `#ifndef`-guarded `sha_ni` include
+  self-skips; `hex.cyr` is standalone (no bignum/x509 deps). `ct_eq*` already come from stdlib
+  `lib/ct.cyr`, not sigil. Verified this exact set covers all 16 sigil symbols libro calls, with
+  **zero duplicate-symbol warnings**.
+- **TPM sigil surface moved behind an optional `tpm` feature** (cyrius ≥ 6.3.1 `optional` +
+  `[features]`). `tpm_seal`/`tpm_unseal`/`tpm_detect` live in a new **optional** `[deps.sigil_tpm]`
+  fold (`dist/sigil-tpm.cyr`), activated only by `--features tpm` for the `-D LIBRO_TPM` build — so
+  the thin default build never links tpm code or `tpm2` strings. Build the TPM variant with
+  `cyrius deps --features tpm && cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm`
+  (one benign `duplicate fn '_sigil_random_fill' (last wins)` warning there — sigil-tpm and
+  sigil-mldsa both carry `random`). CI's LIBRO_TPM step updated accordingly.
+- **`src/main.cyr` no longer explicitly `include`s the sigil folds** — they arrive via the
+  `[deps.sigil]` auto-include (manifest order puts stdlib `thread_local` before sigil, so the
+  crypto_scratch-over-TLS SIGILL rule still holds). This is deliberate: it keeps `cyrius distlib`
+  from mis-listing the sigil sub-modules as **stdlib leaves** in `dist/libro.deps`. distlib only
+  recognizes a named-dep fold when the module basename equals the dep name (`sigil.cyr` ↔ `sigil`);
+  the multi-module thin set defeats that, and an explicit include would have written
+  `sigil-mldsa`/`sigil_sha256`/… into the sidecar — a downstream `cyrius deps` then errors
+  *"dep libro requires 'sigil-mldsa' but it is not in the cyrius stdlib"*. With no explicit include
+  the sidecar stays stdlib-only and sigil resolves as a named dep (verified: consumer `cyrius deps`
+  + compile both succeed). The benches/fuzz/standalone repros keep explicit thin includes.
 
 ### Notes
-- **Binary grew ~1.1 MB → ~14 MB — all in `.bss`, benign.** cyrius 6.4.x promotes an oversized
-  array local past the per-fn stack budget into a zero-init **shared global** rather than risk a
-  stack overflow (compiler note: *"oversized array local kept in shared global … use alloc()"*).
-  The trigger is **sigil's banked `crypto_scratch`** (`var X[N * SIGIL_CRYPTO_BANKS]`, 64 banks) —
-  its array-local sizes are byte-identical between sigil 3.9.8 and 3.11.1, so this is purely the
-  6.4.x codegen policy, **not** the dep bump. `.text` is unchanged at ~1 MB; the ~13 MB `.bss` is
-  zero-filled and lazily mapped by the OS (negligible resident memory unless touched). The
-  distribution artifact `dist/libro.cyr` is source, not a binary — downstream consumers are
-  unaffected.
+- `dist/libro.cyr` is version-restamped only (no bundled-source delta); `dist/libro.deps` unchanged
+  at 22 stdlib leaves.
 - **New advisory lint note (informational, not enforced).** cyrius 6.4.x's lint proposes leaf libs
   prefix their error enum (`LIBRO_ERR_*`) instead of bare `ERR_*` to avoid the flat enum-const
   collision reserved for the sakshi base logger (proposal
   `2026-07-11-error-enum-namespace-lint-gate`). It surfaces as a `note` on `src/error.cyr` — CI's
-  lint step is non-fatal (`cyrius lint … || true`) and the suite is unaffected. Related to the
-  pre-existing `ERR_IO`/`ERR_UNKNOWN` collision (CLAUDE.md quirk #8); the enum-namespace rename is
-  a separate concern, not part of this bump.
-- Verified end-to-end: default build **502/502**, `-D LIBRO_TPM` **514/514**, fuzz no-crash, all
-  three bench binaries run clean, `cyrfmt --check` clean, and a simulated-consumer compile of
-  `dist/libro.cyr` (chain create + append) exits 0.
+  lint step is non-fatal (`cyrius lint … || true`) and the suite is unaffected. The enum-namespace
+  rename is a separate concern, not part of this bump (CLAUDE.md quirk #8).
+- Verified end-to-end: default build **502/502** (724 KB), `--features tpm -D LIBRO_TPM` **514/514**,
+  all three benches + fuzz build-and-run clean (~0.6 MB each), `cyrfmt --check` clean, a downstream
+  `cyrius deps` resolves clean, and a simulated-consumer compile (chain create + append) exits 0.
 
 ## [2.7.10] — 2026-07-02
 

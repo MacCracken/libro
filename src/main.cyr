@@ -43,12 +43,23 @@ include "lib/random.cyr"
 include "lib/patra.cyr"
 
 # ================================================================
-# Sigil — crypto primitives (SHA-256, Ed25519, HMAC, hex, ct) + the
-# TPM trust API (tpm_seal / tpm_unseal / tpm_detect, sigil 3.9.0) that
-# src/tpm_anchor.cyr uses. TPM was sourced from agnosys until the
-# agnosys → agnodrm decomposition moved the trust stack into sigil.
+# Sigil — THIN crypto surface (not the monolithic dist/sigil.cyr).
+# libro uses SHA-256 + Ed25519 + ML-DSA (+ hybrid) + hex; the full
+# bundle would also inline x509/RSA/authenticode, whose bignum tables
+# carry ~13 MB of static .bss libro never touches. So we pull only the
+# capability sub-bundles that cover libro's surface (see cyrius.cyml
+# [deps.sigil]). Order is load-bearing for cyrius single-pass:
+#   sigil-mldsa   — ed25519 + ML-DSA + hybrid + sha512 + crypto_scratch
+#   sigil_sha_ni  — SHA-NI dispatch; MUST precede sigil_sha256 so the
+#                   latter's #ifndef-guarded sha_ni include self-skips
+#   sigil_sha256  — SHA-256 (mldsa carries sha512, not sha256)
+#   sigil_hex     — standalone hex encode/decode
+# thread_local (above) still precedes these — mldsa banks crypto_scratch
+# over TLS (the SIGILL rule). ct_eq* come from stdlib lib/ct.cyr, not sigil.
 # ================================================================
-include "lib/sigil.cyr"
+# (sigil thin surface is auto-included from [deps.sigil] modules — no
+# explicit include here, so cyrius distlib keeps them OUT of the
+# dist/libro.deps sidecar as named-dep folds, not stdlib leaves)
 
 # ================================================================
 # Libro modules (dependency order)
@@ -79,10 +90,15 @@ include "src/proof_json.cyr"
 # TPM-sealed anchors (2.5.0) — opt-in via -D LIBRO_TPM=1
 # ================================================================
 # Default builds skip this entirely. The tpm_anchor module pulls
-# agnosys's tpm_seal/tpm_unseal primitives which shell out to
+# sigil's tpm_seal/tpm_unseal primitives which shell out to
 # tpm2-tools; consumers without a TPM (or running rootless / in
 # containers) don't pay any binary-size or runtime cost when the
-# define is off.
+# define is off. Build the TPM variant with BOTH flags:
+#   cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm
+# `--features tpm` resolves + auto-includes the optional sigil-tpm dep
+# (tpm_seal/unseal/detect); `-D LIBRO_TPM` includes tpm_anchor.cyr below.
+# (sigil-tpm shares `random` with sigil-mldsa → one benign "duplicate fn
+# '_sigil_random_fill' (last wins)" warning, TPM build only.)
 #ifdef LIBRO_TPM
 include "src/tpm_anchor.cyr"
 #endif

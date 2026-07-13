@@ -20,7 +20,12 @@ include "lib/sakshi.cyr"
 include "lib/chrono.cyr"
 include "lib/bayan.cyr"
 include "lib/thread_local.cyr"  # must precede sigil (crypto_scratch TLS) — else SIGILL
-include "lib/sigil.cyr"
+# Thin sigil surface (mirrors src/main.cyr / cyrius.cyml [deps.sigil]) —
+# not the monolithic lib/sigil.cyr (its x509/RSA path carries ~13 MB .bss).
+include "lib/sigil-mldsa.cyr"
+include "lib/sigil_sha_ni.cyr"
+include "lib/sigil_sha256.cyr"
+include "lib/sigil_hex.cyr"
 include "lib/patra.cyr"
 
 include "src/error.cyr"

@@ -298,18 +298,25 @@ jobs:
 
       - name: TPM-opt-in build + test (LIBRO_TPM)
         # 2.5.0 ships src/tpm_anchor.cyr behind -D LIBRO_TPM. Default
-        # builds (above) don't include it. This step verifies the
-        # opt-in compiles clean against agnosys's tpm_seal/tpm_unseal
-        # surface and the TPM-tests pass under "no TPM device" or
-        # "TPM device but no tpm2-tools" (the typical CI shape) —
-        # both code paths are explicitly exercised by the test fns.
+        # builds (above) don't include it. 2.8.0 moved the TPM sigil
+        # surface behind the `tpm` feature (the OPTIONAL [deps.sigil_tpm]
+        # fold) so the thin default build never links tpm code. The opt-in
+        # therefore needs BOTH: `cyrius deps --features tpm` to resolve
+        # sigil-tpm, and `--features tpm -D LIBRO_TPM` to compile it in.
+        # Verifies tpm_seal/unseal/detect (from sigil) + the TPM tests pass
+        # under "no TPM device" / "no tpm2-tools" (the typical CI shape) —
+        # both code paths are explicitly exercised by the test fns. (One
+        # benign "duplicate fn '_sigil_random_fill' (last wins)" warning is
+        # expected here — sigil-tpm and sigil-mldsa both carry random.)
         run: |
-          CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm
+          cyrius deps --features tpm
+          CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm
           ./build/libro_tpm > /tmp/libro_tpm_test_out 2>&1 || true
           cat /tmp/libro_tpm_test_out | tr -d '\0'
           grep -q "0 failed" /tmp/libro_tpm_test_out || {
             echo "FAIL: LIBRO_TPM build tests did not report 0 failed"; exit 1; }
           echo "PASS: LIBRO_TPM build + tests"
+          cyrius deps   # restore default (thin, tpm-free) resolution for later steps
 
       - name: Fuzz
         run: |
