@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] — 2026-07-13
+
+**`patrastore_append` now writes audit rows with a bound (prepared-statement)
+INSERT — a single quote in any field no longer drops the record (argonaut P1).**
+The patra-backed audit store built each row by raw SQL string interpolation
+(`INSERT INTO audit_entries VALUES ('…')`), so a `'` in a service name, action, or
+detail produced malformed SQL → `PATRA_ERR_SYNTAX` → the entry was **silently
+dropped**, diverging the on-disk chain from the in-memory one. The audit chain is
+PID 1's tamper-evidence surface (argonaut), so a value that can't round-trip is an
+integrity hole, not a nit.
+
+### Fixed
+- **`patrastore_append` (`src/patra_store.cyr`) uses `patra_prepare` +
+  `patra_bind_text` ×10 + `patra_exec_prepared` + `patra_finalize`.** Each of the ten
+  columns (`id, ts, sev, src, act, det, aid, ph, hash, halg`) binds as `(ptr, len)`
+  and is stored as bytes — never reparsed as SQL — so quotes and any metacharacters
+  round-trip verbatim with no escaping. Works on patra **1.12.9+** (the bind API
+  predates the fix). Regression: `tests/patra.cyr` gains `test_ps_quote` — an entry
+  with quotes in service/action/detail persists and reloads (**8** assertions, was 5).
+
+### Notes
+- patra **1.12.10** independently fixed the SQL-string path too (standard `''`
+  escaping + `patra_quote_str`), so libro's former raw INSERT would also round-trip
+  there; the bound path is the durable, escaping-free fix and is preferred
+  regardless of patra version.
+- No dep or toolchain change (cyrius 6.4.62, patra 1.12.9, sigil 3.11.1 unchanged).
+  `dist/libro.cyr` regenerated (5496 lines).
+
 ## [2.8.0] — 2026-07-13
 
 **Toolchain pin → 6.4.62 + dep refresh (sigil 3.11.1, patra 1.12.9) + THIN the sigil surface:

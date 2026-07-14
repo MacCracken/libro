@@ -73,6 +73,25 @@ fn test_ps_append() {
     sys_unlink("/tmp/libro_test_ps2.patra");
 }
 
+# Regression: an entry whose service/action/detail fields contain single quotes
+# must persist. The old raw string-interpolated patrastore_append built malformed
+# SQL (PATRA_ERR_SYNTAX) and SILENTLY DROPPED such an entry — the argonaut P1
+# corruption. The bound INSERT (patra prepared statement) stores every byte
+# verbatim, so the record lands and the chain reloads intact.
+fn test_ps_quote() {
+    sys_unlink("/tmp/libro_test_psq.patra");
+    var ps = patrastore_open(str_from("/tmp/libro_test_psq.patra"));
+    var e = entry_new(SEV_INFO, str_from("it's-daemon"), str_from("re'start"),
+                      str_from("detail 'quotes' + O'Brien; DROP TABLE audit_entries--"),
+                      str_from(""));
+    assert(patrastore_append(ps, e) == PATRA_OK, "ps append quoted ok");
+    assert(patrastore_len(ps) == 1, "ps quoted len 1 (was dropped pre-fix)");
+    var loaded = patrastore_load_all(ps);
+    assert(vec_len(loaded) == 1, "ps quoted reloaded 1");
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_psq.patra");
+}
+
 fn main() {
     alloc_init();
     fl_init();
@@ -82,6 +101,7 @@ fn main() {
     test_group("PatraStore");
     test_ps_open();
     test_ps_append();
+    test_ps_quote();
 
     return assert_summary();
 }
