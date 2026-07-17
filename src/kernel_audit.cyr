@@ -28,7 +28,7 @@ fn classify_kernel_result(result) {
 
 fn log_syscall(action, data, result) {
     if (kernel_audit_available() == 0) {
-        return error_new(ERR_IO, "AGNOS audit not available");
+        return error_new(LIBRO_ERR_IO, "AGNOS audit not available");
     }
 
     var sb = str_builder_new();
@@ -42,7 +42,7 @@ fn log_syscall(action, data, result) {
 
     var fd = file_open(AGNOS_AUDIT_PATH, 1, 0);
     if (fd < 0) {
-        return error_new(ERR_IO, "failed to open audit interface");
+        return error_new(LIBRO_ERR_IO, "failed to open audit interface");
     }
     file_write(fd, str_data(line), str_len(line));
     file_close(fd);

@@ -2,15 +2,15 @@
 # Error codes and structured error objects for libro operations.
 
 enum LibroErr {
-    ERR_NONE = 0;
-    ERR_INTEGRITY = 1;
-    ERR_STORE = 2;
-    ERR_IO = 3;
-    ERR_JSON = 4;
-    ERR_FIELD_TOO_LONG = 5;
-    ERR_TIMESTAMP = 6;
-    ERR_ANCHORING = 7;
-    ERR_DER = 8;
+    LIBRO_ERR_NONE = 0;
+    LIBRO_ERR_INTEGRITY = 1;
+    LIBRO_ERR_STORE = 2;
+    LIBRO_ERR_IO = 3;
+    LIBRO_ERR_JSON = 4;
+    LIBRO_ERR_FIELD_TOO_LONG = 5;
+    LIBRO_ERR_TIMESTAMP = 6;
+    LIBRO_ERR_ANCHORING = 7;
+    LIBRO_ERR_DER = 8;
 }
 
 # Error — generated accessors:
@@ -32,7 +32,7 @@ fn error_new(code, msg) {
 
 fn error_integrity(index, expected, actual) {
     var e = fl_alloc(48);
-    store64(e, ERR_INTEGRITY);
+    store64(e, LIBRO_ERR_INTEGRITY);
     store64(e + 8, "integrity violation");
     store64(e + 16, 0);
     store64(e + 24, index);
@@ -43,7 +43,7 @@ fn error_integrity(index, expected, actual) {
 
 fn error_field(field, len, max_val) {
     var e = fl_alloc(48);
-    store64(e, ERR_FIELD_TOO_LONG);
+    store64(e, LIBRO_ERR_FIELD_TOO_LONG);
     store64(e + 8, "field too long");
     store64(e + 16, field);
     store64(e + 24, len);

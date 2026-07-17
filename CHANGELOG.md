@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.2] — 2026-07-17
+
+**Toolchain pin → 6.4.66 + dep refresh (sigil 3.12.1, patra 1.12.12) + `ERR_*` → `LIBRO_ERR_*`
+enum namespacing.** Moves onto the latest cyrius 6.4.x and the latest crypto/storage dep tags, and
+clears the 6.4.x error-enum namespace lint note (quirk #8) by prefixing libro's `LibroErr`
+constants. The dep and toolchain bumps are **coupled**: sigil 3.12.1 and patra 1.12.12 both call the
+stdlib `thread_local_alloc`, which first ships in cyrius **6.4.63** — building the new deps against
+the 6.4.62 snapshot fails with `undefined function 'thread_local_alloc'`, so the two move together.
+
+### Changed
+- **Toolchain pin `6.4.62` → `6.4.66`** (`cyrius.cyml`). `rm -rf ./lib && cyrius deps` re-vendored
+  the stdlib snapshot (which now carries `thread_local_alloc` in `lib/thread_local.cyr`).
+- **`sigil` `3.11.1` → `3.12.1`**, **`patra` `1.12.9` → `1.12.12`** (`[deps.sigil]`,
+  `[deps.sigil_tpm]`, and `[deps.patra]` tags). Both build clean under 6.4.66. No new `[deps] stdlib`
+  entries required. The thin sigil surface (`dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`;
+  TPM behind the optional `tpm` feature) is structurally unchanged from 2.8.0.
+- **Error enum namespaced: bare `ERR_*` → `LIBRO_ERR_*`** across `src/error.cyr` (the `LibroErr`
+  enum definition + its two internal constructors), `src/kernel_audit.cyr`, and `src/main.cyr` (test
+  call sites) — 19 references in all. Clears the informational 6.4.x lint note on `src/error.cyr:5-6`
+  (proposal `2026-07-11-error-enum-namespace-lint-gate`) proactively, before it can graduate to an
+  enforced error. patra's `PATRA_ERR_*` constants are a separate namespace and are left untouched
+  (a word-boundary rename guarantees `PATRA_ERR_*`, preceded by `_`, is never matched). No CI change:
+  the raw-offset allowlist entry for `src/error.cyr` names the `error` **struct**'s param (`e`), not
+  the enum constants, so the rename doesn't touch it — `src/error.cyr` now lints with 0 warnings.
+
+### Notes
+- Default `build/libro` `724 KB → 749 KB`, `-D LIBRO_TPM` `751 KB → 776 KB` — the ~25 KB growth is
+  6.4.66 codegen + the newer deps, not a surface change; `.bss` stays thin (the 2.8.0 sigil-thinning
+  holds). Suite **502 / 514** (default / TPM) pass, 33 benches run, fuzz clean.
+- `dist/libro.cyr` regenerated (5561 lines, v2.8.2 — now emits `LIBRO_ERR_*`; `dist/libro.deps`
+  unchanged at 22 stdlib leaves).
+- The `sakshi 2.4.3 (pinned: 2.4.6)` shadow warning from `cyrius deps` is pre-existing and benign
+  (patra vendors `lib/sakshi.cyr` at 2.4.3); sakshi is a `dist/libro.deps` stdlib leaf, not inlined
+  into the bundle, so it doesn't affect distribution — build + full suite pass regardless.
+
 ## [2.8.1] — 2026-07-13
 
 **`patrastore_append` now writes audit rows with a bound (prepared-statement)

@@ -210,8 +210,8 @@ fn test_severity() {
 }
 
 fn test_error_new() {
-    var e = error_new(ERR_IO, "disk full");
-    assert(error_code(e) == ERR_IO, "error code");
+    var e = error_new(LIBRO_ERR_IO, "disk full");
+    assert(error_code(e) == LIBRO_ERR_IO, "error code");
     assert_streq(error_msg(e), "disk full", "error msg");
     fl_free(e);
 }
@@ -220,7 +220,7 @@ fn test_error_integrity() {
     var expected = str_from("aaa");
     var actual = str_from("bbb");
     var e = error_integrity(5, expected, actual);
-    assert(error_code(e) == ERR_INTEGRITY, "integrity error code");
+    assert(error_code(e) == LIBRO_ERR_INTEGRITY, "integrity error code");
     assert(error_index(e) == 5, "integrity error index");
     fl_free(e);
 }
@@ -331,7 +331,7 @@ fn test_chain_tampered_hash() {
     store64(e1 + 40, str_from("tampered"));
     var result = verify_chain(entries, 0);
     assert(result != 0, "chain detects tampered entry");
-    assert(error_code(result) == ERR_INTEGRITY, "chain error is integrity");
+    assert(error_code(result) == LIBRO_ERR_INTEGRITY, "chain error is integrity");
 }
 
 fn test_chain_broken_link() {
@@ -352,7 +352,7 @@ fn test_chain_broken_link() {
 
     var result = verify_chain(entries, 0);
     assert(result != 0, "chain detects broken link");
-    assert(error_code(result) == ERR_INTEGRITY, "broken link error is integrity");
+    assert(error_code(result) == LIBRO_ERR_INTEGRITY, "broken link error is integrity");
 }
 
 fn test_chain_empty() {
@@ -2467,7 +2467,7 @@ fn test_entry_validated_too_long() {
     var s = str_new(long_src, 2048);
     var result = entry_new_validated(SEV_INFO, s,
     str_from("a"), str_from("{}"), str_from(""));
-    assert(error_code(result) == ERR_FIELD_TOO_LONG,
+    assert(error_code(result) == LIBRO_ERR_FIELD_TOO_LONG,
     "validated rejects long source");
 }
 
