@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.4] — 2026-07-28
+
+**A chain that links without retaining.** Additive; no existing behaviour changes.
+
+### Added
+
+- **`chain_new_streaming()`** — a chain that computes and links every entry but
+  keeps **none** of them, holding only the head hash in the `prev_hash`
+  carry-over slot that `_chain_prev_link` already falls back to (the same slot
+  `chain_rotate` uses). Linkage is byte-identical to a retaining chain, so the
+  durable chain written to a store verifies exactly as before, and memory is
+  O(1) instead of O(events).
+- **`entry_free(e)`** — hand an entry's 88-byte struct back to the freelist once
+  it has been persisted.
+- **`chain_streaming(c)` / `chain_set_streaming(c, v)`** — derived accessors for
+  the new `streaming` field on `struct chain`.
+
+### Why
+
+A **write-through** consumer — one that appends an event, hands it straight to a
+FileStore, and never reads the chain again — had no way to bound the in-memory
+chain. `chain_new()` leaves `max_capacity` at 0, so `_chain_auto_rotate` returns
+immediately and rotation never fires; there was no capacity constructor; and
+`chain_apply_retention` redistributes into two fresh vecs while the archived
+entries stay referenced from `overflow`. libro contains one `fl_free` in ~4,400
+lines, none of it on the entry path. So a long-lived writer grew forever.
+
+Found by cyrius-yeomans-descent, whose `audit_event` appends on every login /
+save / security event and never reads the chain back.
+
+### Scope — stated plainly
+
+`entry_free` releases the **struct**, not the `Str`s it points at.
+`source` / `action` / `details` are caller-owned and never libro's to release;
+the ones `entry_new` mints itself (timestamp, hash, algorithm) come from
+`str_new`, which allocates through the bump allocator — that memory has no free
+at this layer and cannot be reclaimed without an allocator change. So 2.8.4
+bounds the entries vec (the unbounded term) and the per-entry struct; a smaller
+per-entry `Str` residue remains and needs an allocator-level fix.
+
+On a streaming chain `chain_len` is always 0 and every query / verify function
+sees an empty chain. That is the trade, and it is why the mode is opt-in rather
+than the default.
+
+### Verification
+
+512 assertions (was 510), 0 failures. The new `test_chain_streaming` checks
+linkage **within** each chain — entry N+1 records entry N's hash — rather than
+across two chains, since every entry carries a random UUID and its own timestamp
+and two chains fed identical inputs legitimately produce different hashes.
+Mutation-verified: making `_chain_retain` always push fails 3 assertions;
+dropping the prev-hash carry fails 2.
+
 ## [2.8.3] — 2026-07-28
 
 **Toolchain pin → 6.4.83 (17-release jump); deps already at latest.** A pure toolchain refresh —

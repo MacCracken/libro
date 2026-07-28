@@ -486,6 +486,56 @@ fn test_chain_append() {
     assert(err == 0, "chain append verify");
 }
 
+fn test_chain_streaming() {
+    var det = str_from("{}");
+
+    # A streaming chain links exactly like a retaining one but keeps nothing.
+    # Build both from the same inputs and require the recorded prev-hash of each
+    # entry to match — that is what makes the durable, on-disk chain verify
+    # identically whichever mode produced it.
+    var normal = chain_new();
+    var stream = chain_new_streaming();
+    assert(chain_streaming(stream) == 1, "streaming flag set");
+    assert(chain_streaming(normal) == 0, "normal chain is not streaming");
+
+    # Linkage must be checked WITHIN the streaming chain, not across two chains:
+    # each entry carries a random UUID and its own timestamp, so two chains fed
+    # the same inputs legitimately produce different hashes. The invariant that
+    # actually matters is that entry N+1 records entry N's hash as its
+    # predecessor — the property the durable on-disk chain is verified against.
+    var s1 = chain_append(stream, SEV_INFO, str_from("src"), str_from("a1"), det);
+    var s2 = chain_append(stream, SEV_INFO, str_from("src"), str_from("a2"), det);
+    var s3 = chain_append(stream, SEV_INFO, str_from("src"), str_from("a3"), det);
+    assert(str_eq(entry_prev_hash(s2), entry_hash(s1)) == 1, "streaming: e2 links to e1");
+    assert(str_eq(entry_prev_hash(s3), entry_hash(s2)) == 1, "streaming: e3 links to e2");
+
+    # The same three appends against a retaining chain link the same way, so the
+    # mode changes retention only — never the shape of the chain it emits.
+    var n1 = chain_append(normal, SEV_INFO, str_from("src"), str_from("a1"), det);
+    var n2 = chain_append(normal, SEV_INFO, str_from("src"), str_from("a2"), det);
+    var n3 = chain_append(normal, SEV_INFO, str_from("src"), str_from("a3"), det);
+    assert(str_eq(entry_prev_hash(n2), entry_hash(n1)) == 1, "retaining: e2 links to e1");
+    assert(str_eq(entry_prev_hash(n3), entry_hash(n2)) == 1, "retaining: e3 links to e2");
+
+    # The point of the mode: the retaining chain grew, the streaming one did not.
+    assert(chain_len(normal) == 3, "retaining chain holds every entry");
+    assert(chain_len(stream) == 0, "streaming chain retains nothing");
+
+    # And it stays flat no matter how many events go through it — this is the
+    # unbounded growth the mode exists to remove.
+    var i = 0;
+    while (i < 200) {
+        var e = chain_append(stream, SEV_INFO, str_from("src"), str_from("bulk"), det);
+        entry_free(e);
+        i = i + 1;
+    }
+    assert(chain_len(stream) == 0, "streaming chain is still empty after 200 appends");
+
+    # entry_free tolerates a null and does not disturb the chain.
+    entry_free(0);
+    assert(chain_len(stream) == 0, "entry_free(0) is a no-op");
+}
+
 fn test_chain_append_batch() {
     var c = chain_new();
     var det = str_from("{}");
@@ -518,7 +568,7 @@ fn test_chain_append_batch() {
     var seed = vec_get(chain_entries(c), 0);
     var first_batched = vec_get(out, 0);
     assert(str_eq(entry_prev_hash(first_batched), entry_hash(seed)) == 1,
-        "batch first entry links to seed");
+    "batch first entry links to seed");
 }
 
 fn test_chain_append_with_agent() {
@@ -957,7 +1007,7 @@ fn test_signing_mldsa_roundtrip() {
     assert(str_len(entry_sig_signature(sig)) == 6618, "mldsa signature is 6618-char hex");
     # Algorithm string round-trips as sigil's canonical name.
     assert(str_eq(entry_sig_algorithm(sig), str_from("ML-DSA-65")) == 1,
-        "entry_sig.algorithm carries ML-DSA-65 string");
+    "entry_sig.algorithm carries ML-DSA-65 string");
 
     var vk = verifying_key_from_signing(sk);
     assert(verifying_key_algorithm(vk) == SIG_ALG_ML_DSA_65, "vk algorithm = ML-DSA-65");
@@ -1029,7 +1079,7 @@ fn test_signing_hybrid_roundtrip() {
     assert(str_len(entry_sig_signature(sig))   == 128,  "hybrid sig slot-1 (Ed25519) is 128-char hex");
     assert(str_len(entry_sig_signature_2(sig)) == 6618, "hybrid sig slot-2 (ML-DSA-65) is 6618-char hex");
     assert(str_eq(entry_sig_algorithm(sig), str_from("Hybrid(Ed25519+ML-DSA-65)")) == 1,
-        "entry_sig.algorithm carries hybrid name");
+    "entry_sig.algorithm carries hybrid name");
 
     var vk = verifying_key_from_signing(sk);
     assert(verifying_key_algorithm(vk) == SIG_ALG_HYBRID, "vk algorithm = HYBRID");
@@ -1055,13 +1105,13 @@ fn test_signing_hybrid_tamper_rejected_either_side() {
     var e2 = vec_get(chain_entries(c2), 0);
     var sig_other = sign_entry(sk_other, e2);
     var sig_tampered_ed = entry_sig_new_hybrid(
-        entry_sig_hash(sig),
-        entry_sig_signature(sig_other),       # bad ed sig (over wrong msg)
-        entry_sig_verifying_key(sig),
-        entry_sig_key_id(sig),
-        entry_sig_algorithm(sig),
-        entry_sig_signature_2(sig),
-        entry_sig_verifying_key_2(sig));
+    entry_sig_hash(sig),
+    entry_sig_signature(sig_other),       # bad ed sig (over wrong msg)
+    entry_sig_verifying_key(sig),
+    entry_sig_key_id(sig),
+    entry_sig_algorithm(sig),
+    entry_sig_signature_2(sig),
+    entry_sig_verifying_key_2(sig));
     var vk = verifying_key_from_signing(sk);
     assert(verify_entry_signature(vk, e, sig_tampered_ed) == 0, "hybrid: tampered Ed25519 portion rejected");
 
@@ -1069,13 +1119,13 @@ fn test_signing_hybrid_tamper_rejected_either_side() {
     # We don't have a "wrong" ML-DSA sig handy; substitute an empty Str so
     # hex_decode_str returns 0 and the verify path bails.
     var sig_tampered_pq = entry_sig_new_hybrid(
-        entry_sig_hash(sig),
-        entry_sig_signature(sig),
-        entry_sig_verifying_key(sig),
-        entry_sig_key_id(sig),
-        entry_sig_algorithm(sig),
-        str_from(""),                          # empty pq sig
-        entry_sig_verifying_key_2(sig));
+    entry_sig_hash(sig),
+    entry_sig_signature(sig),
+    entry_sig_verifying_key(sig),
+    entry_sig_key_id(sig),
+    entry_sig_algorithm(sig),
+    str_from(""),                          # empty pq sig
+    entry_sig_verifying_key_2(sig));
     assert(verify_entry_signature(vk, e, sig_tampered_pq) == 0, "hybrid: tampered ML-DSA portion rejected");
 }
 
@@ -1782,7 +1832,7 @@ fn test_proof_from_json_roundtrip_unsigned() {
     var det_nested = str_from("{\"agent\":\"web-01\",\"load\":{\"p50\":12,\"p99\":480}}");
     chain_append(c, SEV_INFO, str_from("auth"), str_from("login"), det_flat);
     chain_append(c, SEV_SECURITY, str_from("aegis"),
-        str_from("intrusion.detected"), det_nested);
+    str_from("intrusion.detected"), det_nested);
     chain_append(c, SEV_INFO, str_from("ark"), str_from("pkg.install"), det_flat);
 
     var ip = proof_build_unsigned(c);
@@ -1798,11 +1848,11 @@ fn test_proof_from_json_roundtrip_unsigned() {
     var sth1 = iproof_tree_head(ip);
     var sth2 = iproof_tree_head(ip2);
     assert(constant_time_eq_str(sth_root(sth1), sth_root(sth2)) == 1,
-        "tree head root round-trips");
+    "tree head root round-trips");
     assert(sth_tree_size(sth1) == sth_tree_size(sth2),
-        "tree_size round-trips");
+    "tree_size round-trips");
     assert(constant_time_eq_str(sth_timestamp(sth1), sth_timestamp(sth2)) == 1,
-        "timestamp round-trips");
+    "timestamp round-trips");
 
     # Entries round-trip with hashes preserved
     var e1 = iproof_entries(ip);
@@ -1815,9 +1865,9 @@ fn test_proof_from_json_roundtrip_unsigned() {
         var a = vec_get(e1, i);
         var b = vec_get(e2, i);
         assert(constant_time_eq_str(entry_hash(a), entry_hash(b)) == 1,
-            "entry hash round-trips");
+        "entry hash round-trips");
         assert(constant_time_eq_str(entry_source(a), entry_source(b)) == 1,
-            "entry source round-trips");
+        "entry source round-trips");
         i += 1;
     }
 
@@ -1837,11 +1887,11 @@ fn test_proof_from_json_roundtrip_full() {
     # with side preserved. Every parsed merkle_proof now verifies.
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
-        str_from("{\"v\":1}"));
+    str_from("{\"v\":1}"));
     chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
-        str_from("{\"v\":2}"));
+    str_from("{\"v\":2}"));
     chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
-        str_from("{\"v\":3}"));
+    str_from("{\"v\":3}"));
 
     var ip = proof_build_unsigned(c);
     proof_with_all_inclusions(ip);
@@ -1857,8 +1907,8 @@ fn test_proof_from_json_roundtrip_full() {
     # Tree rebuilt from parsed entries matches the stored sth.root.
     var rebuilt = merkle_build(iproof_entries(ip2));
     assert(constant_time_eq_str(merkle_tree_root(rebuilt),
-        sth_root(iproof_tree_head(ip2))) == 1,
-        "rebuilt root matches parsed tree_head.root");
+    sth_root(iproof_tree_head(ip2))) == 1,
+    "rebuilt root matches parsed tree_head.root");
 
     # 2.6.0: every parsed merkle_proof verifies cleanly.
     var inclusions = iproof_inclusions(ip2);
@@ -1868,7 +1918,7 @@ fn test_proof_from_json_roundtrip_full() {
     while (i < nincl) {
         var mp = vec_get(inclusions, i);
         assert(merkle_verify_proof(mp) == 1,
-            "parsed merkle_proof verifies (lossless path)");
+        "parsed merkle_proof verifies (lossless path)");
         i = i + 1;
     }
 }
@@ -1898,7 +1948,7 @@ fn test_proof_from_json_legacy_path_accepted() {
     # Each node is a proof_node with hash set + side defaulted to LEFT.
     var node0 = vec_get(path, 0);
     assert(proof_node_side(node0) == SIDE_LEFT,
-        "legacy path: side defaults to LEFT");
+    "legacy path: side defaults to LEFT");
 }
 
 fn test_proof_to_json_fields_present() {
@@ -2771,7 +2821,7 @@ fn test_patrastore_sync_mode_default_full() {
     sys_unlink("/tmp/libro_test_ps_sync1.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_sync1.patra"));
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
-        "patrastore: sync defaults to FULL");
+    "patrastore: sync defaults to FULL");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_sync1.patra");
     sys_unlink("/tmp/libro_test_ps_sync1.patra.wal");
@@ -2783,10 +2833,10 @@ fn test_patrastore_sync_mode_switch() {
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_sync2.patra"));
     patrastore_set_sync_mode(ps, PATRA_SYNC_BATCH);
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_BATCH,
-        "patrastore: switched to BATCH");
+    "patrastore: switched to BATCH");
     patrastore_set_sync_mode(ps, PATRA_SYNC_FULL);
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
-        "patrastore: switched back to FULL");
+    "patrastore: switched back to FULL");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_sync2.patra");
     sys_unlink("/tmp/libro_test_ps_sync2.patra.wal");
@@ -2811,12 +2861,12 @@ fn test_patrastore_append_batch_correctness() {
     assert(patrastore_len(ps) == 3, "append_batch: row count matches");
     # Sync mode restored to caller's prior mode (FULL by default).
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
-        "append_batch: sync mode restored to FULL");
+    "append_batch: sync mode restored to FULL");
     var loaded = patrastore_load_all(ps);
     assert(vec_len(loaded) == 3, "append_batch: load_all returns 3");
     var loaded_last = vec_get(loaded, 2);
     assert(entry_severity(loaded_last) == SEV_ERROR,
-        "append_batch: last entry severity preserved");
+    "append_batch: last entry severity preserved");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_batch.patra");
     sys_unlink("/tmp/libro_test_ps_batch.patra.wal");
@@ -2835,7 +2885,7 @@ fn test_patrastore_append_batch_preserves_caller_batch() {
     chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
     patrastore_append_batch(ps, chain_entries(c));
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_BATCH,
-        "append_batch: preserves caller's BATCH mode");
+    "append_batch: preserves caller's BATCH mode");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_batch2.patra");
     sys_unlink("/tmp/libro_test_ps_batch2.patra.wal");
@@ -2852,9 +2902,9 @@ fn test_patrastore_prepared_stmts_survive_open() {
     sys_unlink("/tmp/libro_test_ps_prep.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_prep.patra"));
     assert(_patrastore_select_stmt(ps) != 0,
-        "patrastore: select_stmt prepared at open");
+    "patrastore: select_stmt prepared at open");
     assert(_patrastore_count_stmt(ps) != 0,
-        "patrastore: count_stmt prepared at open");
+    "patrastore: count_stmt prepared at open");
     # Fire both prepared paths to confirm they actually work.
     var det = str_from("{}");
     var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
@@ -2878,11 +2928,11 @@ fn test_patrastore_indexed_by_source() {
     sys_unlink("/tmp/libro_test_ps_idx.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_idx.patra"));
     assert(patrastore_create_source_index(ps) == PATRA_OK,
-        "src_idx created");
+    "src_idx created");
     # Idempotent — a second create returns PATRA_ERR_EXISTS, not an error.
     var second = patrastore_create_source_index(ps);
     assert(second == PATRA_OK || second == PATRA_ERR_EXISTS,
-        "src_idx re-create is idempotent");
+    "src_idx re-create is idempotent");
     var det = str_from("{}");
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("kernel"),     str_from("syscall"), det);
@@ -2918,9 +2968,9 @@ fn test_tpm_anchor_verify_null_returns_inner_invalid() {
     # if the construction failed (returned 0), verify must report
     # invalid rather than crashing on a null deref.
     assert(tpm_anchor_verify(0) == TPM_ANCHOR_INNER_INVALID,
-        "tpm_anchor_verify(0) returns INNER_INVALID");
+    "tpm_anchor_verify(0) returns INNER_INVALID");
     assert(tpm_anchor_verify_strict(0) == 0,
-        "tpm_anchor_verify_strict(0) returns 0");
+    "tpm_anchor_verify_strict(0) returns 0");
 }
 
 fn test_tpm_anchor_default_pcr_indices() {
@@ -2958,9 +3008,9 @@ fn test_tpm_anchor_inner_invalid_on_bad_inner() {
     tpm_anchor_set_pcr_indices(ta, tpm_anchor_default_pcr_indices());
     tpm_anchor_set_output_dir(ta, str_from("/tmp"));
     assert(tpm_anchor_verify(ta) == TPM_ANCHOR_INNER_INVALID,
-        "tpm_anchor_verify rejects tampered inner anchor");
+    "tpm_anchor_verify rejects tampered inner anchor");
     assert(tpm_anchor_verify_strict(ta) == 0,
-        "tpm_anchor_verify_strict rejects tampered inner anchor");
+    "tpm_anchor_verify_strict rejects tampered inner anchor");
 }
 
 # Hardware-path: only attempts the full seal+verify when the host
@@ -2994,9 +3044,9 @@ fn test_tpm_anchor_hardware_roundtrip_best_effort() {
     # Seal succeeded — verify must now return VALID, and the strict
     # bool form must return 1.
     assert(tpm_anchor_verify(ta) == TPM_ANCHOR_VALID,
-        "tpm_anchor_verify on fresh seal returns VALID");
+    "tpm_anchor_verify on fresh seal returns VALID");
     assert(tpm_anchor_verify_strict(ta) == 1,
-        "tpm_anchor_verify_strict on fresh seal returns 1");
+    "tpm_anchor_verify_strict on fresh seal returns 1");
     sys_unlink("/tmp/sealed.ctx");
     sys_unlink("/tmp/sealed.pub");
     sys_unlink("/tmp/sealed.priv");
@@ -3069,6 +3119,7 @@ fn main() {
 
     test_group("AuditChain");
     test_chain_append();
+    test_chain_streaming();
     test_chain_append_batch();
     test_chain_append_with_agent();
     test_chain_rotate();
@@ -3164,9 +3215,9 @@ fn main() {
     test_layout_merkle_proof();
     test_layout_consistency();
     test_layout_pv();
-#ifdef LIBRO_TPM
+    #ifdef LIBRO_TPM
     test_layout_tpm_anchor();
-#endif
+    #endif
 
     test_group("Integrity proof");
     test_proof_unsigned();
@@ -3234,13 +3285,13 @@ fn main() {
     test_patrastore_prepared_stmts_survive_open();
     test_patrastore_indexed_by_source();
 
-#ifdef LIBRO_TPM
+    #ifdef LIBRO_TPM
     test_group("TPM-sealed anchors (LIBRO_TPM, opt-in)");
     test_tpm_anchor_verify_null_returns_inner_invalid();
     test_tpm_anchor_default_pcr_indices();
     test_tpm_anchor_inner_invalid_on_bad_inner();
     test_tpm_anchor_hardware_roundtrip_best_effort();
-#endif
+    #endif
 
     test_group("Gap coverage");
     test_retention_keep_duration();

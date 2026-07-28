@@ -73,7 +73,7 @@ fn uuid_v4(buf) {
     # Fail-closed on /dev/urandom unavailability: a predictable UUID would
     # make the libro audit chain forgeable. Upstream libro 1.0.3 silently
     # ignored short reads; t-ron's vendored copy aborts instead.
-#ifdef CYRIUS_TARGET_AGNOS
+    #ifdef CYRIUS_TARGET_AGNOS
     # agnos has no /dev/urandom — draw 16 bytes from getrandom #45
     # (RDRAND-seeded CSPRNG). Same fail-closed contract as the Linux path.
     var got = syscall(SYS_GETRANDOM, buf, 16, 0);
@@ -81,7 +81,7 @@ fn uuid_v4(buf) {
         syscall(SYS_WRITE, 2, "libro: getrandom failed (fail-closed)\n", 38);
         syscall(SYS_EXIT, 74);
     }
-#else
+    #else
     var fd = file_open("/dev/urandom", 0, 0);
     if (fd < 0) {
         syscall(SYS_WRITE, 2, "libro: /dev/urandom unavailable (fail-closed)\n", 46);
@@ -93,7 +93,7 @@ fn uuid_v4(buf) {
         syscall(SYS_WRITE, 2, "libro: short read from /dev/urandom (fail-closed)\n", 50);
         syscall(SYS_EXIT, 74);
     }
-#endif
+    #endif
     # Version 4: byte 6 high nibble = 0100
     var b6 = load8(buf + 6) & 0xFF;
     store8(buf + 6, (b6 & 0x0F) | 0x40);
@@ -159,15 +159,15 @@ fn uuid_format(buf) {
 var _ts_buf = 0;
 
 fn get_epoch_secs() {
-#ifdef CYRIUS_TARGET_AGNOS
+    #ifdef CYRIUS_TARGET_AGNOS
     # agnos: time_unix #46 returns unix seconds directly in rax (no timespec).
     return syscall(SYS_TIME_UNIX);
-#else
+    #else
     if (_ts_buf == 0) { _ts_buf = alloc(16); }
     # clock_gettime(CLOCK_REALTIME=0, &timespec)
     syscall(228, 0, _ts_buf);
     return load64(_ts_buf);
-#endif
+    #endif
 }
 
 # Format helpers for zero-padded decimals
@@ -589,4 +589,24 @@ fn entry_verify(e) {
     var computed = entry_compute_hash(e);
     var stored = load64(e + 72);
     return constant_time_eq_str(computed, stored);
+}
+
+# Release an entry's 88-byte struct back to the freelist (2.8.4).
+#
+# For a streaming chain (chain_new_streaming) the caller owns each entry once it
+# has been persisted, and this is how it hands it back. Safe to call on any
+# entry the chain no longer references; calling it on one still reachable from a
+# retaining chain's entries vec is a use-after-free waiting to happen.
+#
+# Scope, stated plainly: this frees the STRUCT, not the Strs it points at.
+# `source` / `action` / `details` are caller-owned and never libro's to release,
+# and the ones entry_new mints itself (timestamp, hash, algorithm) come from
+# `str_new`, which allocates via the bump allocator — that memory has no free at
+# this layer and cannot be reclaimed without an allocator change. So this bounds
+# the per-entry struct cost, and a streaming chain bounds the vec; the Str
+# residue is a separate, smaller problem recorded in the CHANGELOG.
+fn entry_free(e) {
+    if (e == 0) { return 0; }
+    fl_free(e);
+    return 0;
 }
