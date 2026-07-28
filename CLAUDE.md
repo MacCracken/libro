@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.8.2 (2026-07-17)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.4.66 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.8.3 (2026-07-28)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.4.83 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -29,7 +29,7 @@ daimon (audit), aegis (security events), stiva (container lifecycle), sigil (tru
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 502 default / 514 with `-D LIBRO_TPM` (all pass)
-- **Binary**: ~749 KB default / ~776 KB `-D LIBRO_TPM` (2.8.2 — grew ~25 KB from 2.8.0's 724/751 KB via 6.4.66 codegen + the sigil 3.12.1 / patra 1.12.12 bump; `.bss` still thin). Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. Benches/fuzz likewise ~0.6 MB. See quirk #9 for the auto-include mechanism (why the fat dep bloated every binary and how to diagnose it — always isolate OUTSIDE the project dir).
+- **Binary**: ~775 KB default / ~802 KB `-D LIBRO_TPM` (2.8.3 — grew ~26 KB from 2.8.2's 749/776 KB via 6.4.83 codegen against the newer stdlib snapshot, no surface change; `.bss` still thin at 80,152 B). Capacity headroom at 2.8.3: `fn_table 2167 / 32768`, `identifiers 58749 / 524288` (`CYRIUS_STATS=1`) — well clear of the 8192 fn_table threshold behind the 6.4.75 P0. Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. Benches/fuzz likewise ~0.6 MB. See quirk #9 for the auto-include mechanism (why the fat dep bloated every binary and how to diagnose it — always isolate OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -55,6 +55,16 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./build/libro_bench_core
 CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
 CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
+
+# TPM opt-in build — expect "514 passed, 0 failed".
+# Needs the `tpm` feature on BOTH commands: `cyrius deps` to resolve the
+# optional [deps.sigil_tpm] fold, and `cyrius build` to compile it in.
+# Omit it from `deps` and the build fails with `undefined variable 'TPM_SHA256'`.
+# One benign `duplicate fn '_sigil_random_fill'` warning is expected here.
+# Re-run a bare `cyrius deps` afterwards to restore the thin, tpm-free default.
+cyrius deps --features tpm
+CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && ./build/libro_tpm
+cyrius deps
 
 # Fuzz
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 10 ./build/fuzz_libro
@@ -149,7 +159,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.4.66"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.4.83"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -165,7 +175,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.4.66)
+## Known Cyrius Compiler Quirks (6.4.83)
 
 > ## ⚠️ BIG NOTE — sigil needs `lib/thread_local.cyr` before it (or SIGILL)
 >
@@ -232,3 +242,5 @@ Quirks still worth knowing:
 - Fixup table cap — **raised to 16384** (was 8192).
 - 256-entry type/struct table cap — **raised to 1024** in 6.0.51 (was 256). Distinct from the per-file `#derive` cap in quirk 4; was never the TPM-build blocker.
 - Per-file `#derive` cap — **raised to 512** in 6.0.53 (was 64). This *was* the real `-D LIBRO_TPM` blocker; the 2.6.5 `tpm_anchor` hand-written-accessor workaround was removed in 2.7.1. See quirk 4.
+- **Constant-fold arithmetic (`_cfo` rewind class) — fixed across 6.4.74 / 6.4.80 / 6.4.81.** Through 6.4.79 a constant expression in the PEXPR tier (`+ - & | ^`) **silently discarded its left operand** whenever a literal subtraction produced a *negative* intermediate: `1 - 2 + 3` evaluated to `5`, `1 - 2 | 3` to `3`. Non-negative intermediates were always right, so it hid — 40 of 400 systematic 3-term expressions were wrong at 6.4.79, with every upstream gate green. 6.4.74 fixed the same mechanism one tier down (`PARSE_TERM`, 17 sites), 6.4.80 the PEXPR tier (16 sites), 6.4.81 a fourth occurrence under struct operator overloading. **libro was never affected** — a comment/string-stripped scan of `src/`, `benches/` and `fuzz/` at the 2.8.3 bump found zero expressions of the failing shape, and the suite reported an identical 502/514 either side. Worth remembering as a *method* note: the bug was found by running the compiler, not reading it, and a passing suite was not evidence — if you ever suspect miscompiled arithmetic, grep for the expression **shape**, don't trust the tests.
+- **`fn_table` > 8192 side-table corruption + the 1/4-cleared DCE `live[]` bitmap** — P0, fixed in 6.4.75; the fn_table ceiling now reports against 32768. libro sits at `fn_table 2167 / 32768` (`CYRIUS_STATS=1`), so it was never in range, but any harness that grows past 8192 fns on a pre-6.4.75 toolchain had non-deterministic DCE and six corrupt fn-indexed tables.

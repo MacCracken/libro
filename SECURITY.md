@@ -28,7 +28,7 @@ Condensed from the threat model. Full rationale lives there.
 | DER encoding (RFC 3161) | Malformed input | Bounds-checked TLV parsing; `_der_parse_tlv` multi-return total/value |
 | FileStore | Concurrent write corruption | Advisory `flock` on append/load |
 | FileStore streaming verify | DoS via malformed input | Bounded 64KB buffer; unterminated-tail hang fixed in 2.0.3 (Finding 4) |
-| `chain_import` / PatraStore | Parser crash on malformed input | Fuzz-covered (11 targets); parse-failure returns gracefully |
+| `chain_import` / PatraStore | Parser crash on malformed input | Fuzz-covered (12 targets); parse-failure returns gracefully |
 | Streaming pub/sub | Subscriber backlog | In-process vec queue; consumers drain via `stream_recv` |
 | Kernel audit | Privilege escalation | Read-only access to `/proc/agnos/audit`; kernel is trusted |
 

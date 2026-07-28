@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.3] — 2026-07-28
+
+**Toolchain pin → 6.4.83 (17-release jump); deps already at latest.** A pure toolchain refresh —
+**zero `src/*.cyr` changes**, zero manifest-semantics changes, zero new `[deps] stdlib` entries.
+`sigil 3.12.1` and `patra 1.12.12` were re-confirmed as the newest published tags (GitHub API +
+local tag list), so the dep pins are unchanged from 2.8.2; only the compiler and its bundled stdlib
+snapshot move. The 6.4.65 `thread_local_alloc` floor that coupled the 2.8.2 dep and toolchain bumps
+(both sigil and patra call it) stays satisfied by definition at 6.4.83.
+
+### Changed
+- **Toolchain pin `6.4.66` → `6.4.83`** (`cyrius.cyml`). `rm -rf ./lib && cyrius deps` re-vendored
+  the stdlib snapshot. Every module still lints with **0 warnings**; `cyrfmt --check` clean.
+- `dist/libro.cyr` regenerated — **only the version header line changed** (5561 lines, unchanged
+  otherwise; `dist/libro.deps` unchanged at 22 stdlib leaves). A simulated downstream consumer built
+  outside the repo against `dist/libro.cyr` compiles and runs clean.
+
+### Notes — what the 17-release delta actually carries for libro
+- **The `_cfo` constant-fold rewind class (6.4.74 / 6.4.80 / 6.4.81) is the reason to take this
+  bump.** 6.4.80 fixed a **CRITICAL** silent-wrong-value defect in the PEXPR tier (`+ - & | ^`):
+  a constant expression whose literal subtraction produced a *negative* intermediate silently
+  discarded its left operand — `1 - 2 + 3` evaluated to `5`, and 40 of 400 systematic 3-term
+  expressions were wrong at 6.4.79. Non-negative intermediates were always correct, which is why it
+  hid. **libro was not affected**: a comment- and string-stripped scan of `src/*.cyr`,
+  `benches/*.bcyr` and `fuzz/*.fcyr` finds **zero expressions of the failing shape**, and the suite
+  reports an identical 502/514 before and after the bump. Recorded here because the defect was live
+  at libro's *previous* 6.4.66 pin, so "our tests passed" was not by itself evidence of correctness.
+- **6.4.75 (P0) does not reach libro either.** `fn_table` growth past 8192 silently corrupted six
+  fn-indexed side tables, and the DCE `live[]` reachability bitmap cleared only 1/4 of its declared
+  size — leaving bits 8192..32767 in uninitialised stack, so unreachable-fn counts were
+  non-deterministic across identical runs. libro builds with `CYRIUS_DCE=1`, but `CYRIUS_STATS=1`
+  puts it at **`fn_table: 2167 / 32768`** — an order of magnitude below the threshold, so neither
+  half was ever in range. (6.4.76 separately raised the identifier pool 256 KB → 512 KB; libro sits
+  at 58,749.)
+- **CVE-32/33/34 (6.4.81) are compile-time, not runtime.** Three unbounded copies in cycc's own
+  preprocessor / `READFILE` path, reachable from untrusted *source text*. They harden the compiler
+  against hostile `.cyr` input; libro's runtime surface is untouched.
+- 6.4.69's f64 JSON round-trip work does **not** apply — libro emits JSON by hand-rolled string
+  building (`_sb_json_escape`) and uses no `f64` anywhere in `src/`.
+- Tooling fixes worth knowing: `cyrius audit` no longer fmt/lint/doc-walks the consumer's vendored
+  `lib/` and now names failing files (6.4.78); `cyrius audit` / `cyrius capacity` no longer compile
+  project sources with no stdlib includes, and `capacity --check` is no longer a green placebo
+  (6.4.73); `cyrius lib sync` refuses to run inside the cyrius source repo (6.4.77). 6.4.67 added
+  chrono `DateTime` / `Duration` / `format()` — additive, libro's existing chrono use is unchanged.
+
+### Notes — measurements
+- Default `build/libro` `749 KB → 775 KB` (775,256 B), `-D LIBRO_TPM` `776 KB → 802 KB` (802,024 B).
+  The ~26 KB growth on both is 6.4.83 codegen against the newer stdlib snapshot, not a surface
+  change — `.bss` stays thin at **80,152 B**, so the 2.8.0 sigil-thinning holds.
+- Suite **502 / 514** (default / `-D LIBRO_TPM`) pass, **33** benches run across the three binaries,
+  fuzz clean across **12** targets. The `-D LIBRO_TPM` path still needs *both* `cyrius deps
+  --features tpm` and `cyrius build --features tpm -D LIBRO_TPM`; the benign `duplicate fn
+  '_sigil_random_fill'` warning on that path is expected (sigil-tpm and sigil-mldsa both carry
+  random).
+- The `sakshi 2.4.3 (pinned: 2.4.6)` shadow warning from `cyrius deps` is pre-existing and benign
+  (patra vendors `lib/sakshi.cyr` at 2.4.3); sakshi is a `dist/libro.deps` stdlib leaf, not inlined.
+
 ## [2.8.2] — 2026-07-17
 
 **Toolchain pin → 6.4.66 + dep refresh (sigil 3.12.1, patra 1.12.12) + `ERR_*` → `LIBRO_ERR_*`

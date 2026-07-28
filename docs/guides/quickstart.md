@@ -10,9 +10,12 @@ install is:
 cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
 ```
 
-As of this release the pin is **5.4.7**. If you've just cloned libro fresh,
-you may also need `cyrius deps` once to populate `lib/sigil.cyr` and
-`lib/patra.cyr` symlinks.
+As of this release the pin is **6.4.83**. If you've just cloned libro fresh,
+you may also need `cyrius deps` once to populate the `lib/` symlinks. Libro
+resolves a **thin** sigil surface (`lib/sigil-mldsa.cyr` plus
+`lib/sigil_{sha_ni,sha256,hex}.cyr`) rather than the monolithic
+`lib/sigil.cyr` — pulling the full bundle re-inlines an x509/RSA fold libro
+never calls and adds ~13 MB of static `.bss` to every binary.
 
 ## Build & Test
 
@@ -23,7 +26,7 @@ cd libro
 # Build (CYRIUS_DCE=1 matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "373 passed, 0 failed"
+# Run tests — expect "502 passed, 0 failed"
 ./build/libro
 ```
 

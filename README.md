@@ -13,7 +13,7 @@ Libro provides an append-only, SHA-256 hash-linked audit chain where every event
 libro (Cyrius library, single-file compilation)
   ├── 21 library modules under src/ + 1 opt-in (src/tpm_anchor.cyr, -D LIBRO_TPM)
   ├── SHA-256 (FIPS 180-4) + Ed25519 (RFC 8032) via sigil
-  ├── SQL persistence via patra (v1.11.0 bundled)
+  ├── SQL persistence via patra (v1.12.12 bundled)
   ├── Nested scalar-aware canonical JSON hashing
   ├── Distribution artifact: committed dist/libro.cyr per DEPS-PATTERN.md
   └── CI-enforced gates: manifest completeness, raw-offset guards,

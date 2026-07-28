@@ -63,12 +63,26 @@ the anchor data hasn't been tampered with since."
 
 ## Building with TPM support
 
+Since 2.8.0 the TPM backend is sigil's, resolved through an **optional**
+dep (`[deps.sigil_tpm]`) behind the `tpm` feature. The feature has to be
+passed to **both** `cyrius deps` and `cyrius build` — `deps` decides
+whether the fold is resolved into `lib/` at all, `build` decides whether
+it is compiled in. Passing it to only `build` fails with
+`undefined variable 'TPM_SHA256'`.
+
 ```sh
-# Default build — no TPM, no agnosys/tpm2-tools dep, smaller binary.
+# Default build — no TPM surface resolved or linked at all, smaller binary.
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# TPM-opt-in build — pulls src/tpm_anchor.cyr + agnosys's tpm_* surface.
-CYRIUS_DCE=1 cyrius build -D LIBRO_TPM src/main.cyr build/libro_tpm
+# TPM-opt-in build — resolves sigil's tpm_* fold, then compiles
+# src/tpm_anchor.cyr against it. One benign
+# `duplicate fn '_sigil_random_fill'` warning is expected (sigil-tpm and
+# sigil-mldsa both carry random).
+cyrius deps --features tpm
+CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm
+
+# Restore the thin, tpm-free default resolution afterwards.
+cyrius deps
 ```
 
 Runtime requirements for the TPM-opt-in build to actually *seal*:
@@ -77,7 +91,7 @@ Runtime requirements for the TPM-opt-in build to actually *seal*:
   process (`tss` group on most distros).
 - `tpm2-tools` package installed (`tpm2_create`, `tpm2_load`,
   `tpm2_unseal` on `$PATH`).
-- A directory the libro process can write to, for the agnosys
+- A directory the libro process can write to, for sigil's
   `tpm_seal` to drop `sealed.ctx` / `sealed.pub` / `sealed.priv`.
 
 If any of those is missing, `tpm_anchor_new` returns 0 and the
@@ -167,7 +181,7 @@ and the cost of re-seal.
 - `sealed.priv` — private area (encrypted under TPM SRK).
 
 The `tpm_anchor` struct's `sealed_ctx` field is an opaque pointer to
-agnosys's `tpm_sealed` struct, which owns the `sealed.ctx` path. The
+sigil's `tpm_sealed` struct, which owns the `sealed.ctx` path. The
 consumer is responsible for:
 
 1. Persisting all three files alongside the chain.
@@ -184,8 +198,8 @@ new policy and discarding the old sealed files.
 
 libro's CI runs both builds:
 
-- **Default build**: 435 tests pass, no agnosys/TPM surface linked.
-- **`-D LIBRO_TPM` build**: 443 tests pass, exercises the API
+- **Default build**: 502 tests pass, no TPM surface resolved or linked.
+- **`-D LIBRO_TPM` build**: 514 tests pass, exercises the API
   surface on hosts without tpm2-tools. The hardware-roundtrip test
   is best-effort: it logs a skip if the host can't actually seal,
   otherwise it pins the full success path.
@@ -205,6 +219,6 @@ shipped CI workflow only covers the API-correctness contract.
   "PCR changed legitimately" from "PCR changed unexpectedly".
   Tracked as a 2.x.x candidate once a consumer asks.
 - **Sealed-anchor JSON serialization** — currently `tpm_anchor`
-  carries opaque agnosys handles, which don't serialize. A
+  carries opaque sigil handles, which don't serialize. A
   consumer that wants to ship sealed anchors across hosts within
   the same TPM would need a serialization layer.

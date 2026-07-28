@@ -164,7 +164,7 @@ across PRs/releases without any local-machine dependency.
 
 ## Fuzz Harness
 
-Single binary (`fuzz/fuzz_libro.fcyr`), 11 targets. All targets assert
+Single binary (`fuzz/fuzz_libro.fcyr`), 12 targets. All targets assert
 no-crash on random input; a target that returns normally is a pass.
 
 | Target | Input shape | Target surface |

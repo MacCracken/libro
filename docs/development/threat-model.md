@@ -169,7 +169,7 @@ sigil's branchless `ct_eq` via `constant_time_eq_str`. Remaining
 file, or truncated input to crash or hang the parser / verifier.
 
 **Mitigation:**
-- Fuzz harness (`fuzz/fuzz_libro.fcyr`, 11 targets as of 2.0.3)
+- Fuzz harness (`fuzz/fuzz_libro.fcyr`, 12 targets as of 2.8.3)
   asserts no-crash on random inputs across `sha256`, `hex_decode`,
   `der_parse`, `entry_create`, `chain_ops`, `sig_verify`,
   `json_parse`, `topic_match`, `chain_import`,
@@ -377,20 +377,35 @@ The equivalent discipline is enforced through:
 
 ## Supply chain
 
-- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.1.35"`.
+- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.4.83"`.
   CI reads this field and installs the exact toolchain via the
   canonical `scripts/install.sh` flow. No wildcard ranges.
-- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.7.10"`.
+- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.12.1"`.
   `cyrius deps` resolves deterministically. Pins libro to sigil's
-  full FIPS 204 ML-DSA stack.
-- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.11.0"`.
+  full FIPS 204 ML-DSA stack. The pin names a **thin sub-surface**
+  (`dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`), not the
+  monolithic bundle — a narrower attack surface as well as a smaller
+  binary, since the unused x509/RSA/authenticode fold is never linked.
+- **sigil TPM pin** in `cyrius.cyml` `[deps.sigil_tpm] tag = "3.12.1"`,
+  marked `optional` and gated behind the `tpm` feature. With the
+  feature off it is not cloned, copied, or compiled — the default
+  build carries **no TPM surface at all**, rather than a DCE-stripped
+  one. Opt in via `cyrius deps --features tpm` + `-D LIBRO_TPM`.
+- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.12.12"`.
   Same as above. Pins the prepared-statement / group-commit /
   STR-btree feature set.
-- **agnosys pin** in `cyrius.cyml` `[deps.agnosys] tag = "1.4.1"`.
-  Direct pin (promoted from transitive-via-sigil in 2.5.0).
-  Default builds DCE the TPM surface; opt-in via `-D LIBRO_TPM`.
 - **Zero third-party deps** beyond the Cyrius toolchain + sigil +
-  patra + agnosys. No transitive dependency graph to audit.
+  patra. No transitive dependency graph to audit. (`agnosys` was
+  dropped in 2.8.0 — TPM re-sourced from sigil; see
+  `development/dependency-watch.md`.)
+- **Compiler-integrity note.** The toolchain is itself in the trust
+  boundary: cyrius 6.4.80 fixed a constant-fold defect that silently
+  miscompiled ~10 % of systematic 3-term constant expressions while
+  every gate stayed green, and it was live at libro's prior pin.
+  Libro was verified clear by scanning for the failing expression
+  *shape*, not by a passing suite. Treat "tests pass" as insufficient
+  evidence of correct codegen across any toolchain bump that names a
+  silent-wrong-value fix.
 
 ## Change log
 

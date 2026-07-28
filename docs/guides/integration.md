@@ -204,21 +204,28 @@ The `signing_key` and `verifying_key` struct *layouts* don't
 change — those fields are pointers, and the buffers behind them
 just allocate to the right size for the chosen algorithm.
 
-### Performance (sigil 3.7.10 / cyrius 6.1.35, x86_64 dev host)
+### Performance (sigil 3.12.1 / cyrius 6.4.83, x86_64 dev host)
 
 | Op | Ed25519 | ML-DSA-65 | Notes |
 |----|--------:|----------:|-------|
-| `sign_entry`         | 1.1 ms | 14.3 ms | PQ sign rejection-loops dominate; ~10× Ed25519 sign |
-| `verify_entry_signature` | 6.6 ms | 2.2 ms | ML-DSA verify is ~3× faster than Ed25519 verify in this build |
+| `sign_entry`         | 1.1 ms | 3.4 ms | ~3× Ed25519 sign — down from ~14 ms at sigil 3.7.10, the rejection-loop cost having largely gone in the 3.8–3.12 line |
+| `verify_entry_signature` | 6.6 ms | 2.1 ms | ML-DSA verify is ~3× faster than Ed25519 verify in this build |
 
 (For reference, hybrid Ed25519+ML-DSA-65 on the same host: `sign_entry`
-3.9 ms, `verify_entry_signature` 8.6 ms — both keys exercised.)
+3.9 ms, `verify_entry_signature` 8.9 ms — both keys exercised.)
+
+Figures are the `libro_core` bench means at 2.8.3; re-measure with
+`CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core`
+rather than trusting them across a dep bump — the ML-DSA sign figure
+moved 4× between sigil pins.
 
 Per-entry signing in the millisecond range is fine for audit
 workloads (one entry per kernel-audit / aegis-event / stiva-state-
-change). For batch signing of many entries, the cost is linear
-and verifiers can parallelize across entries (single-threaded
-today, see roadmap §2.x).
+change). For batch signing of many entries the cost is linear.
+Libro's own verify path is one entry at a time; sigil ships a
+parallel `sv_verify_batch` (truly parallel since 3.6.0), but libro
+does not currently wire it up — a consumer verifying large chains
+can parallelize across entries itself.
 
 ### When to use which
 
