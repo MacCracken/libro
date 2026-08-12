@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.5.10"
+cyrius = "6.5.20"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -82,6 +82,42 @@ stdlib = [
     "random",
     "test",
 ]
+# ⚠ **No `#` comments INSIDE the array above.** The manifest parser stops
+# collecting entries at one and silently truncates the list — it does not error.
+# Hit while preparing 2.8.5: a comment placed after `"sakshi",` cut the sidecar
+# from 27 leaves to 21 (losing sakshi, atomic, sync, bench, fnptr and test), and
+# the only symptom surfaced much later, as `cyrius distlib` failing its own
+# bundle self-check on an unrelated symbol.
+#
+# ⚠ **`patra` is deliberately NOT in this list — it stays a `[deps.patra]` git
+# dep below**, unlike patra's and majra's own manifests, which moved their folded
+# deps INTO `[deps].stdlib`. The reason is **bote**: it consumes `dist/libro.cyr`
+# (which calls `patra_*` 54 times and defines none of them) and declares no patra
+# of its own, so it can only get patra by resolving libro's `[deps.patra]`
+# transitively. Delete this block and bote loses patra.
+#
+# ⚠ **A latent hole in this sidecar was UNMASKED at 2.8.5 — it is not new, and it
+# is not caused by the patra bump.** Measured 2026-08-12 on cyrius 6.5.20:
+#
+#   | `[deps.patra]` tag | sidecar leaves | `sakshi` listed? |
+#   |--------------------|----------------|------------------|
+#   | 1.12.12 (was)      | 27             | ✅ yes           |
+#   | 1.13.0  (now)      | 26             | ❌ no            |
+#   | removed entirely   | 26             | ❌ no            |
+#
+# `sakshi` only ever reached libro's sidecar **through patra 1.12.12's own
+# `[deps.sakshi]` block** — the very defect this bump removes. libro's own
+# `"sakshi"` above does **not** reach the sidecar, and never did. So
+# `dist/libro.cyr` calls `sakshi_*` 44 times, defines none, and no longer
+# declares the leaf.
+#
+# Downstream is unaffected **today** — bote and agnosai each declare `"sakshi"`
+# in their own `[deps].stdlib`, verified — but a genuine clean-room consumer
+# relying only on the sidecar would now fail where 2.8.4 worked.
+#
+# ⚠ `distlib`'s self-check cannot catch this: undefined *functions* are
+# downgraded to warnings, so only an undefined *variable* fails a bundle. Read
+# the sidecar leaf count on every release rather than trusting the check.
 
 # External first-party deps. `cyrius deps` resolves these into lib/
 # from the pinned tags. lib/ is gitignored — the contract is the tag
@@ -108,10 +144,33 @@ stdlib = [
 default = []
 tpm = ["sigil_tpm"]
 
+# ⚠ **The thin selection STAYS — do not replace it with `"sigil"` in
+# `[deps].stdlib`.** The fold is the MONOLITH: `lib/sigil.cyr` in the 6.5.20
+# snapshot is 27,550 lines / 1,079,160 bytes and carries the x509 + RSA bignum
+# banks (`_bn_exp_prod[65536]`, five `_bn_mont_*[32768]`, `_bn_modrem[33280]`,
+# …). Measured, not assumed: **majra takes `dist/sigil.cyr` and builds with
+# `warning: large static data (10794336 bytes)`**, while libro's thin build is
+# **`.bss` 80,264 bytes**. Taking sigil from the stdlib fold would put ~10.7 MB
+# of unused static data into every libro binary. That is the whole reason this
+# block selects capability sub-bundles instead, and it is why libro is the one
+# consumer whose sigil pin does NOT collapse into the fold at the 6.5.20 bump.
+#
+# **3.12.1 -> 3.12.7 (2.8.5)**, and it is a security bump, not housekeeping:
+#   * **3.12.5** fixes a **PKCS#1 v1.5 signature-verification bypass**
+#   * **3.12.6** fixes an **RSA-PSS authentication bypass** (same class)
+#   * **3.12.7** is what cyrius 6.5.20 folds, so the two agree
+# It also closes a second sakshi downgrade path that sat alongside the patra one
+# retired above: **sigil 3.12.1's own manifest declared `[deps.sakshi]` at
+# 2.4.3**, and 3.12.7 declares **zero `[deps.*]`**. libro therefore fed the
+# stale-sakshi overlay through BOTH pins, not just patra.
+#
+# ⚠ `path = "../sigil"` means a sibling checkout **beats the tag locally**. The
+# local tree is already 3.12.7, so this bump is what makes CI — which has no
+# siblings and resolves the tag — build the same bytes this box does.
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.12.1"
+tag = "3.12.7"
 modules = [
     "dist/sigil-mldsa.cyr",
     "src/sha_ni.cyr",
@@ -126,14 +185,42 @@ modules = [
 [deps.sigil_tpm]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.12.1"
+# Must move in lockstep with [deps.sigil] above — same repo, and two different
+# tags of the same library in one compilation unit is how you get a silent
+# last-definition-wins divergence.
+tag = "3.12.7"
 modules = ["dist/sigil-tpm.cyr"]
 optional = true
 
+# ── 1.12.12 -> 1.13.0 at 2.8.5: this pin was the root of a four-level defect ──
+#
+# patra 1.12.12's OWN manifest declared `[deps.sakshi]` at **2.4.2** while every
+# recent toolchain snapshot folds **2.4.10**. `cyrius deps` overlays a git dep's
+# resolution ON TOP of the `lib sync --full` snapshot, **recursing through
+# sibling manifests**, on **every `cyrius build`** — not only on `deps`. So this
+# one line silently downgraded `lib/sakshi.cyr` for libro and for everything
+# downstream of it:
+#
+#     agnosai -> bote -> libro -> [deps.patra] 1.12.12 -> [deps.sakshi] 2.4.2
+#
+# bote carried a defensive `[deps.sakshi]` 2.4.10 purely to absorb this. **patra
+# 1.13.0 has zero `[deps.*]` blocks** and takes sakshi from the fold, so the
+# chain now terminates here and that defensive pin is removable downstream.
+#
+# ⚠ The only signal was an unnamed "1 bundled lib(s) differ" shadow warning, and
+# **`deps --verify` cannot catch it** — the lock is written *from disk*, so it
+# records the downgraded file's hash. Check `lib/` AFTER a `cyrius build`, never
+# after the three-step; the three-step ends correct and the next build reverts it.
+#
+# ⚠ **The fix is the TAG, not the block.** Deleting `[deps.patra]` in favour of
+# `"patra"` in `[deps].stdlib` — what patra and majra each did for their own
+# folded deps — would strand **bote**, which consumes `dist/libro.cyr` and
+# declares no patra of its own. See the note in `[deps].stdlib` above for the
+# measurement, and for the sidecar hole this bump unmasks.
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
 path = "../patra"
-tag = "1.12.12"
+tag = "1.13.0"
 modules = ["dist/patra.cyr"]
 
 # [deps.agnosys] dropped at the agnosys → agnodrm decomposition (2026-06-19).

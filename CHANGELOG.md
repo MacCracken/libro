@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.5] — 2026-08-12 — the stale-sakshi overlay is cut at both roots
+
+No behaviour change in libro's own code; 512 assertions green (524 with `tpm`),
+`.bss` held at 80,224 bytes. Every change here is a dependency correction.
+
+### Security
+
+- **`[deps.sigil]` / `[deps.sigil_tpm]` 3.12.1 → 3.12.7.** 3.12.1 predates two
+  authentication bypasses of the same class: **3.12.5** (PKCS#1 v1.5 signature
+  verification) and **3.12.6** (RSA-PSS). ⚠ Both were fixed in `src/bignum.cyr`
+  — `bn_mod`'s shared-bank buffers became stack buffers with a self-scrub — not
+  in `src/rsa.cyr` as the shape of the CVE suggests. libro's compiled surface
+  does not carry `bignum.cyr` or `rsa.cyr`, but three files that it *does* carry
+  changed across the range (`bigint_ext.cyr`, `crypto_scratch.cyr`, `mul64.cyr`),
+  so this is a real bump rather than a defensive one.
+
+### Fixed
+
+- **`[deps.patra]` 1.12.12 → 1.13.0 — libro was the middle link of a four-level
+  defect that silently downgraded `lib/sakshi.cyr` for every consumer.**
+
+  patra 1.12.12's own manifest declared `[deps.sakshi]` at **2.4.2** while the
+  toolchain snapshot folds **2.4.10**. `cyrius deps` overlays a git dep's
+  resolution ON TOP of the `lib sync --full` snapshot, **recursing through
+  sibling manifests**, on **every `cyrius build`** — not only on `deps`:
+
+  ```
+  agnosai -> bote -> libro -> [deps.patra] 1.12.12 -> [deps.sakshi] 2.4.2
+  ```
+
+  patra **1.13.0** carries zero `[deps.*]` blocks, so the chain terminates.
+  bote's defensive `[deps.sakshi]` 2.4.10, which existed only to absorb this,
+  is removable as a result.
+
+  ⚠ **Verify after a `cyrius build`, never after the three-step** — the
+  three-step ends correct and the next build reverts it. `deps --verify` cannot
+  see it either: the lock is written *from disk*, so it records the downgraded
+  file's hash. The only signal is an unnamed "1 bundled lib(s) differ" warning.
+
+- **A second stale-sakshi path, not previously identified.** sigil **3.12.1's**
+  manifest also declared `[deps.sakshi]`, at **2.4.3**. libro fed the overlay
+  through *both* pins; 3.12.7 declares zero `[deps.*]`, closing it.
+
+### Changed
+
+- **Toolchain pinned to cyrius 6.5.20** (was 6.5.10). Its headline fix is a
+  **P1**: a `switch`/`match` case body could only be left safely by `return` —
+  otherwise a wrong answer with no diagnostic, or a segfault. libro's own `src/`
+  contains no statement-position `switch`/`match`, so the exposure was in the
+  vendored surface only.
+
+### Known issues
+
+- ⚠ **`dist/libro.deps` no longer declares `sakshi`, and never did on its own
+  merits.** The leaf reached the sidecar only through patra 1.12.12's
+  `[deps.sakshi]` block — the defect fixed above — so fixing it unmasked a
+  latent hole: `dist/libro.cyr` calls `sakshi_*` 44 times and defines none.
+  Measured at 27 leaves on 1.12.12, **26** on 1.13.0 and 26 with the block
+  removed entirely, so this is not caused by the version chosen. Consumers are
+  unaffected today — bote and agnosai each declare `"sakshi"` in their own
+  `[deps].stdlib` — but a clean-room consumer relying only on the sidecar would
+  fail where 2.8.4 worked. `cyrius distlib`'s self-check cannot catch it:
+  undefined *functions* are downgraded to warnings, so only an undefined
+  *variable* fails a bundle.
+- ⚠ **A bare `cyrius deps` does NOT undo `cyrius deps --features tpm`.** It
+  leaves `lib/sigil_tpm_sigil-tpm.cyr` in place and the lock at **112** entries;
+  only `rm -rf lib && cyrius lib sync --full && cyrius deps` restores the honest
+  **111**. Committing after a TPM build therefore records a lock the default
+  build does not use. CLAUDE.md's instruction has been corrected.
+
 ## [2.8.4] — 2026-07-28
 
 **A chain that links without retaining.** Additive; no existing behaviour changes.

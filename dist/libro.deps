@@ -12,7 +12,6 @@ io
 fs
 fmt
 bayan
-sakshi
 chrono
 tagged
 process
@@ -22,3 +21,8 @@ thread
 thread_local
 slice
 random
+atomic
+sync
+bench
+fnptr
+test

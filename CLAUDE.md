@@ -46,7 +46,7 @@ No external deps beyond the Cyrius toolchain.
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "502 passed, 0 failed"
+# Run tests — expect "512 passed, 0 failed"
 ./build/libro
 
 # Benchmarks (three binaries — cc5 fixup table limit forced the core/io split
@@ -56,15 +56,19 @@ CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./
 CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
 CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
 
-# TPM opt-in build — expect "514 passed, 0 failed".
+# TPM opt-in build — expect "524 passed, 0 failed".
 # Needs the `tpm` feature on BOTH commands: `cyrius deps` to resolve the
 # optional [deps.sigil_tpm] fold, and `cyrius build` to compile it in.
 # Omit it from `deps` and the build fails with `undefined variable 'TPM_SHA256'`.
 # One benign `duplicate fn '_sigil_random_fill'` warning is expected here.
-# Re-run a bare `cyrius deps` afterwards to restore the thin, tpm-free default.
+#
+# ⚠ A bare `cyrius deps` does NOT undo this — corrected 2026-08-12, measured.
+# It leaves lib/sigil_tpm_sigil-tpm.cyr in place and the lock at 112 entries;
+# committing there records a lock the DEFAULT build does not use. Only a full
+# re-sync restores the honest 111. Read the "N deps locked" line to confirm.
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && ./build/libro_tpm
-cyrius deps
+rm -rf lib && cyrius lib sync --full && cyrius deps   # restores the thin, tpm-free default
 
 # Fuzz
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 10 ./build/fuzz_libro
