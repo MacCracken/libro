@@ -96,32 +96,18 @@ stdlib = [
 # of its own, so it can only get patra by resolving libro's `deps.patra`
 # transitively. Delete this block and bote loses patra.
 #
-# ⚠ **THE MISSING `sakshi` SIDECAR LEAF — ROOT CAUSE FOUND AND FIXED AT 2.8.6.**
-# An earlier version of this comment blamed patra's removed `deps.sakshi` block.
-# **That was wrong**, and the wrong diagnosis is why the hole survived a release.
+# ⚠ Never write a bracketed deps.NAME section header inside a comment — backtick
+# it as `deps.NAME`. `cyrius distlib` scans for that opening bracket sequence
+# unanchored (cbt/commands.cyr _distlib_named_deps) and matches it in comment
+# prose, dropping NAME from the sidecar. This file's own comments are what
+# deleted `sakshi` from dist/libro.deps at 2.8.5. Fixed 2.8.6 (26 -> 27 leaves);
+# filed upstream. NOT caused by patra's removed sakshi block — patra shipped the
+# same defect with no git deps at all. See CHANGELOG [2.8.6].
 #
-# The real cause is a cyrius bug: `_distlib_named_deps` (cbt/commands.cyr:2486)
-# scans the manifest for the literal `[deps.` **unanchored**, so it matches
-# inside `#` COMMENT PROSE. Every dep named in a comment was added to the
-# "this is a fold, not a stdlib leaf" exclude set — so libro's own comments,
-# which discussed that block at length, silently deleted `sakshi` from its own
-# sidecar. Its neighbour `_distlib_enum_profiles` (:2364) is line-anchored ON
-# PURPOSE and its comment even warns that `_distlib_named_deps` is not.
-#
-# Proof it is the comments, not the dep graph: patra shipped the SAME bug with
-# NO git deps at all — `dist/patra.deps` carried 11 leaves against 12 declared,
-# missing `sakshi`, identically at 1.12.11 / 1.12.12 / 1.13.0 / 1.13.1, i.e.
-# unchanged straight through the `deps.sakshi` removal boundary.
-#
-# **The fix, applied here and in patra: never write the bare literal `[deps.X]`
-# in comment prose — backtick it as `` `deps.X` ``.** Measured: libro 26 -> 27
-# leaves, `sakshi` restored, `dist/libro.cyr` byte-identical; patra 11 -> 12.
-# Filed upstream against cyrius distlib.
-#
-# ⚠ `distlib`'s self-check cannot catch a missing leaf: undefined *functions*
-# are downgraded to warnings, so only an undefined *variable* fails a bundle.
-# Read the sidecar leaf count on every release rather than trusting the check —
-# it must equal the number of names in `[deps].stdlib` above (27).
+# ⚠ distlib's self-check cannot catch a missing leaf (undefined *functions* are
+# only warnings; only an undefined *variable* fails a bundle). Check the leaf
+# count on every release: it must equal the number of names in `[deps].stdlib`
+# above (27).
 
 # External first-party deps. `cyrius deps` resolves these into lib/
 # from the pinned tags. lib/ is gitignored — the contract is the tag
