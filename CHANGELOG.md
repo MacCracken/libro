@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.7] — 2026-08-18 — patra 1.13.1 → 1.13.8 (the 1.13.x repair arc)
+
+**518** assertions green (**530** with `tpm`), fuzz clean. Binary 800,712 →
+**813,384 B** sibling-free at the pinned tags.
+
+### Changed
+
+- **`[deps.patra]` `1.13.1` → `1.13.8`**, picking up patra's seven-release
+  repair arc. What libro gains, in the order it matters:
+
+  - **A WAL is now bound to its database** (patra 1.13.8). An orphaned `.wal`
+    used to be replayed into whatever file later took that path — a fresh
+    database that should hold 1 row could come back holding 30, from a
+    *different* database's abandoned transaction. libro's store is exactly the
+    shape that meets this: a long-lived `.patra` file that a crash can leave a
+    WAL beside, and that an operator may restore over.
+  - **Transactions actually hold their lock.** `patrastore_begin` /
+    `_commit` / `_rollback` re-export patra's transactions, which until 1.13.3
+    released their exclusive flock after the *first* statement — leaving a
+    window where another process could commit into the same file mid-transaction
+    and a later rollback would write before-images over its committed pages.
+  - **The write-ahead log is now write-ahead** (1.13.4): before-images are
+    synced before the pages they protect, the header page is WAL-logged (so a
+    rollback no longer leaves `TBL_NROWS` stale), and recovery runs under a lock.
+  - **`DELETE` no longer desyncs the index from the rows** (1.13.5), and
+    **duplicate keys across a leaf split are reachable by index mutations**
+    (1.13.6) — both directly relevant to `patrastore_by_source` under
+    `patrastore_create_source_index`, where many entries share one `src` key.
+  - Memory-safety fixes for malformed `.patra` input, and parser strictness that
+    turns silently-truncated statements into errors.
+
+### ⚠ Behaviour change to be aware of
+
+- **A field longer than 255 bytes now fails the append instead of being silently
+  truncated.** patra 1.13.6 made an over-long `STR` return `PATRA_ERR_ROWSZ`
+  rather than cutting it to 255. This reaches libro through the bind path
+  `patrastore_append` already uses — verified: a 300-byte bound value returns 8
+  and stores nothing, while 255 still succeeds.
+
+  For a tamper-evident log this is the better failure: the old behaviour hashed
+  the full value and stored a truncated one, so the record on disk did not match
+  what the chain committed to. But it **is** a change — an entry whose `det`
+  (details), `src` or `act` exceeds 255 bytes will now be rejected, and
+  `patrastore_append` returns the error and logs `patrastore: insert failed`
+  rather than storing a shortened row.
+
+  **`patrastore_append` now bounds all ten fields itself, before binding.** Each
+  is checked against patra's 255-byte STR capacity and the offending field is
+  named in the log; the append returns `PATRA_ERR_ROWSZ` without touching patra.
+
+  **Deliberately a rejection, not a truncation.** `entry_compute_hash` covers
+  the FULL `src` / `act` / `det` / `ts` values, so storing a shortened row would
+  put bytes on disk that do not match the hash written beside them — the entry
+  would fail verification, and every entry chained after it would be
+  unverifiable. Silently truncating is precisely how the pre-2.7 `'`-escaping
+  defect corrupted chains: the on-disk record diverging from what the chain
+  committed to. Callers that may log long details should truncate deliberately
+  at the call site, where the hash is computed over what actually gets stored.
+
+  The bound also makes the guarantee independent of the patra version — built
+  against a patra that truncates (≤ 1.13.5), libro now still refuses.
+
+### Verified
+
+- Sibling-free (CI-shape) resolution and build, as the release process requires
+  since 2.8.6 — `path = "../patra"` makes the tag inert locally, so a local green
+  result is not evidence about CI. Resolved `patra 1.13.8` (commit `0188523`) and
+  `sigil 3.12.9`, both commit-pinned.
+- Default build 518/518, `--features tpm` build 530/530, fuzz harness clean.
+
 ## [2.8.6] — 2026-08-18 — three pins moved, and the sidecar hole's real cause found
 
 512 assertions green (524 with `tpm`), fuzz clean. Binary 800,712 B sibling-free

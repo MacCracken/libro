@@ -149,6 +149,34 @@ fn patrastore_flush(s) {
 # parameters as of 1.9.3). The big perf knob for append-heavy workloads
 # is patrastore_append_batch + SYNC_BATCH below.
 
+# ── Field bounds (2.8.7) ──
+#
+# patra stores a STR column in a fixed 256-byte slot: 255 bytes plus a NUL.
+# Since patra 1.13.6 an over-long value is REJECTED (PATRA_ERR_ROWSZ) rather
+# than silently truncated, which is the right call — but it means an append can
+# now fail on field length, so bound the fields here where we can name the one
+# at fault instead of letting a generic error come back from the exec.
+#
+# Deliberately a REJECTION, not a truncation. entry_compute_hash covers the
+# FULL src / act / det / ts values (see src/entry.cyr), so storing a shortened
+# row would put a value on disk that does not match the hash written beside it:
+# the entry would fail verification, and a chain built on it would be
+# unverifiable from the point of the first over-long field. Silently truncating
+# is exactly how the pre-2.7 `'`-escaping defect corrupted chains — the on-disk
+# record diverging from what the chain committed to. Refuse, and let the caller
+# decide.
+fn _ps_field_max(): i64 { return COL_STR_SZ - 1; }
+
+# Returns 1 and logs when `len` will not fit a STR column, else 0.
+fn _ps_field_too_long(fname, fnlen, len): i64 {
+    if (len > _ps_field_max()) {
+        sakshi_error("patrastore: field exceeds 255 bytes", 35);
+        sakshi_error(fname, fnlen);
+        return 1;
+    }
+    return 0;
+}
+
 fn patrastore_append(s, e) {
     sakshi_debug("patrastore: append", 18);
     var db = load64(s);
@@ -178,6 +206,25 @@ fn patrastore_append(s, e) {
     # contained a `'` — the argonaut P1 corruption. (patra 1.12.10 also fixed the
     # SQL-string path with standard `''` escaping + patra_quote_str, but binding is
     # the durable, escaping-free path and works on patra 1.12.9+ too.)
+    # Bound every field before touching patra. See _ps_field_too_long: this
+    # rejects rather than truncates, because the entry's hash covers the full
+    # values and a shortened row would not match it.
+    var over = 0;
+    if (_ps_field_too_long("id", 2, str_len(id)) == 1) { over = 1; }
+    if (_ps_field_too_long("timestamp", 9, str_len(ts)) == 1) { over = 1; }
+    if (_ps_field_too_long("severity", 8, strlen(sev)) == 1) { over = 1; }
+    if (_ps_field_too_long("source", 6, str_len(src)) == 1) { over = 1; }
+    if (_ps_field_too_long("action", 6, str_len(act)) == 1) { over = 1; }
+    if (_ps_field_too_long("details", 7, str_len(det)) == 1) { over = 1; }
+    if (_ps_field_too_long("agent_id", 8, str_len(aid)) == 1) { over = 1; }
+    if (_ps_field_too_long("prev_hash", 9, str_len(ph)) == 1) { over = 1; }
+    if (_ps_field_too_long("hash", 4, str_len(hash)) == 1) { over = 1; }
+    if (_ps_field_too_long("hash_algorithm", 14, strlen(halg)) == 1) { over = 1; }
+    if (over == 1) {
+        sakshi_error("patrastore: append rejected, entry not stored", 44);
+        return PATRA_ERR_ROWSZ;
+    }
+
     var st = patra_prepare(db, "INSERT INTO audit_entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (st == 0) {
         sakshi_error("patrastore: prepare failed", 26);

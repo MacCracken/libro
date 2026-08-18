@@ -12,7 +12,7 @@ and what to watch when upgrading.
 | Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.5.27** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
 | sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`     | **3.12.9** | `cyrius deps` → `lib/sigil-mldsa.cyr` + `lib/sigil_{sha_ni,sha256,hex}.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, hex. **Thin sub-surface, not the monolithic `dist/sigil.cyr`** (see below) |
 | sigil (tpm)      | `cyrius.cyml` `[deps.sigil_tpm] tag = "…"` | **3.12.9** | `cyrius deps --features tpm` → `lib/sigil_tpm_sigil-tpm.cyr` | TPM 2.0 primitives (`tpm_seal` / `tpm_unseal` / `tpm_detect`). **Optional** — activated only by the `tpm` feature for the `-D LIBRO_TPM` build |
-| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.13.1** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
+| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.13.8** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
 
 Zero third-party crates. No transitive graph to audit.
 
@@ -66,8 +66,8 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   the canonical installer (`scripts/install.sh` via curl, or
   `cyriusly install <ver>` which calls it) is enough to change the
   toolchain.
-- Every toolchain bump needs a full test + fuzz + bench pass (512
-  default / 524 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
+- Every toolchain bump needs a full test + fuzz + bench pass (518
+  default / 530 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
   across three binaries) because codegen changes can surface subtle
   behavioral deltas. 2.1.0 jumped 5.4.7 → 5.10.34 in one step —
   pulled `secret var`, `getrandom`, `lib/ct.cyr`, `lib/keccak.cyr`,

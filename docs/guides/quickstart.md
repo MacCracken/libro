@@ -26,7 +26,7 @@ cd libro
 # Build (CYRIUS_DCE=1 matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "512 passed, 0 failed"
+# Run tests — expect "518 passed, 0 failed"
 ./build/libro
 ```
 

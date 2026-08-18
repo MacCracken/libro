@@ -391,7 +391,7 @@ The equivalent discipline is enforced through:
   feature off it is not cloned, copied, or compiled — the default
   build carries **no TPM surface at all**, rather than a DCE-stripped
   one. Opt in via `cyrius deps --features tpm` + `-D LIBRO_TPM`.
-- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.13.1"`.
+- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.13.8"`.
   Same as above. Pins the prepared-statement / group-commit /
   STR-btree feature set.
 - **Zero third-party deps** beyond the Cyrius toolchain + sigil +

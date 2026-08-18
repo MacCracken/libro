@@ -224,7 +224,7 @@ Libro's supply chain is short and auditable:
   "3.12.9"`, `optional` and gated behind the `tpm` feature. Carries
   TPM 2.0 primitives for the opt-in `-D LIBRO_TPM` build; absent
   entirely from default builds.
-- **patra**: pinned in `cyrius.cyml` `[deps.patra] tag = "1.13.1"`
+- **patra**: pinned in `cyrius.cyml` `[deps.patra] tag = "1.13.8"`
   (`lib/patra.cyr`). Carries the prepared-statement / group-commit
   / STR-btree features libro 2.4+ uses.
 - **stdlib modules** (~22 modules including the 2.1.0 sigil-bundle

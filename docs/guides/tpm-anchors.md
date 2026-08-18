@@ -198,8 +198,8 @@ new policy and discarding the old sealed files.
 
 libro's CI runs both builds:
 
-- **Default build**: 512 tests pass, no TPM surface resolved or linked.
-- **`-D LIBRO_TPM` build**: 524 tests pass, exercises the API
+- **Default build**: 518 tests pass, no TPM surface resolved or linked.
+- **`-D LIBRO_TPM` build**: 530 tests pass, exercises the API
   surface on hosts without tpm2-tools. The hardware-roundtrip test
   is best-effort: it logs a skip if the host can't actually seal,
   otherwise it pins the full success path.

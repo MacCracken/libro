@@ -2679,6 +2679,58 @@ fn test_patrastore_open_close() {
     sys_unlink("/tmp/libro_test_ps.patra.wal");
 }
 
+fn test_patrastore_rejects_overlong_field() {
+    sys_unlink("/tmp/libro_test_ps_long.patra");
+    sys_unlink("/tmp/libro_test_ps_long.patra.wal");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_long.patra"));
+
+    # A 300-byte action. patra stores STR in 255 bytes + NUL and, since
+    # 1.13.6, rejects rather than truncating. libro bounds the fields itself
+    # so the failure is named — and REJECTS rather than shortening, because
+    # entry_compute_hash covers the full value: a truncated row would not
+    # match the hash stored beside it and the chain would fail verification.
+    #
+    # NOTE this is a CONTRACT test, not an isolation test: with patra >= 1.13.6
+    # pinned it passes whether or not libro's own bound is present, since patra
+    # rejects too. What libro's bound adds is that the guarantee no longer
+    # DEPENDS on the patra version — built against a patra that truncates
+    # (<= 1.13.5) libro would still refuse. That property cannot be exercised
+    # in-tree while the pin is current, so it is asserted here as behaviour
+    # rather than as a call-path.
+    var big = fl_alloc(400);
+    memset(big, 65, 300);
+    store8(big + 300, 0);
+    var longact = str_from(big);
+
+    var det = str_from("{}");
+    var e1 = entry_new(SEV_INFO, str_from("auth"),
+    longact, det, str_from(""));
+    var r = patrastore_append(ps, e1);
+    assert(r == PATRA_ERR_ROWSZ, "over-long field rejected with ROWSZ");
+    assert(patrastore_len(ps) == 0, "rejected entry was not stored");
+
+    # A field at exactly the limit must still be accepted.
+    memset(big, 66, 255);
+    store8(big + 255, 0);
+    var maxact = str_from(big);
+    var e2 = entry_new(SEV_INFO, str_from("auth"),
+    maxact, det, str_from(""));
+    var r2 = patrastore_append(ps, e2);
+    assert(r2 == PATRA_OK, "255-byte field accepted");
+    assert(patrastore_len(ps) == 1, "accepted entry stored");
+
+    # And the store stays usable afterwards — a rejection must not wedge it.
+    var e3 = entry_new(SEV_INFO, str_from("auth"),
+    str_from("normal"), det, entry_hash(e2));
+    assert(patrastore_append(ps, e3) == PATRA_OK, "store usable after a rejection");
+    assert(patrastore_len(ps) == 2, "subsequent append landed");
+
+    fl_free(big);
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_long.patra");
+    sys_unlink("/tmp/libro_test_ps_long.patra.wal");
+}
+
 fn test_patrastore_append_load() {
     sys_unlink("/tmp/libro_test_ps2.patra");
     var ps = patrastore_open(str_from(
@@ -3271,6 +3323,7 @@ fn main() {
     test_group("PatraStore");
     test_patrastore_open_close();
     test_patrastore_append_load();
+    test_patrastore_rejects_overlong_field();
     test_patrastore_verify();
     test_patrastore_query();
     test_patrastore_by_source();

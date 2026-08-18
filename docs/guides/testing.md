@@ -3,7 +3,7 @@
 ## Running the Full Suite
 
 ```bash
-# Build and run all tests (512 assertions expected, 0 failures)
+# Build and run all tests (518 assertions expected, 0 failures)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro && ./build/libro
 
 # Fuzz harness (12 targets, no-crash asserts, ~10 s)
@@ -17,7 +17,7 @@ CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && \
 # A benign `duplicate fn '_sigil_random_fill'` warning is expected here.
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && \
-    ./build/libro_tpm   # 524 assertions: 512 default + 12 TPM-gated
+    ./build/libro_tpm   # 530 assertions: 518 default + 12 TPM-gated
 
 # Restore the thin, tpm-free default afterwards — a bare `cyrius deps` does
 # NOT undo the above (it leaves one extra lock entry: 113 vs the honest 112).
@@ -81,7 +81,7 @@ The group list, in declaration order:
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 512 assertions default / 524 with `-D LIBRO_TPM`** across
+**Total: 518 assertions default / 530 with `-D LIBRO_TPM`** across
 these groups. Count moves with every sprint; the source of truth is
 the output of `./build/libro`, not this document.
 
@@ -281,7 +281,7 @@ They exist to prevent regression of classes already caught in audits:
 | Manifest completeness | 2.0.1 (refined 2.5.0) | `[lib] modules` drifting from `src/main.cyr` includes; 2.5.0 skip `#ifdef`-gated includes for opt-in modules |
 | Specific-struct raw-offset guard | 2.0.1 + 2.0.2 | `load64(c+N)`, `load64(ip+N)`, etc. outside defining file |
 | Per-file allowlist | 2.0.4 (extended 2.5.0) | new raw-offset param names appearing in unregistered files; 2.5.0 registers `ta` for `src/tpm_anchor.cyr` |
-| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (512 → 524 assertions) |
+| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (518 → 530 assertions) |
 | Dist freshness | 1.1.1 | `dist/libro.cyr` missing or stale vs `src/` |
 | Version parity (release only) | 1.1.1 | VERSION / cyrius.cyml / dist header / git tag disagreement |
 
