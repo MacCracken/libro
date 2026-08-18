@@ -12,7 +12,7 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.8.6 (2026-08-17)
+- **Version**: 2.8.6 (2026-08-18)
 - **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.27 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -21,7 +21,7 @@
 
 ## Consumers
 
-Ten repos pin `[deps.libro]` directly (verified 2026-08-17): daimon (audit), aegis (security events), stiva (container lifecycle), bote (storage), argonaut (audit), phylax, nein, t-ron, kybernet, cyrius-yeomans-descent. **sigil and ark do NOT consume libro** — an earlier list claimed they did.
+Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aegis (security events), stiva (container lifecycle), bote (storage), argonaut (audit), phylax, nein, t-ron, kybernet, cyrius-yeomans-descent. **sigil and ark do NOT consume libro** — an earlier list claimed they did.
 
 ## Current State
 
@@ -78,8 +78,11 @@ rm -rf lib && cyrius lib sync --full && cyrius deps   # restores the thin, tpm-f
 # Fuzz
 CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && timeout 10 ./build/fuzz_libro
 
-# Format + lint
-cyrfmt --check src/*.cyr
+# Format + lint — per-file. cyrfmt reads only argv[1] and silently ignores the
+# rest, so `cyrfmt --check src/*.cyr` only ever checks the FIRST glob entry and
+# exits 0 with the others unformatted (that gate sat green over five unformatted
+# files until 2.8.6). Always loop.
+for f in src/*.cyr; do cyrfmt --check "$f" || echo "unformatted: $f"; done
 for f in src/*.cyr; do cyrius lint "$f"; done
 ```
 
@@ -99,7 +102,7 @@ from findings → post-review benchmarks → docs audit → repeat if heavy.
 1. Work phase — roadmap item, feature, bug fix
 2. Build check: `CYRIUS_DCE=1 cyrius build src/main.cyr build/libro`
 3. Test: `./build/libro` — must report `0 failed`
-4. Lint + format: `cyrius lint src/*.cyr`, `cyrfmt --check src/*.cyr`
+4. Lint + format: per-file loops over `src/*.cyr` (see Build & Test — the glob form is a no-op)
 5. Bench additions for new code
 6. Run benchmarks, compare to baseline
 7. Audit — perf, memory, security, correctness

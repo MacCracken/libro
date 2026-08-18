@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.8.6] — 2026-08-17 — three pins moved, and the sidecar hole's real cause found
+## [2.8.6] — 2026-08-18 — three pins moved, and the sidecar hole's real cause found
 
 512 assertions green (524 with `tpm`), fuzz clean. Binary 800,712 B sibling-free
 at the new pins (was 800,696). Lock 112 entries (was 111 under 6.5.20).
