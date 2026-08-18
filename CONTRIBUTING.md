@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - [Cyrius](https://github.com/MacCracken/cyrius) compiler — version is
-  pinned in `cyrius.cyml` (`cyrius = "…"` field; currently **6.4.83**).
+  pinned in `cyrius.cyml` (`cyrius = "…"` field; currently **6.5.27**).
   Install with:
   ```bash
   cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -23,7 +23,7 @@ fold is optional and only appears under `cyrius deps --features tpm`.
 # Build (CYRIUS_DCE=1 matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "502 passed, 0 failed"
+# Run tests — expect "512 passed, 0 failed"
 ./build/libro
 
 # Fuzz (12 targets, no-crash asserts)

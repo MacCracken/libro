@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.6] — 2026-08-17 — three pins moved, and the sidecar hole's real cause found
+
+512 assertions green (524 with `tpm`), fuzz clean. Binary 800,712 B sibling-free
+at the new pins (was 800,696). Lock 112 entries (was 111 under 6.5.20).
+
+### Fixed
+
+- **`dist/libro.deps` was missing its `sakshi` leaf — and 2.8.5's recorded root
+  cause was wrong.** The sidecar shipped 26 leaves against 27 declared while
+  `dist/libro.cyr` calls `sakshi_*` ~44 times and defines none, so a clean-room
+  consumer resolving only from the sidecar was under-declared.
+
+  2.8.5 blamed patra 1.12.12's removed `deps.sakshi` block. **That diagnosis was
+  wrong, and being wrong is why the hole survived a release.** The real cause is
+  a cyrius bug: `_distlib_named_deps` (`cbt/commands.cyr:2486`) scans the
+  manifest for the literal `[deps.` **unanchored**, so it matches inside `#`
+  comment prose and adds that name to the "fold, not a stdlib leaf" exclude set.
+  libro's own comment block — which discussed `deps.sakshi` at length — is what
+  deleted `sakshi` from libro's sidecar. The neighbouring `_distlib_enum_profiles`
+  (`:2364`) is line-anchored on purpose and its comment already warned that
+  `_distlib_named_deps` is not.
+
+  Proof it is the comments and not the dep graph: **patra shipped the identical
+  defect with no git deps at all** — `dist/patra.deps` carried 11 leaves against
+  12 declared, missing `sakshi`, unchanged at 1.12.11 / 1.12.12 / 1.13.0 / 1.13.1,
+  i.e. straight through the removal boundary that was blamed.
+
+  Fix: never write a bare `[deps.X]` in comment prose; backtick it. Measured —
+  libro 26 → 27 leaves, patra 11 → 12, both with `dist/*.cyr` byte-identical.
+  Filed upstream against cyrius `distlib`.
+
+- **The CI format gate never checked anything.** `ci.yml` ran
+  `cyrfmt --check src/*.cyr`, but `cyrfmt` reads only `argv[1]` and silently
+  ignores the rest — so the gate only ever checked `src/anchoring.cyr`, which is
+  clean, and returned 0. Proven by reordering: `export.cyr` first exits 1,
+  `anchoring.cyr` first exits 0. **Five files were unformatted behind it**
+  (`export`, `file_store`, `proof_json`, `signing`, `tpm_anchor`). The gate is
+  now a per-file loop, and those five are reformatted — whitespace only,
+  `git diff -w` empty, and the DCE binary is byte-identical either side.
+
+### Changed
+
+- **Toolchain pin `6.5.20` → `6.5.27`.** Proven a **zero-byte** change for libro
+  by a 2×2 sibling-free build matrix: `{6.5.20, 6.5.27} × {patra 1.13.0, 1.13.1}`
+  produces exactly two distinct binaries, factorising purely by the patra tag.
+  Of the stdlib files differing across the span libro declares only `fs` and
+  `process`, and both diffs are an inert comment banner. The real gains are
+  non-codegen: a 6.5.25 deps-resolution fix (`_dep_find_stdlib_dir` used
+  `file_exists("src/main.cyr")` as its "am I the cyrius repo?" test, which is
+  true for libro, so a warm `./lib` was returned *as* the stdlib), and 6.5.24
+  diagnostic line attribution.
+
+- **`[deps.patra]` `1.13.0` → `1.13.1`.** This is the only change in the release
+  that moves a byte of the binary. It carries patra's fix for a result buffer
+  sized by the whole table rather than the query — up to 41× on indexed equality
+  lookups, and flat rather than growing with database size. `patrastore_by_source`
+  under `patrastore_create_source_index` is the path that benefits.
+
+- **`[deps.sigil]` / `[deps.sigil_tpm]` `3.12.7` → `3.12.9`.** Security-filed
+  upstream (Bellcore verify-after-sign, RSA/bignum de-banking). libro does not
+  call the new symbols (`crypto_banks_*`: zero hits in `src/`), but
+  `dist/sigil-tpm.cyr` moves, so the `-D LIBRO_TPM` build was verified
+  explicitly: **524 passed, 0 failed**.
+
+### Documentation
+
+- `CLAUDE.md` "Current State" was stale at 2.8.3 and **contradicted its own Build
+  & Test section** (502/514 vs the real 512/524). Corrected, along with the pin
+  (6.4.83 → 6.5.27), patra (1.12.12 → 1.13.1, and 1.11.2 in the tree map), and
+  binary/capacity figures (800,712 B, `.bss` 80,280 B, `fn_table` 2240/32768,
+  `identifiers` 60336/524288, `var_table` 904/8192).
+- **The lock-count note had it backwards.** It called 112 the *polluted* number;
+  at 6.5.27 the honest default **is** 112 and a `--features tpm` resolve is 113
+  (both measured). Restated as an invariant — tpm is exactly one more than a
+  clean full re-sync — so it stops rotting with the stdlib snapshot.
+- **Consumer lists named `sigil` and `ark`, neither of which consumes libro.**
+  Ten repos actually pin `[deps.libro]`: daimon, aegis, stiva, bote, argonaut,
+  phylax, nein, t-ron, kybernet, cyrius-yeomans-descent.
+- `docs/guides/testing.md`'s TPM recipe **could not succeed** — it omitted
+  `--features tpm` on both `cyrius deps` and `cyrius build`, which fails with
+  `undefined variable 'TPM_SHA256'`. Replaced with the verified recipe plus the
+  restore step.
+- Test counts (502/514 → 512/524) and live dep pins corrected across
+  `README`, `CONTRIBUTING`, `quickstart`, `testing`, `tpm-anchors`,
+  `dependency-watch`, `threat-model`, and `standards-mapping`. Historical
+  release rows and `≥` version floors were deliberately left alone.
+
+### Known issue (not fixed here)
+
+- **`path = "../patra"` / `path = "../sigil"` make the tag inert locally.** A
+  sibling checkout fully overrides the git/tag fields and *silently skips
+  commit-pin verification* — libro's real `cyrius.lock` has zero `^commit` lines
+  where a sibling-free tree has two. Before this release local builds compiled
+  patra 1.13.1 + sigil 3.12.9 while CI compiled 1.13.0 + 3.12.7. The tags now
+  match what is exercised, but the mechanism remains: **a sibling-free
+  reproduction is mandatory on every release**, not optional.
+
 ## [2.8.5] — 2026-08-12 — the stale-sakshi overlay is cut at both roots
 
 No behaviour change in libro's own code; 512 assertions green (524 with `tpm`),

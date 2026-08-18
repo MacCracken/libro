@@ -212,19 +212,19 @@ windows.
 
 Libro's supply chain is short and auditable:
 
-- **Cyrius toolchain**: pinned in `cyrius.cyml` `cyrius = "6.4.83"`.
+- **Cyrius toolchain**: pinned in `cyrius.cyml` `cyrius = "6.5.27"`.
   CI reads this field and installs exactly that toolchain via the
   canonical `scripts/install.sh` flow.
-- **sigil**: pinned in `cyrius.cyml` `[deps.sigil] tag = "3.12.1"`,
+- **sigil**: pinned in `cyrius.cyml` `[deps.sigil] tag = "3.12.9"`,
   resolved by `cyrius deps` as a thin sub-surface
   (`dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`) rather than
   the monolithic bundle. Carries the FIPS 204 ML-DSA-65 stack libro
   2.2+ depends on; the unused x509/RSA/authenticode fold is not linked.
 - **sigil (TPM)**: pinned in `cyrius.cyml` `[deps.sigil_tpm] tag =
-  "3.12.1"`, `optional` and gated behind the `tpm` feature. Carries
+  "3.12.9"`, `optional` and gated behind the `tpm` feature. Carries
   TPM 2.0 primitives for the opt-in `-D LIBRO_TPM` build; absent
   entirely from default builds.
-- **patra**: pinned in `cyrius.cyml` `[deps.patra] tag = "1.12.12"`
+- **patra**: pinned in `cyrius.cyml` `[deps.patra] tag = "1.13.1"`
   (`lib/patra.cyr`). Carries the prepared-statement / group-commit
   / STR-btree features libro 2.4+ uses.
 - **stdlib modules** (~22 modules including the 2.1.0 sigil-bundle

@@ -34,33 +34,33 @@ fn export_jsonl(entries, fd) {
 fn _export_entry_json(e, fd) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"id\":\"");
-        str_builder_add(sb, uuid_format(entry_id(e)));
-        str_builder_add_cstr(sb, "\",\"timestamp\":\"");
-        str_builder_add(sb, entry_timestamp(e));
-        str_builder_add_cstr(sb, "\",\"severity\":\"");
-        str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
-        str_builder_add_cstr(sb, "\",\"source\":\"");
-        _sb_json_escape(sb, entry_source(e));
-        str_builder_add_cstr(sb, "\",\"action\":\"");
-        _sb_json_escape(sb, entry_action(e));
-        str_builder_add_cstr(sb, "\",\"details\":");
-        str_builder_add(sb, entry_details(e));
-        str_builder_add_cstr(sb, ",\"agent_id\":");
-        var aid = entry_agent_id(e);
-        if (aid == 0) {
-            str_builder_add_cstr(sb, "null");
-        } else {
-            str_builder_add_cstr(sb, "\"");
-            _sb_json_escape(sb, aid);
-            str_builder_add_cstr(sb, "\"");
-        }
-        str_builder_add_cstr(sb, ",\"prev_hash\":\"");
-        str_builder_add(sb, entry_prev_hash(e));
-        str_builder_add_cstr(sb, "\",\"hash\":\"");
-        str_builder_add(sb, entry_hash(e));
-        str_builder_add_cstr(sb, "\",\"hash_algorithm\":\"");
-        str_builder_add(sb, entry_hash_algorithm(e));
-        str_builder_add_cstr(sb, "\"}");
+    str_builder_add(sb, uuid_format(entry_id(e)));
+    str_builder_add_cstr(sb, "\",\"timestamp\":\"");
+    str_builder_add(sb, entry_timestamp(e));
+    str_builder_add_cstr(sb, "\",\"severity\":\"");
+    str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
+    str_builder_add_cstr(sb, "\",\"source\":\"");
+    _sb_json_escape(sb, entry_source(e));
+    str_builder_add_cstr(sb, "\",\"action\":\"");
+    _sb_json_escape(sb, entry_action(e));
+    str_builder_add_cstr(sb, "\",\"details\":");
+    str_builder_add(sb, entry_details(e));
+    str_builder_add_cstr(sb, ",\"agent_id\":");
+    var aid = entry_agent_id(e);
+    if (aid == 0) {
+        str_builder_add_cstr(sb, "null");
+    } else {
+        str_builder_add_cstr(sb, "\"");
+        _sb_json_escape(sb, aid);
+        str_builder_add_cstr(sb, "\"");
+    }
+    str_builder_add_cstr(sb, ",\"prev_hash\":\"");
+    str_builder_add(sb, entry_prev_hash(e));
+    str_builder_add_cstr(sb, "\",\"hash\":\"");
+    str_builder_add(sb, entry_hash(e));
+    str_builder_add_cstr(sb, "\",\"hash_algorithm\":\"");
+    str_builder_add(sb, entry_hash_algorithm(e));
+    str_builder_add_cstr(sb, "\"}");
 
     var s = str_builder_build(sb);
     file_write(fd, str_data(s), str_len(s));

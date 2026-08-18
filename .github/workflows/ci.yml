@@ -272,7 +272,17 @@ jobs:
           echo "Raw-offset bound check: all sites within their struct field range."
 
       - name: Format check
-        run: cyrfmt --check src/*.cyr
+        # cyrfmt reads only argv[1] and silently ignores the rest, so the old
+        # `cyrfmt --check src/*.cyr` only ever checked the first glob entry
+        # (src/anchoring.cyr) and returned 0 while five files were unformatted.
+        # Loop per-file so the gate actually gates.
+        run: |
+          FAILED=0
+          for f in src/*.cyr; do
+            cyrfmt --check "$f" || { echo "unformatted: $f"; FAILED=1; }
+          done
+          if [ "$FAILED" -ne 0 ]; then exit 1; fi
+          echo "Format check: all src/*.cyr formatted."
 
       - name: Lint
         run: |

@@ -377,21 +377,21 @@ The equivalent discipline is enforced through:
 
 ## Supply chain
 
-- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.4.83"`.
+- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.5.27"`.
   CI reads this field and installs the exact toolchain via the
   canonical `scripts/install.sh` flow. No wildcard ranges.
-- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.12.1"`.
+- **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.12.9"`.
   `cyrius deps` resolves deterministically. Pins libro to sigil's
   full FIPS 204 ML-DSA stack. The pin names a **thin sub-surface**
   (`dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`), not the
   monolithic bundle — a narrower attack surface as well as a smaller
   binary, since the unused x509/RSA/authenticode fold is never linked.
-- **sigil TPM pin** in `cyrius.cyml` `[deps.sigil_tpm] tag = "3.12.1"`,
+- **sigil TPM pin** in `cyrius.cyml` `[deps.sigil_tpm] tag = "3.12.9"`,
   marked `optional` and gated behind the `tpm` feature. With the
   feature off it is not cloned, copied, or compiled — the default
   build carries **no TPM surface at all**, rather than a DCE-stripped
   one. Opt in via `cyrius deps --features tpm` + `-D LIBRO_TPM`.
-- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.12.12"`.
+- **patra pin** in `cyrius.cyml` `[deps.patra] tag = "1.13.1"`.
   Same as above. Pins the prepared-statement / group-commit /
   STR-btree feature set.
 - **Zero third-party deps** beyond the Cyrius toolchain + sigil +

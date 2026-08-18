@@ -92,7 +92,7 @@ fn tpm_anchor_new(inner_anchor, output_dir, pcr_indices) {
     # agnosys tpm_seal caps at TPM_SEAL_MAX_BYTES = 2048; a 64-char
     # hex hash is well under that.
     var res = tpm_seal(TPM_SHA256, pcr_indices,
-        str_data(hash), hash_len, str_data(output_dir));
+    str_data(hash), hash_len, str_data(output_dir));
     if (is_err_result(res) == 1) {
         sakshi_warn("tpm_anchor: seal failed", 23);
         return 0;
