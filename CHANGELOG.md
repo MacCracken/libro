@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.8] — 2026-08-19 — cyrius 6.5.27 → 6.5.31, patra 1.13.8 → 1.13.9
+
+**518** assertions green (**530** with `tpm`). Binary 813,384 → **821,688 B**
+(844,360 B with `tpm`), DCE build, sibling-free at the pinned tags.
+
+### Changed — toolchain pin 6.5.27 → 6.5.31
+
+Picks up the stdlib folds shipped across 6.5.28–6.5.31 (sakshi 2.4.11, patra
+1.13.9, yukti 2.3.8, niyama 1.0.7, mabda 4.1.0, ganita 1.1.4, yantra 1.0.3).
+
+### Changed — `[deps.patra]` 1.13.8 → 1.13.9
+
+**This is the half that matters downstream.** 6.5.31 folds patra **1.13.9**, and
+`cyrius deps` applies a declared dep's copy *on top of* the `lib sync --full`
+snapshot on every resolve. A `[deps.patra]` one patch behind the fold therefore
+downgrades `lib/patra.cyr` for every transitive consumer — libro is consumed by
+**bote**, which is consumed by **agnosai**, so the stale tag reached three repos
+deep.
+
+Measured in a sibling-free tree before this bump: `lib sync --full` landed patra
+1.13.9, then `cyrius deps` rewrote it to **1.13.0**. That broke agnosai's CI —
+`check-clean.sh` reported `lib: patra.cyr differs from the … snapshot` and the
+build lost patra's surface. It is invisible on any machine with a `../patra`
+checkout, because `path` wins over `tag`; only CI, which has no siblings,
+resolves the tag and takes the downgrade. `deps --verify` does not catch it
+either: the lock is regenerated *from* the downgraded file, so it agrees with
+itself.
+
+agnosai 2.0.2 carries a defensive `[deps.patra] tag = "1.13.9"` as a shim for
+exactly this. With this release that shim can be dropped once bote is rebuilt
+against libro 2.8.8.
+
+⚠ **Keep this tag equal to the patra the pinned toolchain folds.** The pairing is
+the invariant, not the version number — bumping the cyrius pin without checking
+`head -3 ~/.cyrius/versions/<pin>/lib/patra.cyr` reintroduces the same defect.
+
 ## [2.8.7] — 2026-08-18 — patra 1.13.1 → 1.13.8 (the 1.13.x repair arc)
 
 **518** assertions green (**530** with `tpm`), fuzz clean. Binary 800,712 →

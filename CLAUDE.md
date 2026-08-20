@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.8.7 (2026-08-18)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.27 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.8.8 (2026-08-19)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.31 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -29,13 +29,13 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 518 default / 530 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 813,384 B default (2.8.7, measured; `.bss` thin at 80,280 B). Capacity headroom at 2.8.7: `fn_table 2255 / 32768`, `identifiers 60850 / 524288`, `var_table 913 / 8192` (`CYRIUS_STATS=1`) — well clear of the 8192 fn_table threshold behind the 6.4.75 P0. Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. Benches/fuzz likewise ~0.6 MB. See quirk #9 for the auto-include mechanism (why the fat dep bloated every binary and how to diagnose it — always isolate OUTSIDE the project dir).
+- **Binary**: 821,688 B default (2.8.8, measured; `.bss` thin at 80,368 B). Capacity headroom at 2.8.8: `fn_table 2266 / 32768`, `identifiers 61179 / 524288`, `var_table 917 / 8192` (`CYRIUS_STATS=1`) — well clear of the 8192 fn_table threshold behind the 6.4.75 P0. Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. Benches/fuzz likewise ~0.6 MB. See quirk #9 for the auto-include mechanism (why the fat dep bloated every binary and how to diagnose it — always isolate OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, ML-DSA (+ hybrid), hex. Pulled as a THIN sub-surface, NOT the monolithic `dist/sigil.cyr` (2.8.0): `[deps.sigil]` = `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`; TPM (`tpm_seal`/`unseal`/`detect`) behind the optional `tpm` feature (`[deps.sigil_tpm]`). Constant-time compare (`ct_eq*`) comes from stdlib `lib/ct.cyr`, not sigil. See quirk #9.
-- **patra** — SQL-backed storage (pinned v1.13.8 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract)
+- **patra** — SQL-backed storage (pinned v1.13.9 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract)
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -68,7 +68,7 @@ CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./
 # full re-sync restores the honest count. Read the "N deps locked" line to
 # confirm: the invariant is that a `--features tpm` resolve is exactly one MORE
 # than a clean full re-sync — do not memorise the literal, it moves with the
-# stdlib snapshot. At cyrius 6.5.27 the honest default is 112 and tpm is 113
+# stdlib snapshot. At cyrius 6.5.31 the honest default is 112 and tpm is 113
 # (6.5.27 added lib/async_macos.cyr; under 6.5.20 the pair was 111/112, which is
 # why the old text called 112 the polluted number).
 cyrius deps --features tpm
@@ -141,7 +141,7 @@ benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_jso
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
-lib/                    Vendored Cyrius stdlib + patra v1.13.8 bundle
+lib/                    Vendored Cyrius stdlib + patra v1.13.9 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
 docs/                   Architecture, guides, compliance, ADRs, audit reports
@@ -171,7 +171,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.27"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.31"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.

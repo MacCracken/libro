@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - [Cyrius](https://github.com/MacCracken/cyrius) compiler — version is
-  pinned in `cyrius.cyml` (`cyrius = "…"` field; currently **6.5.27**).
+  pinned in `cyrius.cyml` (`cyrius = "…"` field; currently **6.5.31**).
   Install with:
   ```bash
   cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
