@@ -41,6 +41,24 @@ against libro 2.8.8.
 the invariant, not the version number — bumping the cyrius pin without checking
 `head -3 ~/.cyrius/versions/<pin>/lib/patra.cyr` reintroduces the same defect.
 
+### Fixed — 6 `src/` files failing `cyrfmt --check`
+
+`src/{chain,main,patra_store,proof_json,signing,tpm_anchor}.cyr` were not
+canonically formatted. **Pre-existing, not from the pin bump** — the same 6 fail
+identically under 6.5.27 and 6.5.31. They accumulated because the Format check
+gate was silently vacuous until it was fixed to loop per-file: `cyrfmt` reads
+only `argv[1]` and ignores the rest, so `cyrfmt --check src/*.cyr` only ever
+checked `src/anchoring.cyr` and returned 0 while the others drifted.
+
+Swept with `cyrius fmt`; continuation-indent only, `git diff -w` over `src/` is
+empty. `dist/libro.cyr` regenerated to match (unchanged at 5,603 lines).
+
+All 20 CI gates verified locally, the seven shell gates extracted verbatim from
+`.github/workflows/ci.yml` and run as-is: manifest completeness, three
+raw-offset gates, dangerous-pattern scan, required docs, version consistency —
+0 failures. Plus fmt, lint (0), DCE build, ELF, 518/530 assertions, fuzz 1/0,
+bench 3/0, `distlib --check` current.
+
 ## [2.8.7] — 2026-08-18 — patra 1.13.1 → 1.13.8 (the 1.13.x repair arc)
 
 **518** assertions green (**530** with `tpm`), fuzz clean. Binary 800,712 →

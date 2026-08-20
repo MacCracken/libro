@@ -403,9 +403,9 @@ fn verify_entry_signature(vk, e, es) {
         var ed_sig_bytes = hex_decode_str(ed_sig_str);
         var pq_sig_bytes = hex_decode_str(pq_sig_str);
         return sigil_verify_hybrid(str_data(sig_ehash), str_len(sig_ehash),
-        ed_sig_bytes, load64(vk),
-        pq_sig_bytes, load64(vk + 16),
-        SIG_ALG_HYBRID);
+          ed_sig_bytes, load64(vk),
+          pq_sig_bytes, load64(vk + 16),
+          SIG_ALG_HYBRID);
     }
     sakshi_warn("signing: unknown algorithm in verify", 36);
     return 0;
@@ -469,9 +469,9 @@ fn verify_tree_head(vk, root_hash, sig_hex) {
         var ed_bytes = hex_decode_str(ed_hex);
         var pq_bytes = hex_decode_str(pq_hex);
         return sigil_verify_hybrid(str_data(root_hash), str_len(root_hash),
-        ed_bytes, load64(vk),
-        pq_bytes, load64(vk + 16),
-        SIG_ALG_HYBRID);
+          ed_bytes, load64(vk),
+          pq_bytes, load64(vk + 16),
+          SIG_ALG_HYBRID);
     }
     return 0;
 }

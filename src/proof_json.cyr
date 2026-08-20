@@ -339,9 +339,9 @@ fn _pfj_parse_string_or_null(d, p, end) {
     # Check for "null"
     if (p + 4 <= end) {
         if ((load8(d + p) & 0xFF) == 110 &&
-        (load8(d + p + 1) & 0xFF) == 117 &&
-        (load8(d + p + 2) & 0xFF) == 108 &&
-        (load8(d + p + 3) & 0xFF) == 108) {
+          (load8(d + p + 1) & 0xFF) == 117 &&
+          (load8(d + p + 2) & 0xFF) == 108 &&
+          (load8(d + p + 3) & 0xFF) == 108) {
             _pfj_end_pos = p + 4;
             return 0;
         }
@@ -575,9 +575,9 @@ fn proof_from_json(s) {
     var first = _pfj_skip_ws(d, 0, end);
     if (first + 4 <= end) {
         if ((load8(d + first) & 0xFF) == 110 &&
-        (load8(d + first + 1) & 0xFF) == 117 &&
-        (load8(d + first + 2) & 0xFF) == 108 &&
-        (load8(d + first + 3) & 0xFF) == 108) {
+          (load8(d + first + 1) & 0xFF) == 117 &&
+          (load8(d + first + 2) & 0xFF) == 108 &&
+          (load8(d + first + 3) & 0xFF) == 108) {
             return 0;
         }
     }

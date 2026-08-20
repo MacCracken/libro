@@ -568,7 +568,7 @@ fn test_chain_append_batch() {
     var seed = vec_get(chain_entries(c), 0);
     var first_batched = vec_get(out, 0);
     assert(str_eq(entry_prev_hash(first_batched), entry_hash(seed)) == 1,
-    "batch first entry links to seed");
+      "batch first entry links to seed");
 }
 
 fn test_chain_append_with_agent() {
@@ -1007,7 +1007,7 @@ fn test_signing_mldsa_roundtrip() {
     assert(str_len(entry_sig_signature(sig)) == 6618, "mldsa signature is 6618-char hex");
     # Algorithm string round-trips as sigil's canonical name.
     assert(str_eq(entry_sig_algorithm(sig), str_from("ML-DSA-65")) == 1,
-    "entry_sig.algorithm carries ML-DSA-65 string");
+      "entry_sig.algorithm carries ML-DSA-65 string");
 
     var vk = verifying_key_from_signing(sk);
     assert(verifying_key_algorithm(vk) == SIG_ALG_ML_DSA_65, "vk algorithm = ML-DSA-65");
@@ -1079,7 +1079,7 @@ fn test_signing_hybrid_roundtrip() {
     assert(str_len(entry_sig_signature(sig))   == 128,  "hybrid sig slot-1 (Ed25519) is 128-char hex");
     assert(str_len(entry_sig_signature_2(sig)) == 6618, "hybrid sig slot-2 (ML-DSA-65) is 6618-char hex");
     assert(str_eq(entry_sig_algorithm(sig), str_from("Hybrid(Ed25519+ML-DSA-65)")) == 1,
-    "entry_sig.algorithm carries hybrid name");
+      "entry_sig.algorithm carries hybrid name");
 
     var vk = verifying_key_from_signing(sk);
     assert(verifying_key_algorithm(vk) == SIG_ALG_HYBRID, "vk algorithm = HYBRID");
@@ -1105,13 +1105,13 @@ fn test_signing_hybrid_tamper_rejected_either_side() {
     var e2 = vec_get(chain_entries(c2), 0);
     var sig_other = sign_entry(sk_other, e2);
     var sig_tampered_ed = entry_sig_new_hybrid(
-    entry_sig_hash(sig),
-    entry_sig_signature(sig_other),       # bad ed sig (over wrong msg)
-    entry_sig_verifying_key(sig),
-    entry_sig_key_id(sig),
-    entry_sig_algorithm(sig),
-    entry_sig_signature_2(sig),
-    entry_sig_verifying_key_2(sig));
+      entry_sig_hash(sig),
+      entry_sig_signature(sig_other),       # bad ed sig (over wrong msg)
+      entry_sig_verifying_key(sig),
+      entry_sig_key_id(sig),
+      entry_sig_algorithm(sig),
+      entry_sig_signature_2(sig),
+      entry_sig_verifying_key_2(sig));
     var vk = verifying_key_from_signing(sk);
     assert(verify_entry_signature(vk, e, sig_tampered_ed) == 0, "hybrid: tampered Ed25519 portion rejected");
 
@@ -1119,13 +1119,13 @@ fn test_signing_hybrid_tamper_rejected_either_side() {
     # We don't have a "wrong" ML-DSA sig handy; substitute an empty Str so
     # hex_decode_str returns 0 and the verify path bails.
     var sig_tampered_pq = entry_sig_new_hybrid(
-    entry_sig_hash(sig),
-    entry_sig_signature(sig),
-    entry_sig_verifying_key(sig),
-    entry_sig_key_id(sig),
-    entry_sig_algorithm(sig),
-    str_from(""),                          # empty pq sig
-    entry_sig_verifying_key_2(sig));
+      entry_sig_hash(sig),
+      entry_sig_signature(sig),
+      entry_sig_verifying_key(sig),
+      entry_sig_key_id(sig),
+      entry_sig_algorithm(sig),
+      str_from(""),                          # empty pq sig
+      entry_sig_verifying_key_2(sig));
     assert(verify_entry_signature(vk, e, sig_tampered_pq) == 0, "hybrid: tampered ML-DSA portion rejected");
 }
 
@@ -1832,7 +1832,7 @@ fn test_proof_from_json_roundtrip_unsigned() {
     var det_nested = str_from("{\"agent\":\"web-01\",\"load\":{\"p50\":12,\"p99\":480}}");
     chain_append(c, SEV_INFO, str_from("auth"), str_from("login"), det_flat);
     chain_append(c, SEV_SECURITY, str_from("aegis"),
-    str_from("intrusion.detected"), det_nested);
+      str_from("intrusion.detected"), det_nested);
     chain_append(c, SEV_INFO, str_from("ark"), str_from("pkg.install"), det_flat);
 
     var ip = proof_build_unsigned(c);
@@ -1848,11 +1848,11 @@ fn test_proof_from_json_roundtrip_unsigned() {
     var sth1 = iproof_tree_head(ip);
     var sth2 = iproof_tree_head(ip2);
     assert(constant_time_eq_str(sth_root(sth1), sth_root(sth2)) == 1,
-    "tree head root round-trips");
+      "tree head root round-trips");
     assert(sth_tree_size(sth1) == sth_tree_size(sth2),
-    "tree_size round-trips");
+      "tree_size round-trips");
     assert(constant_time_eq_str(sth_timestamp(sth1), sth_timestamp(sth2)) == 1,
-    "timestamp round-trips");
+      "timestamp round-trips");
 
     # Entries round-trip with hashes preserved
     var e1 = iproof_entries(ip);
@@ -1865,9 +1865,9 @@ fn test_proof_from_json_roundtrip_unsigned() {
         var a = vec_get(e1, i);
         var b = vec_get(e2, i);
         assert(constant_time_eq_str(entry_hash(a), entry_hash(b)) == 1,
-        "entry hash round-trips");
+          "entry hash round-trips");
         assert(constant_time_eq_str(entry_source(a), entry_source(b)) == 1,
-        "entry source round-trips");
+          "entry source round-trips");
         i += 1;
     }
 
@@ -1887,11 +1887,11 @@ fn test_proof_from_json_roundtrip_full() {
     # with side preserved. Every parsed merkle_proof now verifies.
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
-    str_from("{\"v\":1}"));
+      str_from("{\"v\":1}"));
     chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
-    str_from("{\"v\":2}"));
+      str_from("{\"v\":2}"));
     chain_append(c, SEV_INFO, str_from("src"), str_from("act"),
-    str_from("{\"v\":3}"));
+      str_from("{\"v\":3}"));
 
     var ip = proof_build_unsigned(c);
     proof_with_all_inclusions(ip);
@@ -1907,8 +1907,8 @@ fn test_proof_from_json_roundtrip_full() {
     # Tree rebuilt from parsed entries matches the stored sth.root.
     var rebuilt = merkle_build(iproof_entries(ip2));
     assert(constant_time_eq_str(merkle_tree_root(rebuilt),
-    sth_root(iproof_tree_head(ip2))) == 1,
-    "rebuilt root matches parsed tree_head.root");
+        sth_root(iproof_tree_head(ip2))) == 1,
+      "rebuilt root matches parsed tree_head.root");
 
     # 2.6.0: every parsed merkle_proof verifies cleanly.
     var inclusions = iproof_inclusions(ip2);
@@ -1918,7 +1918,7 @@ fn test_proof_from_json_roundtrip_full() {
     while (i < nincl) {
         var mp = vec_get(inclusions, i);
         assert(merkle_verify_proof(mp) == 1,
-        "parsed merkle_proof verifies (lossless path)");
+          "parsed merkle_proof verifies (lossless path)");
         i = i + 1;
     }
 }
@@ -1948,7 +1948,7 @@ fn test_proof_from_json_legacy_path_accepted() {
     # Each node is a proof_node with hash set + side defaulted to LEFT.
     var node0 = vec_get(path, 0);
     assert(proof_node_side(node0) == SIDE_LEFT,
-    "legacy path: side defaults to LEFT");
+      "legacy path: side defaults to LEFT");
 }
 
 fn test_proof_to_json_fields_present() {
@@ -2416,7 +2416,7 @@ fn test_retention_keep_duration() {
     var i = 0;
     while (i < 5) {
         var e = entry_new(SEV_INFO, str_from("s"),
-        str_from("a"), det, prev);
+          str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
         i += 1;
@@ -2433,7 +2433,7 @@ fn test_retention_keep_after() {
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),
-        str_from("a"), det, prev);
+          str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
         i += 1;
@@ -2450,7 +2450,7 @@ fn test_retention_keep_duration_future() {
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),
-        str_from("a"), det, prev);
+          str_from("a"), det, prev);
         vec_push(entries, e);
         prev = entry_hash(e);
         i += 1;
@@ -2463,9 +2463,9 @@ fn test_retention_keep_duration_future() {
 fn test_query_time_range() {
     var det = str_from("{}");
     var e1 = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), det, str_from(""));
+      str_from("a"), det, str_from(""));
     var e2 = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), det, entry_hash(e1));
+      str_from("a"), det, entry_hash(e1));
     var entries = vec_new();
     vec_push(entries, e1);
     vec_push(entries, e2);
@@ -2486,10 +2486,10 @@ fn test_query_time_range() {
 fn test_query_agent_id() {
     var det = str_from("{}");
     var e1 = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), det, str_from(""));
+      str_from("a"), det, str_from(""));
     entry_with_agent(e1, str_from("bot-1"));
     var e2 = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), det, entry_hash(e1));
+      str_from("a"), det, entry_hash(e1));
     var entries = vec_new();
     vec_push(entries, e1);
     vec_push(entries, e2);
@@ -2502,8 +2502,8 @@ fn test_query_agent_id() {
 fn test_export_csv_special_chars() {
     var c = chain_new();
     chain_append(c, SEV_INFO,
-    str_from("src,commas"),
-    str_from("act"), str_from("{}"));
+      str_from("src,commas"),
+      str_from("act"), str_from("{}"));
     var fd = file_open("/dev/null", 1, 0);
     export_csv(chain_entries(c), fd);
     file_close(fd);
@@ -2516,22 +2516,22 @@ fn test_entry_validated_too_long() {
     store8(long_src + 2048, 0);
     var s = str_new(long_src, 2048);
     var result = entry_new_validated(SEV_INFO, s,
-    str_from("a"), str_from("{}"), str_from(""));
+      str_from("a"), str_from("{}"), str_from(""));
     assert(error_code(result) == LIBRO_ERR_FIELD_TOO_LONG,
-    "validated rejects long source");
+      "validated rejects long source");
 }
 
 fn test_chain_by_agent() {
     var c = chain_new();
     var det = str_from("{}");
     chain_append_with_agent(c, SEV_INFO,
-    str_from("s"), str_from("a"),
-    det, str_from("agent-x"));
+      str_from("s"), str_from("a"),
+      det, str_from("agent-x"));
     chain_append(c, SEV_INFO,
-    str_from("s"), str_from("a"), det);
+      str_from("s"), str_from("a"), det);
     chain_append_with_agent(c, SEV_INFO,
-    str_from("s"), str_from("a"),
-    det, str_from("agent-x"));
+      str_from("s"), str_from("a"),
+      det, str_from("agent-x"));
     var results = chain_by_agent(c, str_from("agent-x"));
     assert(vec_len(results) == 2, "chain by_agent");
 }
@@ -2542,17 +2542,17 @@ fn test_merkle_large_tree() {
     var i = 0;
     while (i < 16) {
         chain_append(c, SEV_INFO, str_from("s"),
-        str_from("a"), det);
+          str_from("a"), det);
         i += 1;
     }
     var tree = merkle_build(chain_entries(c));
     assert(merkle_tree_leaf_count(tree) == 16,
-    "merkle 16 leaves");
+      "merkle 16 leaves");
     i = 0;
     while (i < 16) {
         var mp = merkle_inclusion_proof(tree, i);
         assert(merkle_verify_proof(mp) == 1,
-        "merkle 16 proof");
+          "merkle 16 proof");
         i += 1;
     }
 }
@@ -2561,21 +2561,21 @@ fn test_anchor_receipt() {
     var c = chain_new();
     var det = str_from("{}");
     chain_append(c, SEV_INFO, str_from("s"),
-    str_from("a"), det);
+      str_from("a"), det);
     var tree = merkle_build(chain_entries(c));
     var a = anchor_new(tree, c);
     var r = receipt_new(a, str_from("test-be"),
-    str_from("{\"tx\":\"0xabc\"}"));
+      str_from("{\"tx\":\"0xabc\"}"));
     assert(r != 0, "receipt created");
     assert(str_eq(receipt_backend(r),
-    str_from("test-be")) == 1, "receipt backend");
+        str_from("test-be")) == 1, "receipt backend");
 }
 
 fn test_stream_recv_drain() {
     var s = stream_new();
     var sub = stream_subscribe(s, "libro/#");
     var e = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), str_from("{}"), str_from(""));
+      str_from("a"), str_from("{}"), str_from(""));
     stream_publish(s, e);
     assert(stream_pending(sub) == 1, "pending 1");
     var received = stream_recv(sub);
@@ -2592,16 +2592,16 @@ fn test_filestore_multiple_appends() {
     var i = 0;
     while (i < 10) {
         var e = entry_new(SEV_INFO, str_from("s"),
-        str_from("a"), det, prev);
+          str_from("a"), det, prev);
         filestore_append(fs, e);
         prev = entry_hash(e);
         i += 1;
     }
     assert(filestore_len(fs) == 10,
-    "filestore 10 entries");
+      "filestore 10 entries");
     var loaded = filestore_load_all(fs);
     assert(vec_len(loaded) == 10,
-    "filestore loaded 10");
+      "filestore loaded 10");
     sys_unlink("/tmp/libro_test_fma.jsonl");
 }
 
@@ -2621,12 +2621,12 @@ fn test_filestore_load_survives_second_load() {
 
     var fsa = filestore_open(pa);
     var ea = entry_new(SEV_INFO, str_from("alpha_src"),
-    str_from("alpha_act"), det, str_from(""));
+      str_from("alpha_act"), det, str_from(""));
     filestore_append(fsa, ea);
 
     var fsb = filestore_open(pb);
     var eb = entry_new(SEV_WARNING, str_from("beta_src"),
-    str_from("beta_act"), det, str_from(""));
+      str_from("beta_act"), det, str_from(""));
     filestore_append(fsb, eb);
 
     var loaded_a = filestore_load_all(fsa);
@@ -2639,11 +2639,11 @@ fn test_filestore_load_survives_second_load() {
 
     var ra = vec_get(loaded_a, 0);
     assert(str_eq(entry_source(ra),
-    str_from("alpha_src")) == 1,
-    "A source survives second load");
+        str_from("alpha_src")) == 1,
+      "A source survives second load");
     assert(str_eq(entry_action(ra),
-    str_from("alpha_act")) == 1,
-    "A action survives second load");
+        str_from("alpha_act")) == 1,
+      "A action survives second load");
 
     sys_unlink("/tmp/libro_test_fsA.jsonl");
     sys_unlink("/tmp/libro_test_fsB.jsonl");
@@ -2652,15 +2652,15 @@ fn test_filestore_load_survives_second_load() {
 fn test_compliance_presets() {
     var pci = retention_pci_dss();
     assert(retention_type(pci) == RETAIN_DURATION,
-    "pci is duration");
+      "pci is duration");
     assert(retention_value(pci) == 365 * 86400,
-    "pci is 1 year");
+      "pci is 1 year");
     var hipaa = retention_hipaa();
     assert(retention_value(hipaa) == 6 * 365 * 86400,
-    "hipaa is 6 years");
+      "hipaa is 6 years");
     var sox = retention_sox();
     assert(retention_value(sox) == 7 * 365 * 86400,
-    "sox is 7 years");
+      "sox is 7 years");
 }
 
 # ================================================================
@@ -2670,10 +2670,10 @@ fn test_compliance_presets() {
 fn test_patrastore_open_close() {
     sys_unlink("/tmp/libro_test_ps.patra");
     var ps = patrastore_open(str_from(
-    "/tmp/libro_test_ps.patra"));
+        "/tmp/libro_test_ps.patra"));
     assert(ps != 0, "patrastore open");
     assert(patrastore_is_empty(ps) == 1,
-    "patrastore empty");
+      "patrastore empty");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps.patra");
     sys_unlink("/tmp/libro_test_ps.patra.wal");
@@ -2704,7 +2704,7 @@ fn test_patrastore_rejects_overlong_field() {
 
     var det = str_from("{}");
     var e1 = entry_new(SEV_INFO, str_from("auth"),
-    longact, det, str_from(""));
+      longact, det, str_from(""));
     var r = patrastore_append(ps, e1);
     assert(r == PATRA_ERR_ROWSZ, "over-long field rejected with ROWSZ");
     assert(patrastore_len(ps) == 0, "rejected entry was not stored");
@@ -2714,14 +2714,14 @@ fn test_patrastore_rejects_overlong_field() {
     store8(big + 255, 0);
     var maxact = str_from(big);
     var e2 = entry_new(SEV_INFO, str_from("auth"),
-    maxact, det, str_from(""));
+      maxact, det, str_from(""));
     var r2 = patrastore_append(ps, e2);
     assert(r2 == PATRA_OK, "255-byte field accepted");
     assert(patrastore_len(ps) == 1, "accepted entry stored");
 
     # And the store stays usable afterwards — a rejection must not wedge it.
     var e3 = entry_new(SEV_INFO, str_from("auth"),
-    str_from("normal"), det, entry_hash(e2));
+      str_from("normal"), det, entry_hash(e2));
     assert(patrastore_append(ps, e3) == PATRA_OK, "store usable after a rejection");
     assert(patrastore_len(ps) == 2, "subsequent append landed");
 
@@ -2734,24 +2734,24 @@ fn test_patrastore_rejects_overlong_field() {
 fn test_patrastore_append_load() {
     sys_unlink("/tmp/libro_test_ps2.patra");
     var ps = patrastore_open(str_from(
-    "/tmp/libro_test_ps2.patra"));
+        "/tmp/libro_test_ps2.patra"));
     var det = str_from("{}");
     var e1 = entry_new(SEV_INFO, str_from("auth"),
-    str_from("login"), det, str_from(""));
+      str_from("login"), det, str_from(""));
     patrastore_append(ps, e1);
     var e2 = entry_new(SEV_WARNING, str_from("audit"),
-    str_from("read"), det, entry_hash(e1));
+      str_from("read"), det, entry_hash(e1));
     patrastore_append(ps, e2);
     assert(patrastore_len(ps) == 2,
-    "patrastore len 2");
+      "patrastore len 2");
     var loaded = patrastore_load_all(ps);
     var lcount = vec_len(loaded);
     assert(lcount == 2, "patrastore loaded 2");
     if (lcount >= 2) {
         var le1 = vec_get(loaded, 0);
         assert(str_eq(entry_hash(le1),
-        entry_hash(e1)) == 1,
-        "patrastore hash preserved");
+            entry_hash(e1)) == 1,
+          "patrastore hash preserved");
     }
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps2.patra");
@@ -2761,20 +2761,20 @@ fn test_patrastore_append_load() {
 fn test_patrastore_verify() {
     sys_unlink("/tmp/libro_test_ps3.patra");
     var ps = patrastore_open(str_from(
-    "/tmp/libro_test_ps3.patra"));
+        "/tmp/libro_test_ps3.patra"));
     var det = str_from("{}");
     var prev = str_from("");
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),
-        str_from("a"), det, prev);
+          str_from("a"), det, prev);
         patrastore_append(ps, e);
         prev = entry_hash(e);
         i += 1;
     }
     var result = patrastore_load_and_verify(ps);
     assert(vec_len(result) == 3,
-    "patrastore verify 3");
+      "patrastore verify 3");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps3.patra");
     sys_unlink("/tmp/libro_test_ps3.patra.wal");
@@ -2783,19 +2783,19 @@ fn test_patrastore_verify() {
 fn test_patrastore_query() {
     sys_unlink("/tmp/libro_test_ps4.patra");
     var ps = patrastore_open(str_from(
-    "/tmp/libro_test_ps4.patra"));
+        "/tmp/libro_test_ps4.patra"));
     var det = str_from("{}");
     var e1 = entry_new(SEV_INFO, str_from("auth"),
-    str_from("login"), det, str_from(""));
+      str_from("login"), det, str_from(""));
     patrastore_append(ps, e1);
     var e2 = entry_new(SEV_ERROR, str_from("audit"),
-    str_from("fail"), det, entry_hash(e1));
+      str_from("fail"), det, entry_hash(e1));
     patrastore_append(ps, e2);
     var q = query_new();
     query_source(q, str_from("audit"));
     var results = patrastore_query(ps, q);
     assert(vec_len(results) == 1,
-    "patrastore query filters");
+      "patrastore query filters");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps4.patra");
     sys_unlink("/tmp/libro_test_ps4.patra.wal");
@@ -2804,21 +2804,21 @@ fn test_patrastore_query() {
 fn test_patrastore_by_source() {
     sys_unlink("/tmp/libro_test_ps5.patra");
     var ps = patrastore_open(str_from(
-    "/tmp/libro_test_ps5.patra"));
+        "/tmp/libro_test_ps5.patra"));
     var det = str_from("{}");
     var e1 = entry_new(SEV_INFO, str_from("auth"),
-    str_from("login"), det, str_from(""));
+      str_from("login"), det, str_from(""));
     patrastore_append(ps, e1);
     var e2 = entry_new(SEV_INFO, str_from("audit"),
-    str_from("read"), det, entry_hash(e1));
+      str_from("read"), det, entry_hash(e1));
     patrastore_append(ps, e2);
     var e3 = entry_new(SEV_INFO, str_from("auth"),
-    str_from("logout"), det, entry_hash(e2));
+      str_from("logout"), det, entry_hash(e2));
     patrastore_append(ps, e3);
     var results = patrastore_by_source(ps,
-    str_from("auth"));
+      str_from("auth"));
     assert(vec_len(results) == 2,
-    "patrastore by_source 2");
+      "patrastore by_source 2");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps5.patra");
     sys_unlink("/tmp/libro_test_ps5.patra.wal");
@@ -2827,15 +2827,15 @@ fn test_patrastore_by_source() {
 fn test_patrastore_transaction() {
     sys_unlink("/tmp/libro_test_ps6.patra");
     var ps = patrastore_open(str_from(
-    "/tmp/libro_test_ps6.patra"));
+        "/tmp/libro_test_ps6.patra"));
     var det = str_from("{}");
     patrastore_begin(ps);
     var e = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), det, str_from(""));
+      str_from("a"), det, str_from(""));
     patrastore_append(ps, e);
     patrastore_commit(ps);
     assert(patrastore_len(ps) == 1,
-    "patrastore tx committed");
+      "patrastore tx committed");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps6.patra");
     sys_unlink("/tmp/libro_test_ps6.patra.wal");
@@ -2847,17 +2847,17 @@ fn test_patrastore_persistence() {
     var ps = patrastore_open(path);
     var det = str_from("{}");
     var e = entry_new(SEV_INFO, str_from("s"),
-    str_from("a"), det, str_from(""));
+      str_from("a"), det, str_from(""));
     patrastore_append(ps, e);
     var saved_hash = entry_hash(e);
     patrastore_close(ps);
     var ps2 = patrastore_open(path);
     assert(patrastore_len(ps2) == 1,
-    "patrastore persisted");
+      "patrastore persisted");
     var loaded = patrastore_load_all(ps2);
     var le = vec_get(loaded, 0);
     assert(str_eq(entry_hash(le), saved_hash) == 1,
-    "patrastore hash survives reopen");
+      "patrastore hash survives reopen");
     patrastore_close(ps2);
     sys_unlink("/tmp/libro_test_ps7.patra");
     sys_unlink("/tmp/libro_test_ps7.patra.wal");
@@ -2873,7 +2873,7 @@ fn test_patrastore_sync_mode_default_full() {
     sys_unlink("/tmp/libro_test_ps_sync1.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_sync1.patra"));
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
-    "patrastore: sync defaults to FULL");
+      "patrastore: sync defaults to FULL");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_sync1.patra");
     sys_unlink("/tmp/libro_test_ps_sync1.patra.wal");
@@ -2885,10 +2885,10 @@ fn test_patrastore_sync_mode_switch() {
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_sync2.patra"));
     patrastore_set_sync_mode(ps, PATRA_SYNC_BATCH);
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_BATCH,
-    "patrastore: switched to BATCH");
+      "patrastore: switched to BATCH");
     patrastore_set_sync_mode(ps, PATRA_SYNC_FULL);
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
-    "patrastore: switched back to FULL");
+      "patrastore: switched back to FULL");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_sync2.patra");
     sys_unlink("/tmp/libro_test_ps_sync2.patra.wal");
@@ -2913,12 +2913,12 @@ fn test_patrastore_append_batch_correctness() {
     assert(patrastore_len(ps) == 3, "append_batch: row count matches");
     # Sync mode restored to caller's prior mode (FULL by default).
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_FULL,
-    "append_batch: sync mode restored to FULL");
+      "append_batch: sync mode restored to FULL");
     var loaded = patrastore_load_all(ps);
     assert(vec_len(loaded) == 3, "append_batch: load_all returns 3");
     var loaded_last = vec_get(loaded, 2);
     assert(entry_severity(loaded_last) == SEV_ERROR,
-    "append_batch: last entry severity preserved");
+      "append_batch: last entry severity preserved");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_batch.patra");
     sys_unlink("/tmp/libro_test_ps_batch.patra.wal");
@@ -2937,7 +2937,7 @@ fn test_patrastore_append_batch_preserves_caller_batch() {
     chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
     patrastore_append_batch(ps, chain_entries(c));
     assert(patrastore_get_sync_mode(ps) == PATRA_SYNC_BATCH,
-    "append_batch: preserves caller's BATCH mode");
+      "append_batch: preserves caller's BATCH mode");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_batch2.patra");
     sys_unlink("/tmp/libro_test_ps_batch2.patra.wal");
@@ -2954,9 +2954,9 @@ fn test_patrastore_prepared_stmts_survive_open() {
     sys_unlink("/tmp/libro_test_ps_prep.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_prep.patra"));
     assert(_patrastore_select_stmt(ps) != 0,
-    "patrastore: select_stmt prepared at open");
+      "patrastore: select_stmt prepared at open");
     assert(_patrastore_count_stmt(ps) != 0,
-    "patrastore: count_stmt prepared at open");
+      "patrastore: count_stmt prepared at open");
     # Fire both prepared paths to confirm they actually work.
     var det = str_from("{}");
     var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
@@ -2980,11 +2980,11 @@ fn test_patrastore_indexed_by_source() {
     sys_unlink("/tmp/libro_test_ps_idx.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_idx.patra"));
     assert(patrastore_create_source_index(ps) == PATRA_OK,
-    "src_idx created");
+      "src_idx created");
     # Idempotent — a second create returns PATRA_ERR_EXISTS, not an error.
     var second = patrastore_create_source_index(ps);
     assert(second == PATRA_OK || second == PATRA_ERR_EXISTS,
-    "src_idx re-create is idempotent");
+      "src_idx re-create is idempotent");
     var det = str_from("{}");
     var c = chain_new();
     chain_append(c, SEV_INFO, str_from("kernel"),     str_from("syscall"), det);
@@ -3020,9 +3020,9 @@ fn test_tpm_anchor_verify_null_returns_inner_invalid() {
     # if the construction failed (returned 0), verify must report
     # invalid rather than crashing on a null deref.
     assert(tpm_anchor_verify(0) == TPM_ANCHOR_INNER_INVALID,
-    "tpm_anchor_verify(0) returns INNER_INVALID");
+      "tpm_anchor_verify(0) returns INNER_INVALID");
     assert(tpm_anchor_verify_strict(0) == 0,
-    "tpm_anchor_verify_strict(0) returns 0");
+      "tpm_anchor_verify_strict(0) returns 0");
 }
 
 fn test_tpm_anchor_default_pcr_indices() {
@@ -3060,9 +3060,9 @@ fn test_tpm_anchor_inner_invalid_on_bad_inner() {
     tpm_anchor_set_pcr_indices(ta, tpm_anchor_default_pcr_indices());
     tpm_anchor_set_output_dir(ta, str_from("/tmp"));
     assert(tpm_anchor_verify(ta) == TPM_ANCHOR_INNER_INVALID,
-    "tpm_anchor_verify rejects tampered inner anchor");
+      "tpm_anchor_verify rejects tampered inner anchor");
     assert(tpm_anchor_verify_strict(ta) == 0,
-    "tpm_anchor_verify_strict rejects tampered inner anchor");
+      "tpm_anchor_verify_strict rejects tampered inner anchor");
 }
 
 # Hardware-path: only attempts the full seal+verify when the host
@@ -3096,9 +3096,9 @@ fn test_tpm_anchor_hardware_roundtrip_best_effort() {
     # Seal succeeded — verify must now return VALID, and the strict
     # bool form must return 1.
     assert(tpm_anchor_verify(ta) == TPM_ANCHOR_VALID,
-    "tpm_anchor_verify on fresh seal returns VALID");
+      "tpm_anchor_verify on fresh seal returns VALID");
     assert(tpm_anchor_verify_strict(ta) == 1,
-    "tpm_anchor_verify_strict on fresh seal returns 1");
+      "tpm_anchor_verify_strict on fresh seal returns 1");
     sys_unlink("/tmp/sealed.ctx");
     sys_unlink("/tmp/sealed.pub");
     sys_unlink("/tmp/sealed.priv");

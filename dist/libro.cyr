@@ -1215,12 +1215,12 @@ fn chain_append_batch(c, severities, sources, actions, details_vec) {
     var i = 0;
     while (i < n) {
         var e = entry_new(
-        vec_get(severities, i),
-        vec_get(sources, i),
-        vec_get(actions, i),
-        vec_get(details_vec, i),
-        prev
-        );
+          vec_get(severities, i),
+          vec_get(sources, i),
+          vec_get(actions, i),
+          vec_get(details_vec, i),
+          prev
+          );
         _chain_retain(c, e);
         vec_push(out, e);
         prev = entry_hash(e);
@@ -2832,9 +2832,9 @@ fn verify_entry_signature(vk, e, es) {
         var ed_sig_bytes = hex_decode_str(ed_sig_str);
         var pq_sig_bytes = hex_decode_str(pq_sig_str);
         return sigil_verify_hybrid(str_data(sig_ehash), str_len(sig_ehash),
-        ed_sig_bytes, load64(vk),
-        pq_sig_bytes, load64(vk + 16),
-        SIG_ALG_HYBRID);
+          ed_sig_bytes, load64(vk),
+          pq_sig_bytes, load64(vk + 16),
+          SIG_ALG_HYBRID);
     }
     sakshi_warn("signing: unknown algorithm in verify", 36);
     return 0;
@@ -2898,9 +2898,9 @@ fn verify_tree_head(vk, root_hash, sig_hex) {
         var ed_bytes = hex_decode_str(ed_hex);
         var pq_bytes = hex_decode_str(pq_hex);
         return sigil_verify_hybrid(str_data(root_hash), str_len(root_hash),
-        ed_bytes, load64(vk),
-        pq_bytes, load64(vk + 16),
-        SIG_ALG_HYBRID);
+          ed_bytes, load64(vk),
+          pq_bytes, load64(vk + 16),
+          SIG_ALG_HYBRID);
     }
     return 0;
 }
@@ -4711,16 +4711,16 @@ fn _patrastore_row_to_entry(rs, row) {
     _filestore_parse_uuid(e, _ps_copy_cstr(id_str));
 
     store64(e + 16, _ps_copy_cstr(
-    patra_result_get_str(rs, row, 1)));
+        patra_result_get_str(rs, row, 1)));
 
     store64(e + 24, _parse_severity(_ps_copy_cstr(
-    patra_result_get_str(rs, row, 2))));
+          patra_result_get_str(rs, row, 2))));
 
     store64(e + 32, _ps_copy_cstr(
-    patra_result_get_str(rs, row, 3)));
+        patra_result_get_str(rs, row, 3)));
 
     store64(e + 40, _ps_copy_cstr(
-    patra_result_get_str(rs, row, 4)));
+        patra_result_get_str(rs, row, 4)));
 
     var det = patra_result_get_str(rs, row, 5);
     if (strlen(det) > 0) {
@@ -4737,10 +4737,10 @@ fn _patrastore_row_to_entry(rs, row) {
     }
 
     store64(e + 64, _ps_copy_cstr(
-    patra_result_get_str(rs, row, 7)));
+        patra_result_get_str(rs, row, 7)));
 
     store64(e + 72, _ps_copy_cstr(
-    patra_result_get_str(rs, row, 8)));
+        patra_result_get_str(rs, row, 8)));
 
     var ha = patra_result_get_str(rs, row, 9);
     if (strlen(ha) > 0) {
@@ -4807,7 +4807,7 @@ fn patrastore_by_source(s, source) {
     var db = load64(s);
     var sb = str_builder_new();
     str_builder_add_cstr(sb,
-    "SELECT * FROM audit_entries WHERE src = '");
+      "SELECT * FROM audit_entries WHERE src = '");
     str_builder_add(sb, source);
     str_builder_add_cstr(sb, "'");
     var sql = str_builder_build(sb);
@@ -5328,9 +5328,9 @@ fn _pfj_parse_string_or_null(d, p, end) {
     # Check for "null"
     if (p + 4 <= end) {
         if ((load8(d + p) & 0xFF) == 110 &&
-        (load8(d + p + 1) & 0xFF) == 117 &&
-        (load8(d + p + 2) & 0xFF) == 108 &&
-        (load8(d + p + 3) & 0xFF) == 108) {
+          (load8(d + p + 1) & 0xFF) == 117 &&
+          (load8(d + p + 2) & 0xFF) == 108 &&
+          (load8(d + p + 3) & 0xFF) == 108) {
             _pfj_end_pos = p + 4;
             return 0;
         }
@@ -5564,9 +5564,9 @@ fn proof_from_json(s) {
     var first = _pfj_skip_ws(d, 0, end);
     if (first + 4 <= end) {
         if ((load8(d + first) & 0xFF) == 110 &&
-        (load8(d + first + 1) & 0xFF) == 117 &&
-        (load8(d + first + 2) & 0xFF) == 108 &&
-        (load8(d + first + 3) & 0xFF) == 108) {
+          (load8(d + first + 1) & 0xFF) == 117 &&
+          (load8(d + first + 2) & 0xFF) == 108 &&
+          (load8(d + first + 3) & 0xFF) == 108) {
             return 0;
         }
     }

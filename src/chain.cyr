@@ -132,12 +132,12 @@ fn chain_append_batch(c, severities, sources, actions, details_vec) {
     var i = 0;
     while (i < n) {
         var e = entry_new(
-        vec_get(severities, i),
-        vec_get(sources, i),
-        vec_get(actions, i),
-        vec_get(details_vec, i),
-        prev
-        );
+          vec_get(severities, i),
+          vec_get(sources, i),
+          vec_get(actions, i),
+          vec_get(details_vec, i),
+          prev
+          );
         _chain_retain(c, e);
         vec_push(out, e);
         prev = entry_hash(e);
