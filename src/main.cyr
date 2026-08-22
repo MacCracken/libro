@@ -2679,6 +2679,47 @@ fn test_patrastore_open_close() {
     sys_unlink("/tmp/libro_test_ps.patra.wal");
 }
 
+# 2.8.9 REGRESSION GUARD — a store read from another thread must not crash.
+#
+# Until 2.8.9 `patrastore_open` prepared its SELECT and COUNT statements once and
+# cached them in the store; `patrastore_len` / `patrastore_load_all` reused them.
+# patra's SQL parse scratch is PER-THREAD (`patra_init`: "Install this
+# (main/foreign) thread's TLS block so the per-thread SQL parse scratch
+# resolves"), so a statement parsed on the opening thread and executed on another
+# reached into TLS that was not there — and killed the process. No diagnostic, no
+# error return.
+#
+# Agnostic hit it as "the first HTTP request to one endpoint takes the whole
+# server down while every other route keeps working", which is a very indirect
+# path back to the cause.
+var _ps_thread_len = 0 - 1;
+
+fn _ps_thread_body(arg) {
+    _ps_thread_len = patrastore_len(arg);
+    return 0;
+}
+
+fn test_patrastore_read_from_another_thread() {
+    sys_unlink("/tmp/libro_test_ps_thr.patra");
+    var ps = patrastore_open(str_from("/tmp/libro_test_ps_thr.patra"));
+    assert(ps != 0, "patrastore open for the thread test");
+
+    var e = entry_new(SEV_INFO, str_from("t"), str_from("a"), str_from("d"), str_from(""));
+    patrastore_append(ps, e);
+    assert(patrastore_len(ps) == 1, "main thread reads its own store");
+
+    # The whole point: the SAME read, from a worker. Before 2.8.9 this line
+    # never returned — the process died inside patra's parser.
+    _ps_thread_len = 0 - 1;
+    thread_create(&_ps_thread_body, ps);
+    sleep_ms(400);
+    assert(_ps_thread_len == 1, "a worker thread reads the store without dying");
+
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_test_ps_thr.patra");
+    sys_unlink("/tmp/libro_test_ps_thr.patra.wal");
+}
+
 fn test_patrastore_rejects_overlong_field() {
     sys_unlink("/tmp/libro_test_ps_long.patra");
     sys_unlink("/tmp/libro_test_ps_long.patra.wal");
@@ -2944,26 +2985,29 @@ fn test_patrastore_append_batch_preserves_caller_batch() {
 }
 
 fn test_patrastore_prepared_stmts_survive_open() {
-    # The prepared SELECT and COUNT statements should be ready by the
-    # time patrastore_load_all / patrastore_len are first called. This
-    # is regression coverage for the 2.4.0 prepare-once-at-open path:
-    # an off-by-one in the open sequence (preparing before the table
-    # exists) would yield 0-handles and the queries would silently
-    # fall through to the unprepared dispatch.
+    # ⚠ **INVERTED at 2.8.9.** This test used to assert the SELECT and COUNT
+    # statements WERE prepared at open — it was regression coverage for the
+    # 2.4.0 prepare-once-at-open path, and it encoded the defect.
+    #
+    # Caching a parsed statement in the store and executing it from another
+    # thread crashes the process: patra's SQL parse scratch is per-thread. The
+    # cache is gone, the slots stay 0, and both read paths parse on the calling
+    # thread. `test_patrastore_read_from_another_thread` is the guard that
+    # replaces this one; what remains here is that the read paths still work.
     sys_unlink("/tmp/libro_test_ps_prep.patra");
     sys_unlink("/tmp/libro_test_ps_prep.patra.wal");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_prep.patra"));
-    assert(_patrastore_select_stmt(ps) != 0,
-      "patrastore: select_stmt prepared at open");
-    assert(_patrastore_count_stmt(ps) != 0,
-      "patrastore: count_stmt prepared at open");
-    # Fire both prepared paths to confirm they actually work.
+    assert(_patrastore_select_stmt(ps) == 0,
+      "patrastore: no select_stmt is cached at open");
+    assert(_patrastore_count_stmt(ps) == 0,
+      "patrastore: no count_stmt is cached at open");
+    # Fire both read paths to confirm they work unprepared.
     var det = str_from("{}");
     var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, str_from(""));
     patrastore_append(ps, e);
-    assert(patrastore_len(ps) == 1, "prepared count returns 1");
+    assert(patrastore_len(ps) == 1, "count returns 1 without a cached statement");
     var loaded = patrastore_load_all(ps);
-    assert(vec_len(loaded) == 1, "prepared select returns 1 row");
+    assert(vec_len(loaded) == 1, "select returns 1 row without a cached statement");
     patrastore_close(ps);
     sys_unlink("/tmp/libro_test_ps_prep.patra");
     sys_unlink("/tmp/libro_test_ps_prep.patra.wal");
@@ -3322,6 +3366,7 @@ fn main() {
 
     test_group("PatraStore");
     test_patrastore_open_close();
+    test_patrastore_read_from_another_thread();
     test_patrastore_append_load();
     test_patrastore_rejects_overlong_field();
     test_patrastore_verify();

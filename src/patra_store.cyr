@@ -98,19 +98,39 @@ fn patrastore_create_source_index(s) {
 # Prepared statements (2.4.0)
 # ================================================================
 
-# SQL strings prepared once per open. Patra's prepared model is "parse
-# once, dispatch many" — no parameter binding — so only constant-SQL
-# queries are eligible. patrastore_append and patrastore_by_source
-# build per-call SQL with embedded values; those stay un-prepared.
+# Constant SQL for the two read paths. ⚠ These are NOT prepared once per open
+# any more (2.8.9): a cached statement executed on another thread crashes the
+# process, because patra's SQL parse scratch is per-thread. Each call parses on
+# the thread that makes it. See `_patrastore_prepare_stmts`.
 var _ps_select_sql = "SELECT * FROM audit_entries";
 var _ps_count_sql = "SELECT COUNT(*) FROM audit_entries";
 
+# ⚠ **Deliberately no longer prepares anything — see 2.8.9.**
+#
+# Caching a prepared statement in the store and reusing it from another thread
+# CRASHES THE PROCESS. patra's SQL parse scratch is per-thread — `patra_init`'s
+# own comment says so: *"Install this (main/foreign) thread's TLS block so the
+# per-thread SQL parse scratch (sql.cyr) resolves."* A statement parsed on the
+# opening thread reaches into TLS belonging to that thread; executing it on
+# another dereferences scratch that is not there.
+#
+# Reproduced minimally: open a store on the main thread, append an entry, then
+# call `patrastore_len` from a `thread_create` worker. The main-thread call
+# returns correctly; the worker dies. No diagnostic, no error return.
+#
+# Any threaded consumer hits this, and a server is the obvious consumer for a
+# durable audit trail — Agnostic's first HTTP request to an endpoint that read
+# the store took the whole server down while every other route kept working,
+# which is a very indirect path back to this cause.
+#
+# The slots stay in the struct at 0 so the layout and the raw-offset allowlist
+# are unchanged. `patrastore_len` / `patrastore_load_all` already had a
+# `stmt == 0` fallback to `patra_query`, which parses on the CALLING thread;
+# that path is now the only one. The lost amortisation is negligible — both
+# statements front a full-table read that dominates the parse.
 fn _patrastore_prepare_stmts(s) {
-    var db = load64(s);
-    var sel = patra_prepare(db, _ps_select_sql);
-    var cnt = patra_prepare(db, _ps_count_sql);
-    store64(s + 16, sel);
-    store64(s + 24, cnt);
+    store64(s + 16, 0);
+    store64(s + 24, 0);
     return 0;
 }
 
@@ -277,13 +297,9 @@ fn patrastore_append_batch(s, entries) {
 fn patrastore_load_all(s) {
     sakshi_info("patrastore: load all", 20);
     var db = load64(s);
-    var stmt = load64(s + 16);
-    var rs = 0;
-    if (stmt != 0) {
-        rs = patra_query_prepared(db, stmt);
-    } else {
-        rs = patra_query(db, _ps_select_sql);
-    }
+    # Parsed on the calling thread — never a cached handle. See
+    # `_patrastore_prepare_stmts` for what reusing one across threads costs.
+    var rs = patra_query(db, _ps_select_sql);
     if (rs == 0) { return vec_new(); }
 
     var entries = vec_new();
@@ -370,13 +386,8 @@ fn _patrastore_row_to_entry(rs, row) {
 
 fn patrastore_len(s) {
     var db = load64(s);
-    var stmt = load64(s + 24);
-    var rs = 0;
-    if (stmt != 0) {
-        rs = patra_query_prepared(db, stmt);
-    } else {
-        rs = patra_query(db, _ps_count_sql);
-    }
+    # Parsed on the calling thread — see `_patrastore_prepare_stmts`.
+    var rs = patra_query(db, _ps_count_sql);
     if (rs == 0) { return 0; }
     var n = patra_result_get_int(rs, 0, 0);
     patra_result_free(rs);

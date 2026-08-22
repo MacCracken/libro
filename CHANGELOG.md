@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.9] - 2026-08-21 — a PatraStore read from another thread no longer crashes the process
+
+### Fixed
+
+- **`PatraStore` no longer caches prepared statements across threads.**
+  `patrastore_open` prepared its `SELECT` and `COUNT` once and stored the handles
+  in the store; `patrastore_len` and `patrastore_load_all` reused them. patra's
+  SQL parse scratch is **per-thread** — `patra_init`'s own comment says so:
+  *"Install this (main/foreign) thread's TLS block so the per-thread SQL parse
+  scratch (sql.cyr) resolves."* A statement parsed on the opening thread and
+  executed on another reached into TLS that was not there and **killed the
+  process**: no diagnostic, no error return, no unwind.
+
+  Reported by **Agnostic**, which hit it as *"the first HTTP request to one
+  endpoint takes the whole server down while every other route keeps working"* —
+  a very indirect path back to the cause. Any threaded consumer is exposed, and a
+  server is the obvious consumer for a durable audit trail.
+
+  Both read paths already carried a `stmt == 0` fallback to `patra_query`, which
+  parses on the **calling** thread; that path is now the only one. The struct
+  slots stay at 0 so the layout and the raw-offset allowlist are unchanged.
+
+  ⚠ **The amortisation lost is negligible** — both statements front a full-table
+  read that dominates the parse. A caller that needs per-call prepare/finalize
+  for a hot path should do it on its own thread.
+
+  **Regression-guarded.** `test_patrastore_read_from_another_thread` appends on
+  the main thread, then reads `patrastore_len` from a `thread_create` worker.
+  Mutation-verified: restoring the cache makes the suite **dump core (SIGSEGV)**;
+  removing it gives 521 passed, 0 failed.
+
+### Changed
+
+- **`test_patrastore_prepared_stmts_survive_open` is inverted.** It asserted the
+  statements *were* prepared at open — it was 2.4.0 regression coverage, and it
+  encoded the defect. It now asserts no statement is cached, and the read paths
+  still work unprepared.
+
 ## [2.8.8] — 2026-08-19 — cyrius 6.5.27 → 6.5.31, patra 1.13.8 → 1.13.9
 
 **518** assertions green (**530** with `tpm`). Binary 813,384 → **821,688 B**

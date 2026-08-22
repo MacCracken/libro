@@ -8,6 +8,25 @@ Forward work only. Release detail lives in
 
 Open items, sequenced fastest-to-land first, reactive items last.
 
+- [x] **✅ FIXED in 2.8.9 — `PatraStore`'s cached prepared statements killed a
+  caller on another thread.** Reported by Agnostic 2026-08-21, fixed the same
+  day. `patrastore_open` cached its `SELECT`/`COUNT` handles; patra's SQL parse
+  scratch is per-thread, so executing one from another thread dereferenced TLS
+  that was not there and killed the process — no diagnostic, no error return.
+
+  The cache is gone; both read paths take the `patra_query` fallback they already
+  had, which parses on the calling thread. Struct layout unchanged. Guarded by
+  `test_patrastore_read_from_another_thread`, mutation-verified: restoring the
+  cache makes the suite dump core.
+
+  ⚠ **Still open, filed with it:** `patrastore_load_and_verify` returns the
+  entries vec on success and an error object on failure — **both non-zero
+  pointers** — so the natural `if (r != 0)` reads an integrity violation as a
+  successful load. An integrity check whose failure is indistinguishable from
+  success deserves a separate signature (an out-param, or 0-on-success plus an
+  out-vec). Agnostic sidesteps it by calling `patrastore_load_all` then
+  `verify_chain` directly, which is unambiguous.
+
 - [ ] **RFC 6901 JSON Pointer queries** (`/entries/0/hash` etc.).
   Unblocker satisfied: `lib/bayan.cyr` exports `bayan_json_v_pointer`
   / `bayan_json_v_pointer_cstr` (legacy `json_v_pointer*` names also
