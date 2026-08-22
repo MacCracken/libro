@@ -144,12 +144,57 @@ var restored = chain_import(str_from("audit.jsonl"));
 # memory. Consumers forwarding snapshots between nodes should verify
 # before trusting the contents.
 var verify_err = chain_verify(restored);
-# verify_err == 0 on success; non-zero is an error object
+# verify_err == 0 on success; non-zero is an error object.
+# ⚠ chain_import itself returns 0 for a missing or invalid header (since
+# 2.8.11 it actually honours that contract — before, a headerless JSONL
+# imported minus its genesis entry and still looked valid). Check it:
+if (restored == 0) { /* not a libro chain export */ }
 
 # Overflow archives (from capacity-capped rotation) are NOT part of
 # the snapshot — drive a FileStore or PatraStore directly if you
 # need full-history persistence across rotations.
 ```
+
+## Telling an error from a result (2.8.11+)
+
+libro's pervasive convention is "return the value on success, an error struct
+pointer on failure". **Both are non-zero pointers**, so `if (r != 0)` reads a
+failure as a success — which for an integrity library is the worst possible
+direction. Since 2.8.11 every error object carries a magic word and there is a
+predicate for it:
+
+```cyrius
+var entries = filestore_load_and_verify(fs);
+if (libro_is_error(entries) == 1) {
+    # An integrity violation OR an unreadable log. Before 2.8.11 both of
+    # these were indistinguishable from success — a DELETED audit log
+    # verified clean, because load_all returned an empty vec.
+    println(error_msg(entries));
+} else {
+    # entries is the vec
+}
+```
+
+Same for `patrastore_load_and_verify` and `entry_new_validated`:
+
+```cyrius
+var e = entry_new_validated(SEV_INFO, source, action, details, prev);
+if (libro_is_error(e) == 1) { /* field too long — error_code(e) says which */ }
+```
+
+⚠ **Count-returning APIs are different.** `filestore_verify_streamed` and
+`memstore_verify_streamed` return the NUMBER of entries verified on success —
+and `0` is a legitimate success for an empty log. Use `libro_is_error(r) == 0`,
+never `libro_is_ok(r)`:
+
+```cyrius
+var n = filestore_verify_streamed(fs, 8);
+if (libro_is_error(n) == 1) { /* I/O failure, or a record over 64KB */ }
+else { /* n entries verified; n may legitimately be 0 */ }
+```
+
+`libro_is_error` is safe to call on any of these — it rejects small integers
+and misaligned values before dereferencing.
 
 ## Retention Pattern — Compliance
 

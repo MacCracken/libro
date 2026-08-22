@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.8.11 (2026-08-22)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.34 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.8.12 (2026-08-22)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.35 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -28,8 +28,8 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra (agnosys dropped at the agnosys → agnodrm decomposition — TPM now sourced from sigil ≥ 3.9.0)
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
-- **Tests**: 661 default / 673 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 1,072,048 B default (2.8.11, measured; 1,094,712 B with `tpm`). Capacity headroom: `fn_table 2704 / 32768`, `identifiers 72435 / 524288`, `var_table 1039 / 8192` (`CYRIUS_STATS=1`) — well clear of the 8192 fn_table threshold behind the 6.4.75 P0. **The 2.8.11 jump from 821,920 B is 83% toolchain, not libro**: 2.8.10 source at 6.5.34 already measures 1,029,256 B, so +207,336 B is the fold bump (overwhelmingly bayan 1.4.2 → 1.5.2, whose 1.5.0 PDF/YAML surface DCE NOPs but does not remove) and only +42,792 B is 2.8.11's own source. **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` (100 KB) is the same move 2.8.0 made for sigil and is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. See quirk #9 for the auto-include mechanism (why a fat dep bloats every binary and how to diagnose it — always isolate OUTSIDE the project dir).
+- **Tests**: 751 default / 763 with `-D LIBRO_TPM` (all pass)
+- **Binary**: 1,100,728 B default (2.8.12, measured; 1,123,512 B with `tpm`). Capacity headroom: `fn_table 2744 / 32768`, `identifiers 73723 / 524288`, `var_table 1048 / 8192` (`CYRIUS_STATS=1`). The +28,680 B over 2.8.11 is entirely 2.8.12 source (shared JSON decoder, exact-decimal number normalizer, validator surrogate rules, new guards); the 2.8.11 jump before it was 83% toolchain. **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -171,7 +171,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.34"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.35"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -187,7 +187,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.5.34)
+## Known Cyrius Compiler Quirks (6.5.35)
 
 > ## ⚠️ BIG NOTE — sigil needs `lib/thread_local.cyr` before it (or SIGILL)
 >
@@ -230,6 +230,39 @@ docs/ (when earned):
 > see quirk #4. cyrius 6.0.53 raised it 64 → 512, so `tpm_anchor` is
 > back to `#derive(accessors)` and the 2.6.5 hand-written-accessor
 > workaround is gone as of 2.7.1.)*
+
+> ## ⚠️ BIG NOTE — 2.8.12 is the LAST preimage change; 2.8.11's is superseded
+>
+> 2.8.11 changed the entry preimage and the Merkle construction. **2.8.12
+> changes the preimage again AND changes the tree-head signature**, because no
+> consumer had picked 2.8.11 up yet and breaking once more while it was free
+> beat leaving a third break for later. Nothing pre-2.8.12 verifies. After this
+> release the canonical form and the signature cover everything they claim to.
+>
+> What 2.8.12 added to the format: canonical-JSON **string** normalization
+> (decode + minimal re-escape, keys sorted by decoded form), **number**
+> normalization to an exact plain decimal (`1` == `1.0` == `1e0` == `10e-1`),
+> surrogate pairs decoding to real UTF-8 instead of CESU-8, an empty `details`
+> no longer colliding with the literal `null`, and
+> `tree_head_digest(root, tree_size, timestamp, algorithm)` as what gets signed.
+>
+> ⭐ **The lesson from round 2, worth more than any single fix: most of what it
+> found was introduced by round 1.** A release that repairs 26 defects at once
+> is itself a large unreviewed change. Two shapes recurred — *a fix applied to
+> most instances of a class* (escaping four of ten fields; fixing inclusion
+> proofs but not consistency proofs or anchors) and *a new mechanism carrying
+> the old one's flaw* (`_merkle_tag` reintroducing the process-global buffer
+> that the same release had just removed from `hash_field`). Neither is caught
+> by a green suite. **Audit the fix, not just the bug.**
+>
+> ⚠ **A surviving mutation means the TEST is wrong, not that the fix is
+> unnecessary.** Four survived in this cycle and every one was a vacuous test:
+> comparing a function against itself, asserting order-independence where a
+> reversed comparator also passes, exercising only the branch with a shorthand,
+> and an input rejected earlier than the guard under test. Two more were
+> *ineffective* — mutating an initializer the next line overwrites, or an inner
+> check an outer one still catches. Read what the mutation actually did before
+> concluding anything.
 
 > ## ⚠️ BIG NOTE — 2.8.11 changed the hash preimage; pre-2.8.11 chains do not verify
 >

@@ -365,10 +365,20 @@ fn filestore_query(s, filter) {
 # Serialize entry to flat JSON (all values as strings for stdlib json compat).
 # Details is stored as an escaped string value, not a nested object.
 fn _filestore_entry_json(sb, e) {
+    # ⚠ 2.8.12 — EVERY field goes through _sb_json_escape.
+    #
+    # The 2.8.11 migration escaped source, action, details and agent_id and
+    # stopped there, leaving timestamp, prev_hash, hash and hash_algorithm on
+    # raw str_builder_add. All four are writable through public setters
+    # (entry_set_timestamp, entry_set_hash_algorithm, …) and all four carry
+    # whatever a producer put there on an entry parsed from an untrusted
+    # proof — so a quote in any of them broke the record on reload, and a
+    # crafted value could close its own JSON string and inject a sibling key.
+    # Escaping three quarters of the fields is not escaping.
     str_builder_add_cstr(sb, "{\"id\":\"");
-    str_builder_add(sb, uuid_format(entry_id(e)));
+    _sb_json_escape(sb, uuid_format(entry_id(e)));
     str_builder_add_cstr(sb, "\",\"timestamp\":\"");
-    str_builder_add(sb, entry_timestamp(e));
+    _sb_json_escape(sb, entry_timestamp(e));
     str_builder_add_cstr(sb, "\",\"severity\":\"");
     str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
     str_builder_add_cstr(sb, "\",\"source\":\"");
@@ -388,11 +398,11 @@ fn _filestore_entry_json(sb, e) {
         _sb_json_escape(sb, aid);
     }
     str_builder_add_cstr(sb, "\",\"prev_hash\":\"");
-    str_builder_add(sb, entry_prev_hash(e));
+    _sb_json_escape(sb, entry_prev_hash(e));
     str_builder_add_cstr(sb, "\",\"hash\":\"");
-    str_builder_add(sb, entry_hash(e));
+    _sb_json_escape(sb, entry_hash(e));
     str_builder_add_cstr(sb, "\",\"hash_algorithm\":\"");
-    str_builder_add(sb, entry_hash_algorithm(e));
+    _sb_json_escape(sb, entry_hash_algorithm(e));
     str_builder_add_cstr(sb, "\"}");
     return 0;
 }
@@ -441,91 +451,27 @@ fn _filestore_entry_json(sb, e) {
 # Returns a vec of alternating [key, value, key, value, …] Strs with escapes
 # decoded, or 0 if the line is not a well-formed flat string object.
 
-fn _fsj_hexval(c) {
-    if (c >= 48 && c <= 57) { return c - 48; }
-    if (c >= 97 && c <= 102) { return c - 87; }
-    if (c >= 65 && c <= 70) { return c - 55; }
-    return 0 - 1;
-}
-
 fn _fsj_is_ws(c) {
     if (c == 32 || c == 9 || c == 10 || c == 13) { return 1; }
     return 0;
 }
 
-var _fsj_pos = 0;
-
-# Decode one JSON string starting at data[pos] (which must be '"') into a
-# freshly allocated buffer. Sets _fsj_pos past the closing quote.
-# Returns a Str, or 0 on malformed input.
+# Decode one JSON string starting at data[pos] (which must be '"').
+# Returns (Str of raw decoded bytes, position after the closing quote),
+# or (0, 0) if malformed.
+#
+# ⚠ 2.8.12 — this DELEGATES to json_str_decode in entry.cyr. It used to be a
+# second, independent implementation of the same escape decoding, and the
+# canonical hasher grew a third when 2.8.12 started normalizing strings. Three
+# copies of one escape table is precisely how a writer and a reader drift
+# apart — the defect class 2.8.11 spent a release repairing. One decoder,
+# one escaper (_sb_json_escape / _cjh_emit_json_string share the same table).
+#
+# ⚠ 2.8.11 note kept: it used to hand the end position back through a
+# file-scope global `_fsj_pos`, which is a return value in a process-wide
+# slot — two threads parsing concurrently overwrote each other's position.
 fn _fsj_read_string(data, pos, slen) {
-    if (pos >= slen || (load8(data + pos) & 0xFF) != 34) { return 0; }
-    pos += 1;
-    # Size the decode buffer to THIS string's span, not to the rest of the
-    # line. Sizing it `slen - pos` allocated ~a whole record per field, ten
-    # times per entry, out of the never-reclaimed bump allocator — measured as
-    # +66% on filestore_load_10. One cheap scan to the closing quote gives the
-    # encoded length, and the decoded form is never longer than that.
-    var scan = pos;
-    var span = 0 - 1;
-    while (scan < slen && span < 0) {
-        var sc = load8(data + scan) & 0xFF;
-        if (sc == 92) { scan += 2; }
-        elif (sc == 34) { span = scan - pos; }
-        else { scan += 1; }
-    }
-    if (span < 0) { return 0; }
-    var out = alloc(span + 1);
-    var oi = 0;
-    while (pos < slen) {
-        var c = load8(data + pos) & 0xFF;
-        if (c == 34) {
-            store8(out + oi, 0);
-            _fsj_pos = pos + 1;
-            return str_new(out, oi);
-        }
-        if (c == 92) {
-            if (pos + 1 >= slen) { return 0; }
-            var e = load8(data + pos + 1) & 0xFF;
-            if (e == 34)       { store8(out + oi, 34);  oi += 1; pos += 2; }
-            elif (e == 92)     { store8(out + oi, 92);  oi += 1; pos += 2; }
-            elif (e == 47)     { store8(out + oi, 47);  oi += 1; pos += 2; }
-            elif (e == 110)    { store8(out + oi, 10);  oi += 1; pos += 2; }
-            elif (e == 114)    { store8(out + oi, 13);  oi += 1; pos += 2; }
-            elif (e == 116)    { store8(out + oi, 9);   oi += 1; pos += 2; }
-            elif (e == 98)     { store8(out + oi, 8);   oi += 1; pos += 2; }
-            elif (e == 102)    { store8(out + oi, 12);  oi += 1; pos += 2; }
-            elif (e == 117) {
-                if (pos + 5 >= slen) { return 0; }
-                var h3 = _fsj_hexval(load8(data + pos + 2) & 0xFF);
-                var h2 = _fsj_hexval(load8(data + pos + 3) & 0xFF);
-                var h1 = _fsj_hexval(load8(data + pos + 4) & 0xFF);
-                var h0 = _fsj_hexval(load8(data + pos + 5) & 0xFF);
-                if (h3 < 0 || h2 < 0 || h1 < 0 || h0 < 0) { return 0; }
-                var cp = (h3 << 12) | (h2 << 8) | (h1 << 4) | h0;
-                # UTF-8 encode. libro only ever EMITS \u00XX for C0 bytes,
-                # but a foreign producer may send any BMP code point.
-                if (cp < 128) {
-                    store8(out + oi, cp); oi += 1;
-                } elif (cp < 2048) {
-                    store8(out + oi, 192 | (cp >> 6)); oi += 1;
-                    store8(out + oi, 128 | (cp & 63)); oi += 1;
-                } else {
-                    store8(out + oi, 224 | (cp >> 12)); oi += 1;
-                    store8(out + oi, 128 | ((cp >> 6) & 63)); oi += 1;
-                    store8(out + oi, 128 | (cp & 63)); oi += 1;
-                }
-                pos += 6;
-            } else {
-                return 0;
-            }
-        } else {
-            store8(out + oi, c);
-            oi += 1;
-            pos += 1;
-        }
-    }
-    return 0;
+    return json_str_decode(data, pos, slen);
 }
 
 # A bare JSON scalar (number / true / false / null), returned as its raw
@@ -537,11 +483,22 @@ fn _fsj_read_scalar(data, pos, slen) {
     var start = pos;
     while (pos < slen) {
         var c = load8(data + pos) & 0xFF;
-        if (c == 44 || c == 125 || c == 93) { pos = pos; }
         if (c == 44 || c == 125 || c == 93 || _fsj_is_ws(c) == 1) {
-            if (pos == start) { return 0; }
-            _fsj_pos = pos;
-            return str_new(data + start, pos - start);
+            if (pos == start) { return (0, 0); }
+            # ⚠ COPY, do not view. _fsj_read_string decodes into a fresh
+            # buffer, so its Str outlives the line; a bare
+            # str_new(data + start, …) here would be a VIEW into the caller's
+            # line buffer, and the two readers returning different lifetimes
+            # from the same call site is how a dangling Str gets written. No
+            # current caller retains a scalar past the line — only the
+            # chain_export header uses them, and it converts immediately —
+            # but that is a property of today's callers, not of this function.
+            # See CLAUDE.md: str_from/str_new wrap, they do not copy.
+            var n = pos - start;
+            var buf = alloc(n + 1);
+            memcpy(buf, data + start, n);
+            store8(buf + n, 0);
+            return (str_new(buf, n), pos);
         }
         # Permitted scalar bytes: digits, sign, dot, exponent, and the
         # lowercase letters of true/false/null.
@@ -549,18 +506,26 @@ fn _fsj_read_scalar(data, pos, slen) {
           || (c >= 97 && c <= 122)) {
             pos += 1;
         } else {
-            return 0;
+            return (0, 0);
         }
     }
-    return 0;
+    return (0, 0);
 }
 
+# Value KINDS. 2.8.12 — the reader has to tell a quoted "null" from the bare
+# JSON literal null, because they mean different things for agent_id and the
+# old code could not distinguish them.
+var FSJ_STRING = 1;
+var FSJ_SCALAR = 2;
+
 fn _fsj_read_value(data, pos, slen) {
-    if (pos >= slen) { return 0; }
+    if (pos >= slen) { return (0, 0, 0); }
     if ((load8(data + pos) & 0xFF) == 34) {
-        return _fsj_read_string(data, pos, slen);
+        var sv, se = _fsj_read_string(data, pos, slen);
+        return (sv, se, FSJ_STRING);
     }
-    return _fsj_read_scalar(data, pos, slen);
+    var cv, ce = _fsj_read_scalar(data, pos, slen);
+    return (cv, ce, FSJ_SCALAR);
 }
 
 fn _fsj_skip_ws(data, pos, slen) {
@@ -581,21 +546,39 @@ fn _fsj_parse_flat(line) {
     var stop = 0;
     while (stop == 0) {
         pos = _fsj_skip_ws(data, pos, slen);
-        var k = _fsj_read_string(data, pos, slen);
+        var k, kend = _fsj_read_string(data, pos, slen);
         if (k == 0) { return 0; }
-        pos = _fsj_skip_ws(data, _fsj_pos, slen);
+        pos = _fsj_skip_ws(data, kend, slen);
         if (pos >= slen || (load8(data + pos) & 0xFF) != 58) { return 0; }
         pos = _fsj_skip_ws(data, pos + 1, slen);
-        var v = _fsj_read_value(data, pos, slen);
+        var v, vend, vkind = _fsj_read_value(data, pos, slen);
         if (v == 0) { return 0; }
-        pos = _fsj_skip_ws(data, _fsj_pos, slen);
+        pos = _fsj_skip_ws(data, vend, slen);
         vec_push(out, k);
         vec_push(out, v);
+        vec_push(out, vkind);
         if (pos >= slen) { return 0; }
         var d = load8(data + pos) & 0xFF;
         if (d == 44) { pos += 1; }
         elif (d == 125) { pos += 1; stop = 1; }
         else { return 0; }
+    }
+    # 2.8.12 — REJECT a duplicated key.
+    #
+    # _fsj_lookup returns the FIRST match, so a record carrying two
+    # "source" keys silently resolved to whichever came first. That turns any
+    # field-injection bug elsewhere in the pipeline from "produces a corrupt
+    # record" into "produces a record that reads as a DIFFERENT, plausible
+    # one" — the escaping fixes above close the known injection paths, and
+    # this closes the amplifier they fed.
+    var a = 0;
+    while (a + 2 < vec_len(out)) {
+        var b = a + 3;
+        while (b + 2 < vec_len(out)) {
+            if (str_eq(vec_get(out, a), vec_get(out, b)) == 1) { return 0; }
+            b += 3;
+        }
+        a += 3;
     }
     return out;
 }
@@ -622,11 +605,25 @@ fn _fsj_lookup(pairs, key) {
     if (pairs == 0) { return 0; }
     var n = vec_len(pairs);
     var i = 0;
-    while (i + 1 < n) {
+    while (i + 2 < n) {
         if (_fsj_key_is(vec_get(pairs, i), key) == 1) {
             return vec_get(pairs, i + 1);
         }
-        i += 2;
+        i += 3;
+    }
+    return 0;
+}
+
+# FSJ_STRING or FSJ_SCALAR for `key`, or 0 if absent.
+fn _fsj_lookup_kind(pairs, key) {
+    if (pairs == 0) { return 0; }
+    var n = vec_len(pairs);
+    var i = 0;
+    while (i + 2 < n) {
+        if (_fsj_key_is(vec_get(pairs, i), key) == 1) {
+            return vec_get(pairs, i + 2);
+        }
+        i += 3;
     }
     return 0;
 }
@@ -675,7 +672,12 @@ fn _filestore_parse_entry(line) {
     store64(e + 32, source);
     store64(e + 40, action);
     if (details == 0 || str_len(details) == 0) {
-        store64(e + 48, str_from("{}"));
+        # 2.8.12 — preserve an EMPTY details instead of rewriting it to "{}".
+        # The substitution changed the entry's details between write and
+        # read, so every entry stored with an empty details failed
+        # verification on reload — a false integrity violation on a log
+        # nobody had touched.
+        store64(e + 48, str_from(""));
     } else {
         # _fsj_read_string already decoded the escapes; the old
         # _filestore_unescape second pass is gone (it would double-decode).
@@ -690,7 +692,16 @@ fn _filestore_parse_entry(line) {
         # ⚠ An agent genuinely named "null" is still read as absent; libro's
         # own writer emits "" for absent, so this arm exists only for foreign
         # producers.
-        if (str_eq(agent_id, str_from("null")) == 1) {
+        # ⚠ 2.8.12 — only the BARE JSON literal `null` means absent. A
+        # QUOTED "null" is an agent whose name happens to be that word, and
+        # libro's own writer emits agent_id as a quoted string using "" for
+        # absent — so the previous string-compare made an agent literally
+        # named "null" round-trip to absent through libro's own writer and
+        # reader, hash with an empty agent_id, and report a false integrity
+        # violation. (2.8.11 fixed the "any 4 chars starting with n" version
+        # of this and left the exact-match version behind.)
+        if (_fsj_lookup_kind(pairs, "agent_id") == FSJ_SCALAR
+          && str_eq(agent_id, str_from("null")) == 1) {
             store64(e + 56, 0);
         } else {
             store64(e + 56, agent_id);

@@ -264,18 +264,17 @@ fn chain_verify(c) {
     var n = vec_len(entries);
     if (n == 0) { return 0; }
 
-    # Check genesis entry's prev_hash matches prev_chain_hash
-    var first = vec_get(entries, 0);
-    var first_prev = entry_prev_hash(first);
+    # The genesis link. For a chain that has ROTATED, entries[0] legitimately
+    # links to the rotated-away head carried in prev_chain_hash rather than to
+    # nothing — so this is the one caller that must supply the expectation
+    # explicitly. 2.8.12 folded the check that used to be inline here into
+    # verify_chain_from, so a chain and a store now enforce it by the same
+    # code path instead of only chain_verify having it.
     var expected_prev = load64(c + 8);
     if (expected_prev == 0) {
         expected_prev = str_from("");
     }
-    if (constant_time_eq_str(first_prev, expected_prev) == 0) {
-        return error_integrity(0, expected_prev, first_prev);
-    }
-
-    return verify_chain(entries, 0);
+    return verify_chain_from(entries, 0, expected_prev);
 }
 
 # ================================================================
@@ -338,9 +337,14 @@ fn chain_query(c, filter) {
 fn chain_page(c, offset, limit) {
     var entries = load64(c);
     var n = vec_len(entries);
+    # 2.8.12 — clamp the lower bound; see memstore_load_page. A negative
+    # offset walked vec_get backwards off the front of the vec.
     var start = offset;
+    if (start < 0) { start = 0; }
     if (start > n) { start = n; }
-    var end = start + limit;
+    var lim = limit;
+    if (lim < 0) { lim = 0; }
+    var end = start + lim;
     if (end > n) { end = n; }
 
     var result = vec_new();

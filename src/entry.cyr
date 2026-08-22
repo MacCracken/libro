@@ -260,6 +260,341 @@ fn timestamp_rfc3339(epoch_secs) {
 # see a hash break on re-verify — which is correct behaviour and one
 # of the reasons this is a 2.0 feature.
 
+# ================================================================
+# JSON string decode / minimal re-escape (2.8.12)
+# ================================================================
+#
+# ONE decoder and ONE escaper for the whole library. file_store.cyr's JSONL
+# reader and the canonical hasher below both need "turn a quoted JSON string
+# into its raw bytes"; having two copies is precisely how a writer and a
+# reader drift apart, which is the defect class 2.8.11 spent a release on.
+# entry.cyr is third in the include order, so everything downstream can use
+# these.
+
+fn _js_hexval(c) {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+fn _js_hexchar(v) {
+    if (v < 10) { return 48 + v; }
+    return 87 + v;
+}
+
+# Decode the JSON string starting at data[pos] (which must be '"').
+# Returns (Str of raw decoded bytes, position after the closing quote),
+# or (0, 0) if malformed.
+fn json_str_decode(data, pos, slen) {
+    if (pos >= slen || (load8(data + pos) & 0xFF) != 34) { return (0, 0); }
+    pos += 1;
+    # Size to THIS string's span: one scan to the closing quote. The decoded
+    # form is never longer than the encoded form.
+    var scan = pos;
+    var span = 0 - 1;
+    while (scan < slen && span < 0) {
+        var sc = load8(data + scan) & 0xFF;
+        if (sc == 92) { scan += 2; }
+        elif (sc == 34) { span = scan - pos; }
+        else { scan += 1; }
+    }
+    if (span < 0) { return (0, 0); }
+    var out = alloc(span + 1);
+    var oi = 0;
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 34) {
+            store8(out + oi, 0);
+            return (str_new(out, oi), pos + 1);
+        }
+        if (c == 92) {
+            if (pos + 1 >= slen) { return (0, 0); }
+            var e = load8(data + pos + 1) & 0xFF;
+            if (e == 34)    { store8(out + oi, 34); oi += 1; pos += 2; }
+            elif (e == 92)  { store8(out + oi, 92); oi += 1; pos += 2; }
+            elif (e == 47)  { store8(out + oi, 47); oi += 1; pos += 2; }
+            elif (e == 110) { store8(out + oi, 10); oi += 1; pos += 2; }
+            elif (e == 114) { store8(out + oi, 13); oi += 1; pos += 2; }
+            elif (e == 116) { store8(out + oi, 9);  oi += 1; pos += 2; }
+            elif (e == 98)  { store8(out + oi, 8);  oi += 1; pos += 2; }
+            elif (e == 102) { store8(out + oi, 12); oi += 1; pos += 2; }
+            elif (e == 117) {
+                if (pos + 5 >= slen) { return (0, 0); }
+                var h3 = _js_hexval(load8(data + pos + 2) & 0xFF);
+                var h2 = _js_hexval(load8(data + pos + 3) & 0xFF);
+                var h1 = _js_hexval(load8(data + pos + 4) & 0xFF);
+                var h0 = _js_hexval(load8(data + pos + 5) & 0xFF);
+                if (h3 < 0 || h2 < 0 || h1 < 0 || h0 < 0) { return (0, 0); }
+                var cp = (h3 << 12) | (h2 << 8) | (h1 << 4) | h0;
+                # ⚠ 2.8.12 — SURROGATE PAIRS. A code point above U+FFFF is
+                # written in JSON as a high/low surrogate pair
+                # (\uD83D\uDE00). Encoding each half separately gives CESU-8,
+                # which is NOT valid UTF-8: the decoded bytes differ from what
+                # every other JSON reader produces, so the same logical
+                # document hashed differently depending on whether its
+                # producer escaped non-BMP characters — the exact
+                # non-normalization this release set out to remove.
+                if (cp >= 55296 && cp < 56320) {
+                    # High surrogate: a low surrogate must follow.
+                    if (pos + 11 >= slen) { return (0, 0); }
+                    if ((load8(data + pos + 6) & 0xFF) != 92) { return (0, 0); }
+                    if ((load8(data + pos + 7) & 0xFF) != 117) { return (0, 0); }
+                    var g3 = _js_hexval(load8(data + pos + 8) & 0xFF);
+                    var g2 = _js_hexval(load8(data + pos + 9) & 0xFF);
+                    var g1 = _js_hexval(load8(data + pos + 10) & 0xFF);
+                    var g0 = _js_hexval(load8(data + pos + 11) & 0xFF);
+                    if (g3 < 0 || g2 < 0 || g1 < 0 || g0 < 0) { return (0, 0); }
+                    var lo = (g3 << 12) | (g2 << 8) | (g1 << 4) | g0;
+                    if (lo < 56320 || lo >= 57344) { return (0, 0); }
+                    cp = 65536 + ((cp - 55296) << 10) + (lo - 56320);
+                    store8(out + oi, 240 | (cp >> 18)); oi += 1;
+                    store8(out + oi, 128 | ((cp >> 12) & 63)); oi += 1;
+                    store8(out + oi, 128 | ((cp >> 6) & 63)); oi += 1;
+                    store8(out + oi, 128 | (cp & 63)); oi += 1;
+                    pos += 12;
+                } elif (cp >= 56320 && cp < 57344) {
+                    # A lone low surrogate is not a character.
+                    return (0, 0);
+                } elif (cp < 128) {
+                    store8(out + oi, cp); oi += 1;
+                    pos += 6;
+                } elif (cp < 2048) {
+                    store8(out + oi, 192 | (cp >> 6)); oi += 1;
+                    store8(out + oi, 128 | (cp & 63)); oi += 1;
+                    pos += 6;
+                } else {
+                    store8(out + oi, 224 | (cp >> 12)); oi += 1;
+                    store8(out + oi, 128 | ((cp >> 6) & 63)); oi += 1;
+                    store8(out + oi, 128 | (cp & 63)); oi += 1;
+                    pos += 6;
+                }
+                # ⚠ The advance is per-branch on purpose. A shared `pos += 6`
+                # here silently ADDED to the surrogate branch's `pos += 12`,
+                # overshooting by six, running past the closing quote and
+                # making every surrogate pair fail to decode.
+            } else {
+                return (0, 0);
+            }
+        } else {
+            store8(out + oi, c);
+            oi += 1;
+            pos += 1;
+        }
+    }
+    return (0, 0);
+}
+
+# Feed `s` to `hasher` as a JSON string literal in RFC 8785 §3.2.2.2 minimal
+# escaping: quote, backslash and the five short C0 forms; \u00XX (lowercase
+# hex) for any other C0 byte; everything else verbatim.
+fn _cjh_emit_json_string(hasher, s) {
+    var d = str_data(s);
+    var n = str_len(s);
+    var quote[1];
+    store8(&quote, 34);
+    hasher_update(hasher, &quote, 1);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i) & 0xFF;
+        if (c == 34)      { hasher_update(hasher, "\\\"", 2); }
+        elif (c == 92)    { hasher_update(hasher, "\\\\", 2); }
+        elif (c == 8)     { hasher_update(hasher, "\\b", 2); }
+        elif (c == 12)    { hasher_update(hasher, "\\f", 2); }
+        elif (c == 10)    { hasher_update(hasher, "\\n", 2); }
+        elif (c == 13)    { hasher_update(hasher, "\\r", 2); }
+        elif (c == 9)     { hasher_update(hasher, "\\t", 2); }
+        elif (c < 32) {
+            var ub[6];
+            store8(&ub, 92); store8(&ub + 1, 117);
+            store8(&ub + 2, 48); store8(&ub + 3, 48);
+            store8(&ub + 4, _js_hexchar((c >> 4) & 0xF));
+            store8(&ub + 5, _js_hexchar(c & 0xF));
+            hasher_update(hasher, &ub, 6);
+        } else {
+            var one[1];
+            store8(&one, c);
+            hasher_update(hasher, &one, 1);
+        }
+        i += 1;
+    }
+    hasher_update(hasher, &quote, 1);
+    return 0;
+}
+
+# ================================================================
+# Canonical number form (2.8.12)
+# ================================================================
+#
+# ⚠ BREAKING, and the second half of "canonical" finally meaning what ADR 0007
+# always claimed. Through 2.8.11 a number was hashed as its SOURCE BYTES, so
+# `1`, `1.0`, `1e0` and `1.00E+00` — one logical value, four ways a JSON
+# writer might spell it — produced four different entry hashes. A consumer
+# that round-tripped `details` through a library storing all numbers as
+# doubles got a different hash for content it considered unchanged.
+#
+# The normal form is an exact plain decimal: no exponent, no leading zeros, no
+# trailing fractional zeros, no "-0". It is computed with DIGIT-STRING
+# arithmetic only — no float parsing, no shortest-round-trip formatter — so it
+# is exact and deterministic, with none of the accident surface a Ryu/Grisu
+# implementation in Cyrius would carry.
+#
+# ⚠ This deviates from RFC 8785, which mandates ECMAScript Number::toString
+# (and would render 1e100 as "1e+100" rather than 101 digits). libro's form is
+# exact where JCS's is shortest-round-trip; the two agree on every value whose
+# decimal expansion is short, which is every value an audit payload carries.
+# The deviation is deliberate and recorded in ADR 0007.
+#
+# Values too extreme to expand are REJECTED by the validator (see
+# CJN_MAX_DIGITS) and take the raw fallback, which is injective — so the
+# normal form is always bounded and there is no cliff where two spellings of
+# one value straddle a cap.
+var CJN_MAX_DIGITS = 1024;
+
+# Parse a number's source text into (negative, digits Str, decimal exponent),
+# where value = sign * digits * 10^exponent. Returns (0,0,0) if the exponent
+# or digit count is out of range.
+fn _cjn_parse(data, start, end) {
+    var i = start;
+    var neg = 0;
+    if (i < end && (load8(data + i) & 0xFF) == 45) { neg = 1; i += 1; }
+
+    var buf = alloc(end - start + 2);
+    var n = 0;
+    while (i < end) {
+        var c = load8(data + i) & 0xFF;
+        if (c < 48 || c > 57) { i = end; }
+        else { store8(buf + n, c); n += 1; i += 1; }
+    }
+    # Re-scan: the loop above stops at the first non-digit, recompute position.
+    i = start;
+    if (neg == 1) { i += 1; }
+    while (i < end && (load8(data + i) & 0xFF) >= 48
+      && (load8(data + i) & 0xFF) <= 57) { i += 1; }
+
+    var frac = 0;
+    if (i < end && (load8(data + i) & 0xFF) == 46) {
+        i += 1;
+        while (i < end && (load8(data + i) & 0xFF) >= 48
+          && (load8(data + i) & 0xFF) <= 57) {
+            store8(buf + n, load8(data + i) & 0xFF);
+            n += 1; frac += 1; i += 1;
+        }
+    }
+
+    var exp = 0;
+    if (i < end) {
+        var ec = load8(data + i) & 0xFF;
+        if (ec == 101 || ec == 69) {
+            i += 1;
+            var es = 1;
+            if (i < end) {
+                var sc = load8(data + i) & 0xFF;
+                if (sc == 45) { es = 0 - 1; i += 1; }
+                elif (sc == 43) { i += 1; }
+            }
+            var ev = 0;
+            while (i < end && (load8(data + i) & 0xFF) >= 48
+              && (load8(data + i) & 0xFF) <= 57) {
+                ev = ev * 10 + ((load8(data + i) & 0xFF) - 48);
+                if (ev > 1000000) { return (0, 0, 0); }
+                i += 1;
+            }
+            exp = ev * es;
+        }
+    }
+    if (n == 0) { return (0, 0, 0); }
+    return (neg, str_new(buf, n), exp - frac);
+}
+
+# Emit the canonical decimal form of the number spanning [start, end).
+fn _cjn_emit(hasher, data, start, end) {
+    var neg, digits, e2 = _cjn_parse(data, start, end);
+    if (digits == 0) {
+        # Out of range: hash the source bytes. The validator rejects these
+        # before they reach here, so this is belt-and-braces.
+        hasher_update(hasher, data + start, end - start);
+        return 0;
+    }
+    var d = str_data(digits);
+    var n = str_len(digits);
+
+    # Strip leading zeros, keeping at least one digit.
+    var lead = 0;
+    while (lead < n - 1 && (load8(d + lead) & 0xFF) == 48) { lead += 1; }
+    d = d + lead;
+    n = n - lead;
+
+    # All zero -> "0", never "-0" and never "0.000".
+    var allzero = 1;
+    var z = 0;
+    while (z < n) {
+        if ((load8(d + z) & 0xFF) != 48) { allzero = 0; }
+        z += 1;
+    }
+    if (allzero == 1) { hasher_update(hasher, "0", 1); return 0; }
+
+    # Trailing zeros in the digit string can be absorbed into the exponent.
+    while (n > 1 && (load8(d + n - 1) & 0xFF) == 48 && e2 < 0) {
+        n -= 1; e2 += 1;
+    }
+
+    # ⚠ Size the buffer to THIS number, not to the cap. Allocating
+    # CJN_MAX_DIGITS + 8 unconditionally cost 1,032 bytes of never-reclaimed
+    # bump memory for every number in the document — measured at 1.19 MB of
+    # bump per hash of a 10 KB details, re-paid on EVERY verify of every
+    # entry. A digest is not supposed to allocate a hundred times its input.
+    var need = n + 8;
+    if (e2 >= 0) { need = n + e2 + 8; }
+    else { need = n + (0 - e2) + 8; }
+    var out = alloc(need);
+    var o = 0;
+    if (neg == 1) { store8(out + o, 45); o += 1; }
+
+    if (e2 >= 0) {
+        # Integer: digits followed by e2 zeros.
+        memcpy(out + o, d, n); o += n;
+        var k = 0;
+        while (k < e2) { store8(out + o, 48); o += 1; k += 1; }
+    } else {
+        var k = 0 - e2;
+        if (k < n) {
+            memcpy(out + o, d, n - k); o += n - k;
+            store8(out + o, 46); o += 1;
+            memcpy(out + o, d + n - k, k); o += k;
+        } else {
+            store8(out + o, 48); o += 1;
+            store8(out + o, 46); o += 1;
+            var pad = k - n;
+            var q = 0;
+            while (q < pad) { store8(out + o, 48); o += 1; q += 1; }
+            memcpy(out + o, d, n); o += n;
+        }
+        # Strip trailing fractional zeros, then a bare trailing point.
+        while (o > 0 && (load8(out + o - 1) & 0xFF) == 48) { o -= 1; }
+        if (o > 0 && (load8(out + o - 1) & 0xFF) == 46) { o -= 1; }
+    }
+    hasher_update(hasher, out, o);
+    return 0;
+}
+
+# Would this number's canonical form fit in CJN_MAX_DIGITS? Used by the
+# validator so an unbounded expansion is rejected up front rather than
+# discovered mid-emit.
+fn _cjn_in_range(data, start, end) {
+    var neg, digits, e2 = _cjn_parse(data, start, end);
+    if (digits == 0) { return 0; }
+    var n = str_len(digits);
+    if (e2 >= 0) {
+        if (n + e2 > CJN_MAX_DIGITS) { return 0; }
+    } else {
+        var k = 0 - e2;
+        if (k > CJN_MAX_DIGITS) { return 0; }
+        if (n + k > CJN_MAX_DIGITS) { return 0; }
+    }
+    return 1;
+}
+
 # Maximum nesting depth accepted by the canonical-JSON hasher.
 #
 # 2.8.11. _cjh_emit / _cjh_emit_object / _cjh_emit_array are mutually
@@ -273,6 +608,14 @@ fn timestamp_rfc3339(epoch_secs) {
 # 128 is far above any real audit payload and far below the ~8 MB default
 # stack divided by the measured per-level frame cost.
 var CJH_MAX_DEPTH = 128;
+
+fn _cjv_hex4(data, p) {
+    var a = _js_hexval(load8(data + p) & 0xFF);
+    var b = _js_hexval(load8(data + p + 1) & 0xFF);
+    var c = _js_hexval(load8(data + p + 2) & 0xFF);
+    var d = _js_hexval(load8(data + p + 3) & 0xFF);
+    return (a << 12) | (b << 8) | (c << 4) | d;
+}
 
 fn _cjv_is_hex(c) {
     if (c >= 48 && c <= 57) { return 1; }
@@ -301,7 +644,32 @@ fn _cjv_string(data, pos, slen) {
                     }
                     k += 1;
                 }
-                pos += 6;
+                # ⚠ 2.8.12 — surrogate pairing must be validated HERE, because
+                # json_str_decode rejects a lone surrogate. If the validator
+                # accepted what the decoder refuses, a document would pass
+                # validation and then take the emitter's verbatim fallback —
+                # a validator/emitter DISAGREEMENT, which is the one thing the
+                # whole validate-then-emit design exists to prevent.
+                var cpv = (_cjv_hex4(data, pos + 2) & 0xFFFF);
+                if (cpv >= 55296 && cpv < 56320) {
+                    if (pos + 11 >= slen) { return 0 - 1; }
+                    if ((load8(data + pos + 6) & 0xFF) != 92) { return 0 - 1; }
+                    if ((load8(data + pos + 7) & 0xFF) != 117) { return 0 - 1; }
+                    var k2 = 0;
+                    while (k2 < 4) {
+                        if (_cjv_is_hex(load8(data + pos + 8 + k2) & 0xFF) == 0) {
+                            return 0 - 1;
+                        }
+                        k2 += 1;
+                    }
+                    var lov = (_cjv_hex4(data, pos + 8) & 0xFFFF);
+                    if (lov < 56320 || lov >= 57344) { return 0 - 1; }
+                    pos += 12;
+                } elif (cpv >= 56320 && cpv < 57344) {
+                    return 0 - 1;
+                } else {
+                    pos += 6;
+                }
             } elif (e == 34 || e == 92 || e == 47 || e == 98 || e == 102
               || e == 110 || e == 114 || e == 116) {
                 pos += 2;
@@ -434,7 +802,15 @@ fn _cjv_value(data, pos, slen, depth) {
     if (c == 116) { return _cjv_literal(data, pos, slen, "true", 4); }
     if (c == 102) { return _cjv_literal(data, pos, slen, "false", 5); }
     if (c == 110) { return _cjv_literal(data, pos, slen, "null", 4); }
-    return _cjv_number(data, pos, slen);
+    var nend = _cjv_number(data, pos, slen);
+    if (nend < 0) { return 0 - 1; }
+    # 2.8.12 — reject a number whose exact decimal expansion would be
+    # unbounded (1e100000). Rejecting here rather than truncating in the
+    # emitter is what keeps the canonical form total: everything the validator
+    # accepts has a bounded normal form, and everything it rejects takes the
+    # injective raw fallback. No cliff where two spellings straddle a cap.
+    if (_cjn_in_range(data, pos, nend) == 0) { return 0 - 1; }
+    return nend;
 }
 
 # Is the whole buffer exactly one well-formed JSON value (plus optional
@@ -474,9 +850,26 @@ fn canonical_json_is_valid(json_str) {
 # begins 0x00) and injective among malformed inputs, so a malformed document
 # can no longer collide with anything at all.
 fn canonical_json_hash_str(json_str, hasher) {
+    # ⚠ 2.8.12 — an ABSENT or EMPTY details no longer hashes as the literal
+    # bytes `null`. It used to, and `null` is also a perfectly valid JSON
+    # document whose canonical emission is those same four bytes — so
+    # details="" and details="null" produced the IDENTICAL preimage. That is a
+    # collision between two distinct stored records, which is the exact class
+    # 2.8.11 was written to eliminate, sitting in the one branch that took a
+    # shortcut past the canonicaliser.
+    #
+    # Empty is not well-formed JSON, so it now takes the same 0x00-tagged,
+    # length-prefixed raw path as any other malformed input: injective, and
+    # distinct from every canonical emission.
+    if (json_str == 0) {
+        _cjh_raw_tag(hasher);
+        hash_field(hasher, "", 0);
+        return 0;
+    }
     var slen = str_len(json_str);
     if (slen == 0) {
-        hasher_update(hasher, "null", 4);
+        _cjh_raw_tag(hasher);
+        hash_field(hasher, "", 0);
         return 0;
     }
     var sdata = str_data(json_str);
@@ -489,12 +882,14 @@ fn canonical_json_hash_str(json_str, hasher) {
     return 0;
 }
 
-var _cjh_tagbuf = 0;
-
+# 2.8.12 — stack, not a process global. Same reasoning as _merkle_tag: a
+# shared one-byte staging buffer between a store and a hasher read is a
+# cross-thread hazard, and this one decides whether a digest is a canonical
+# emission or a raw fallback.
 fn _cjh_raw_tag(hasher) {
-    if (_cjh_tagbuf == 0) { _cjh_tagbuf = alloc(2); }
-    store8(_cjh_tagbuf, 0);
-    hasher_update(hasher, _cjh_tagbuf, 1);
+    var tagbuf[1];
+    store8(&tagbuf, 0);
+    hasher_update(hasher, &tagbuf, 1);
     return 0;
 }
 
@@ -595,13 +990,31 @@ fn _cjh_emit(data, pos, slen, hasher) {
     if (c == 123) { return _cjh_emit_object(data, pos, slen, hasher); }
     if (c == 91)  { return _cjh_emit_array(data, pos, slen, hasher); }
     if (c == 34)  {
-        var end = _cjh_skip_string(data, pos, slen);
-        hasher_update(hasher, data + pos, end - pos);
-        return end;
+        # 2.8.12 — NORMALIZE. Through 2.8.11 the string's source bytes were
+        # hashed verbatim, escapes and all, so "A" and "\u0041" — the same
+        # logical value — produced different digests. Decode, then re-emit in
+        # minimal escaping, so the digest depends on the VALUE and not on
+        # which JSON writer produced it.
+        var sv, send = json_str_decode(data, pos, slen);
+        if (sv == 0) {
+            # The validator ran first, so this is unreachable; fall back to
+            # verbatim rather than silently emitting nothing.
+            var end = _cjh_skip_string(data, pos, slen);
+            hasher_update(hasher, data + pos, end - pos);
+            return end;
+        }
+        _cjh_emit_json_string(hasher, sv);
+        return send;
     }
-    # Scalar: emit trimmed bytes verbatim.
+    # Scalar. 2.8.12 — a NUMBER is emitted in canonical decimal form so that
+    # 1 / 1.0 / 1e0 / 1.00E+00 agree; true / false / null are single spellings
+    # already and go out verbatim.
     var scalar_end = _cjh_skip_scalar(data, pos, slen);
-    hasher_update(hasher, data + pos, scalar_end - pos);
+    if (c == 116 || c == 102 || c == 110) {
+        hasher_update(hasher, data + pos, scalar_end - pos);
+    } else {
+        _cjn_emit(hasher, data, pos, scalar_end);
+    }
     return scalar_end;
 }
 
@@ -677,11 +1090,13 @@ fn _cjh_emit_object(data, start, slen, hasher) {
         elif ((load8(data + pos) & 0xFF) == 125) { pos += 1; stop = 1; }
         elif ((load8(data + pos) & 0xFF) == 44) { pos += 1; }
         elif ((load8(data + pos) & 0xFF) == 34) {
-            var key_start = pos + 1;
-            pos = _cjh_skip_string(data, pos, slen);
-            var key_end = pos - 1;
-            var k = str_new(data + key_start, key_end - key_start);
-            pos = _cjh_skip_ws(data, pos, slen);
+            # 2.8.12 — keys are DECODED before they are sorted and emitted.
+            # Sorting raw source bytes made "\u0041" order differently from
+            # "A" and emit differently too, so two encodings of one object
+            # produced two digests.
+            var k, kend = json_str_decode(data, pos, slen);
+            if (k == 0) { return pos; }
+            pos = _cjh_skip_ws(data, kend, slen);
             if (pos < slen && (load8(data + pos) & 0xFF) == 58) { pos += 1; }
             pos = _cjh_skip_ws(data, pos, slen);
             var vs = pos;
@@ -708,9 +1123,8 @@ fn _cjh_emit_object(data, start, slen, hasher) {
         if (i > 0) { hasher_update(hasher, ",", 1); }
         var j2 = vec_get(idx, i);
         var k2 = vec_get(keys, j2);
-        hasher_update(hasher, "\"", 1);
-        hasher_update(hasher, str_data(k2), str_len(k2));
-        hasher_update(hasher, "\":", 2);
+        _cjh_emit_json_string(hasher, k2);
+        hasher_update(hasher, ":", 1);
         _cjh_emit(data, vec_get(val_starts, j2), vec_get(val_ends, j2), hasher);
         i += 1;
     }

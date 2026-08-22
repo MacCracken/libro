@@ -21,9 +21,9 @@ fn _sb_json_str_or_null(sb, s) {
 
 fn _sb_proof_entry(sb, e) {
     str_builder_add_cstr(sb, "    {\"id\":\"");
-    str_builder_add(sb, uuid_format(entry_id(e)));
+    _sb_json_escape(sb, uuid_format(entry_id(e)));
     str_builder_add_cstr(sb, "\",\"timestamp\":\"");
-    str_builder_add(sb, entry_timestamp(e));
+    _sb_json_escape(sb, entry_timestamp(e));
     str_builder_add_cstr(sb, "\",\"severity\":\"");
     str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
     str_builder_add_cstr(sb, "\",\"source\":\"");
@@ -62,6 +62,14 @@ fn _sb_proof_entry(sb, e) {
     _sb_json_escape(sb, entry_prev_hash(e));
     str_builder_add_cstr(sb, "\",\"hash\":\"");
     _sb_json_escape(sb, entry_hash(e));
+    # ⚠ 2.8.12 — hash_algorithm is EMITTED. The proof format never carried it
+    # and the parser hardcoded "sha256" (this file's own header claimed "the
+    # hash_algorithm field on entries is preserved", which was simply untrue).
+    # Harmless while the field sat outside the entry preimage; the moment
+    # 2.8.11 put it in, any entry with a different algorithm came back from a
+    # proof round trip with a DIFFERENT hash and failed verification.
+    str_builder_add_cstr(sb, "\",\"hash_algorithm\":\"");
+    _sb_json_escape(sb, entry_hash_algorithm(e));
     str_builder_add_cstr(sb, "\"}");
     return 0;
 }
@@ -131,7 +139,8 @@ fn _sb_proof_anchor(sb, a) {
 #     always null on parse.
 #   - The tree field is not serialized; verify rebuilds it from
 #     entries as part of the "tree matches" check, so this is fine.
-#   - The hash_algorithm field on entries is preserved.
+#   - The hash_algorithm field on entries is preserved (really, since
+#     2.8.12 — before that it was emitted nowhere and hardcoded on parse).
 #
 # lib/json.cyr is a flat parser; the proof shape has nested values
 # (especially per-entry `details` which can itself be a full JSON
@@ -217,54 +226,24 @@ fn _pfj_skip_value(d, p, end) {
 var _pfj_end_pos = 0;
 
 fn _pfj_parse_string(d, p, end) {
+    # ⚠ 2.8.12 — DELEGATES to json_str_decode, the library's one decoder.
+    #
+    # This was a third, independent unescape loop whose comment said "we only
+    # emit \" \\ \n \r \t \/ in _sb_json_escape". That stopped being true in
+    # 2.8.11, when _sb_json_escape gained the \u00XX form for control bytes
+    # without a C0 shorthand — and this loop's fallback is "copy the byte
+    # after the backslash as-is", so it turned \u0041 into the four literal
+    # characters u0041. A proof carrying any such byte came back CORRUPTED,
+    # and since 2.8.11 also put hash_algorithm in the preimage, corrupted
+    # meant a failed verification rather than a visible error.
+    #
+    # Writer and reader living in different files with independently
+    # maintained escape tables is the drift this release stopped tolerating:
+    # json_str_decode is now the only decoder, matched by the one escaper.
     p = _pfj_skip_ws(d, p, end);
-    if (p >= end) { _pfj_end_pos = -1; return 0; }
-    if ((load8(d + p) & 0xFF) != 34) { _pfj_end_pos = -1; return 0; }
-    p = p + 1;
-    var start = p;
-    var has_escape = 0;
-    var str_done = 0;
-    while (p < end && str_done == 0) {
-        var x = load8(d + p) & 0xFF;
-        if (x == 92) { has_escape = 1; p = p + 2; }
-        else {
-            if (x == 34) { str_done = 1; }
-            else { p = p + 1; }
-        }
-    }
-    if (p >= end) { _pfj_end_pos = -1; return 0; }
-    var raw_len = p - start;
-    var out = 0;
-    if (has_escape == 0) {
-        out = str_clone(str_new(d + start, raw_len));
-    } else {
-        # Unescape minimally — we only emit \" \\ \n \r \t \/ in _sb_json_escape.
-        var buf = alloc(raw_len);
-        var bi = 0;
-        var si = start;
-        while (si < p) {
-            var x = load8(d + si) & 0xFF;
-            if (x == 92 && si + 1 < p) {
-                var nx = load8(d + si + 1) & 0xFF;
-                # Default: copy the byte after `\` as-is (covers \" \\ \/).
-                var ec = nx;
-                if (nx == 110) { ec = 10; }   # \n
-                if (nx == 114) { ec = 13; }   # \r
-                if (nx == 116) { ec = 9; }    # \t
-                if (nx == 98)  { ec = 8; }    # \b
-                if (nx == 102) { ec = 12; }   # \f
-                store8(buf + bi, ec);
-                bi = bi + 1;
-                si = si + 2;
-            } else {
-                store8(buf + bi, x);
-                bi = bi + 1;
-                si = si + 1;
-            }
-        }
-        out = str_clone(str_new(buf, bi));
-    }
-    _pfj_end_pos = p + 1;
+    var out, np = json_str_decode(d, p, end);
+    if (out == 0) { _pfj_end_pos = 0 - 1; return 0; }
+    _pfj_end_pos = np;
     return out;
 }
 
@@ -432,9 +411,10 @@ fn _pfj_parse_tree_head(d, start, end) {
         if (a != 0 && str_len(a) > 0) { alg = a; }
     }
 
-    var sth = sth_new(root, tree_size, sig, vk, alg);
-    # sth_new uses current time for timestamp; overwrite with the parsed one.
-    sth_set_timestamp(sth, timestamp);
+    # 2.8.12 — construct WITH the parsed timestamp. sth_new stamps the current
+    # time, and since the signature now covers the timestamp, building then
+    # overwriting would leave a head whose signature never verifies.
+    var sth = sth_new_at(root, tree_size, timestamp, sig, vk, alg);
     return sth;
 }
 
@@ -504,7 +484,20 @@ fn _pfj_parse_one_entry(d, start, end) {
     entry_set_agent_id(e, agent_id);
     entry_set_prev_hash(e, prev_hash);
     entry_set_hash(e, hash);
-    entry_set_hash_algorithm(e, str_from(HASH_ALGORITHM));
+    # 2.8.12 — take the parsed value when present. Proofs written before
+    # 2.8.12 have no such key, so fall back to the default rather than
+    # rejecting them.
+    var ha_pos = _pfj_find_key_at(d, start, end, "hash_algorithm");
+    if (ha_pos >= 0) {
+        var ha = _pfj_parse_string(d, ha_pos, end);
+        if (_pfj_end_pos >= 0 && ha != 0 && str_len(ha) > 0) {
+            entry_set_hash_algorithm(e, ha);
+        } else {
+            entry_set_hash_algorithm(e, str_from(HASH_ALGORITHM));
+        }
+    } else {
+        entry_set_hash_algorithm(e, str_from(HASH_ALGORITHM));
+    }
     return e;
 }
 

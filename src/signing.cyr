@@ -58,6 +58,32 @@ fn _sig_sig_hex_len(alg) {
     return _sig_sig_bytes(alg) * 2;
 }
 
+# Decode a hex signature of exactly `want_hex_chars`, or 0 if it is absent,
+# the wrong length, or NOT VALID HEX.
+#
+# ⚠ 2.8.12 — the hex-ness check is the part 2.8.11 missed. Its guard tested
+# only the LENGTH, and sigil's hex_decode returns **0** for a non-hex
+# character rather than a short buffer. So a signature of the correct length
+# made entirely of 'z' passed the guard, decoded to 0, and was handed to
+# ed25519_verify / mldsa65_verify as a null pointer — a read of address 0 and
+# a hard crash in the verifier, reachable from proof_verify_signed with an
+# attacker-supplied proof. Length-checking a field and then not checking
+# whether it parsed is a guard that looks complete and is not.
+fn _sig_decode_checked(sig_hex, want_hex_chars) {
+    if (sig_hex == 0) { return 0; }
+    if (want_hex_chars == 0) { return 0; }
+    if (str_len(sig_hex) != want_hex_chars) {
+        sakshi_warn("signing: signature length mismatch", 34);
+        return 0;
+    }
+    var b = hex_decode_str(sig_hex);
+    if (b == 0) {
+        sakshi_warn("signing: signature is not valid hex", 35);
+        return 0;
+    }
+    return b;
+}
+
 fn signing_key_generate() {
     sakshi_info("signing: key generate", 21);
     var sk = fl_alloc(72);
@@ -415,33 +441,31 @@ fn verify_entry_signature(vk, e, es) {
     }
 
     var alg = verifying_key_algorithm(vk);
-    if (alg != SIG_ALG_HYBRID) {
-        var sig_s = entry_sig_signature(es);
-        if (sig_s == 0) { return 0; }
-        var want = _sig_sig_hex_len(alg);
-        if (want == 0) { return 0; }
-        if (str_len(sig_s) != want) {
-            sakshi_warn("signing: signature length mismatch", 34);
-            return 0;
+    if (alg == SIG_ALG_ED25519 || alg == SIG_ALG_ML_DSA_65) {
+        # 2.8.12 — length AND hex validity, in one place. See
+        # _sig_decode_checked: 2.8.11 checked only the length, and a non-hex
+        # signature decoded to a null pointer that went straight to sigil.
+        var sig_bytes = _sig_decode_checked(entry_sig_signature(es),
+          _sig_sig_hex_len(alg));
+        if (sig_bytes == 0) { return 0; }
+        if (alg == SIG_ALG_ED25519) {
+            return ed25519_verify(load64(vk), str_data(sig_ehash),
+              str_len(sig_ehash), sig_bytes);
         }
-    }
-    if (alg == SIG_ALG_ED25519) {
-        var sig_bytes = hex_decode_str(entry_sig_signature(es));
-        return ed25519_verify(load64(vk), str_data(sig_ehash), str_len(sig_ehash), sig_bytes);
-    } elif (alg == SIG_ALG_ML_DSA_65) {
-        var sig_bytes = hex_decode_str(entry_sig_signature(es));
-        if (mldsa65_verify(sig_bytes, str_data(sig_ehash), str_len(sig_ehash), load64(vk)) == 0) {
+        if (mldsa65_verify(sig_bytes, str_data(sig_ehash),
+            str_len(sig_ehash), load64(vk)) == 0) {
             return 1;
         }
         return 0;
     } elif (alg == SIG_ALG_HYBRID) {
-        # Both slots must be populated and both must verify.
-        var ed_sig_str = entry_sig_signature(es);
-        var pq_sig_str = entry_sig_signature_2(es);
-        if (ed_sig_str == 0 || pq_sig_str == 0) { return 0; }
-        if (str_len(ed_sig_str) == 0 || str_len(pq_sig_str) == 0) { return 0; }
-        var ed_sig_bytes = hex_decode_str(ed_sig_str);
-        var pq_sig_bytes = hex_decode_str(pq_sig_str);
+        # Both slots must be populated, well-formed and verify.
+        var ed_sig_bytes = _sig_decode_checked(entry_sig_signature(es),
+          _sig_sig_hex_len(SIG_ALG_ED25519));
+        if (ed_sig_bytes == 0) { return 0; }
+        var pq_sig_bytes = _sig_decode_checked(entry_sig_signature_2(es),
+          _sig_sig_hex_len(SIG_ALG_ML_DSA_65));
+        if (pq_sig_bytes == 0) { return 0; }
+        if (load64(vk) == 0 || load64(vk + 16) == 0) { return 0; }
         return sigil_verify_hybrid(str_data(sig_ehash), str_len(sig_ehash),
           ed_sig_bytes, load64(vk),
           pq_sig_bytes, load64(vk + 16),
@@ -498,31 +522,33 @@ fn verify_tree_head(vk, root_hash, sig_hex) {
     if (vk == 0 || root_hash == 0 || sig_hex == 0) { return 0; }
     if (str_len(root_hash) == 0) { return 0; }
     var alg = verifying_key_algorithm(vk);
-    if (alg != SIG_ALG_HYBRID) {
-        var want = _sig_sig_hex_len(alg);
-        if (want == 0) { return 0; }
-        if (str_len(sig_hex) != want) {
-            sakshi_warn("signing: signature length mismatch", 34);
-            return 0;
+    if (alg == SIG_ALG_ED25519 || alg == SIG_ALG_ML_DSA_65) {
+        var sig_bytes = _sig_decode_checked(sig_hex, _sig_sig_hex_len(alg));
+        if (sig_bytes == 0) { return 0; }
+        if (alg == SIG_ALG_ED25519) {
+            return ed25519_verify(load64(vk), str_data(root_hash),
+              str_len(root_hash), sig_bytes);
         }
-    }
-    if (alg == SIG_ALG_ED25519) {
-        var sig_bytes = hex_decode_str(sig_hex);
-        return ed25519_verify(load64(vk), str_data(root_hash), str_len(root_hash), sig_bytes);
-    } elif (alg == SIG_ALG_ML_DSA_65) {
-        var sig_bytes = hex_decode_str(sig_hex);
-        if (mldsa65_verify(sig_bytes, str_data(root_hash), str_len(root_hash), load64(vk)) == 0) {
+        if (mldsa65_verify(sig_bytes, str_data(root_hash),
+            str_len(root_hash), load64(vk)) == 0) {
             return 1;
         }
         return 0;
     } elif (alg == SIG_ALG_HYBRID) {
         # Split the `|`-delimited Ed25519 hex | ML-DSA-65 hex.
+        # ⚠ 2.8.12 — the HYBRID arm used to skip the 2.8.11 length guard
+        # entirely (it was written as `if (alg != SIG_ALG_HYBRID)`), so both
+        # halves reached hex_decode_str unvalidated.
         var pipe = _sig_find_pipe(sig_hex);
         if (pipe < 0) { return 0; }
-        var ed_hex = str_substr(sig_hex, 0, pipe);
-        var pq_hex = str_substr(sig_hex, pipe + 1, str_len(sig_hex));
-        var ed_bytes = hex_decode_str(ed_hex);
-        var pq_bytes = hex_decode_str(pq_hex);
+        var ed_bytes = _sig_decode_checked(str_substr(sig_hex, 0, pipe),
+          _sig_sig_hex_len(SIG_ALG_ED25519));
+        if (ed_bytes == 0) { return 0; }
+        var pq_bytes = _sig_decode_checked(
+          str_substr(sig_hex, pipe + 1, str_len(sig_hex)),
+          _sig_sig_hex_len(SIG_ALG_ML_DSA_65));
+        if (pq_bytes == 0) { return 0; }
+        if (load64(vk) == 0 || load64(vk + 16) == 0) { return 0; }
         return sigil_verify_hybrid(str_data(root_hash), str_len(root_hash),
           ed_bytes, load64(vk),
           pq_bytes, load64(vk + 16),

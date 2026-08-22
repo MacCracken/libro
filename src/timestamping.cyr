@@ -196,19 +196,36 @@ fn ts_request_to_der(r) {
     var alg_len = _der_write_sequence(alg_buf, alg_content, alg_content_len);
 
     # 3. MessageImprint SEQUENCE { AlgId, OCTET STRING hash }
+    #
+    # ⚠ 2.8.12 — VALIDATE the caller's hash before sizing anything from it.
+    # `hash_tlv` was a fixed alloc(48) while `hash_bytes_len` came straight
+    # from str_len(hash_hex)/2, so a request built over a SHA-512 digest —
+    # 128 hex chars, 64 bytes, 66 with the TLV header — wrote 18 bytes past a
+    # 48-byte heap allocation. And hex_decode_str returns 0 for a non-hex
+    # character, so a malformed hash produced a memcpy FROM address 0.
+    # ts_request_new takes the hash from its caller, so both are reachable
+    # without any libro-internal misuse.
     var hash_hex = load64(r + 8);
+    if (hash_hex == 0) { return 0; }
+    var hash_hex_len = str_len(hash_hex);
+    if ((hash_hex_len & 1) == 1) { return 0; }
+    var hash_bytes_len = hash_hex_len / 2;
+    if (hash_bytes_len == 0 || hash_bytes_len > 64) { return 0; }
+    # The digest must be the size the declared algorithm produces, or the
+    # messageImprint claims one thing and carries another.
+    if (load64(r) == TS_SHA256 && hash_bytes_len != 32) { return 0; }
     var hash_bytes = hex_decode_str(hash_hex);
-    var hash_bytes_len = str_len(hash_hex) / 2;
+    if (hash_bytes == 0) { return 0; }
 
-    var hash_tlv = alloc(48);
+    var hash_tlv = alloc(hash_bytes_len + 16);
     var hash_tlv_len = _der_write_tlv(hash_tlv, DER_OCTET_STRING, hash_bytes, hash_bytes_len);
 
-    var mi_content = alloc(96);
+    var mi_content = alloc(hash_bytes_len + 96);
     memcpy(mi_content, alg_buf, alg_len);
     memcpy(mi_content + alg_len, hash_tlv, hash_tlv_len);
     var mi_content_len = alg_len + hash_tlv_len;
 
-    var mi_buf = alloc(128);
+    var mi_buf = alloc(hash_bytes_len + 128);
     var mi_len = _der_write_sequence(mi_buf, mi_content, mi_content_len);
 
     # 4. Build body = version + messageImprint [+ nonce] [+ certReq]

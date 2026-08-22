@@ -1006,6 +1006,142 @@ fn test_canonical_json_emits_ascending_key_order() {
       "three-key canonical form is ascending, exact bytes");
 }
 
+# ── Canonical normalization (2.8.12) ──
+#
+# ADR 0007 has always claimed "the same logical value produces the same hash
+# regardless of incidental formatting" and cited RFC 8785. Through 2.8.11 it
+# did not: strings were hashed with their escapes and numbers with their
+# source spelling, so one value had many digests.
+fn _t_cj_same(a, b) {
+    if (str_eq(_t_cjh(a), _t_cjh(b)) == 1) { return 1; }
+    return 0;
+}
+
+fn test_canonical_string_escapes_normalized() {
+    assert(_t_cj_same("{\"a\":\"A\"}", "{\"a\":\"\\u0041\"}") == 1,
+      "a string value and its \\u escape hash the same");
+    assert(_t_cj_same("{\"A\":1}", "{\"\\u0041\":1}") == 1,
+      "an object KEY and its \\u escape hash the same");
+    assert(_t_cj_same("{\"a\":\"x/y\"}", "{\"a\":\"x\\/y\"}") == 1,
+      "the optional solidus escape is normalized away");
+    assert(_t_cj_same("{\"a\":\"A\"}", "{\"a\":\"B\"}") == 0,
+      "distinct string values still differ");
+    # A control byte must survive normalization as an escape, not vanish.
+    assert(_t_cj_same("{\"a\":\"x\\ny\"}", "{\"a\":\"x\\u000ay\"}") == 1,
+      "\\n and \\u000a are the same character");
+    assert(_t_cj_same("{\"a\":\"x\\ny\"}", "{\"a\":\"xy\"}") == 0,
+      "a control character is not dropped");
+}
+
+fn test_canonical_numbers_normalized() {
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":1.0}") == 1, "1 == 1.0");
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":1e0}") == 1, "1 == 1e0");
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":1.00E+00}") == 1, "1 == 1.00E+00");
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":10e-1}") == 1, "1 == 10e-1");
+    assert(_t_cj_same("{\"a\":0.1}", "{\"a\":1e-1}") == 1, "0.1 == 1e-1");
+    assert(_t_cj_same("{\"a\":100}", "{\"a\":1e2}") == 1, "100 == 1e2");
+    assert(_t_cj_same("{\"a\":0}", "{\"a\":-0}") == 1, "0 == -0");
+    assert(_t_cj_same("{\"a\":0}", "{\"a\":0.0}") == 1, "0 == 0.0");
+    assert(_t_cj_same("{\"a\":1.5}", "{\"a\":15e-1}") == 1, "1.5 == 15e-1");
+    assert(_t_cj_same("{\"a\":-2.5}", "{\"a\":-25e-1}") == 1, "-2.5 == -25e-1");
+    assert(_t_cj_same("{\"a\":1e50}",
+        "{\"a\":100000000000000000000000000000000000000000000000000}") == 1,
+      "1e50 == its 51-digit expansion");
+
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":2}") == 0, "1 != 2");
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":1.5}") == 0, "1 != 1.5");
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":-1}") == 0, "1 != -1");
+    assert(_t_cj_same("{\"a\":0.1}", "{\"a\":0.10001}") == 0, "0.1 != 0.10001");
+    # Type distinctions must survive — this was the 1.x defect ADR 0007 fixed.
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":\"1\"}") == 0,
+      "a number and the string of it still differ");
+    assert(_t_cj_same("{\"a\":1}", "{\"a\":true}") == 0, "1 != true");
+}
+
+# A number too extreme to expand exactly must be rejected by the validator and
+# take the injective raw fallback, not crash and not silently truncate.
+fn test_canonical_extreme_exponent_rejected() {
+    assert(canonical_json_is_valid(str_from("{\"a\":1e100000}")) == 0,
+      "an unexpandable exponent is rejected");
+    assert(canonical_json_is_valid(str_from("{\"a\":1e50}")) == 1,
+      "a large but expandable exponent is accepted");
+    var h = hasher_new();
+    canonical_json_hash_str(str_from("{\"a\":1e100000}"), h);
+    assert(str_len(hasher_finalize_hex(h)) == 64,
+      "an extreme exponent still yields a digest");
+    assert(_t_cj_same("{\"a\":1e100000}", "{\"a\":1e100001}") == 0,
+      "distinct extreme numbers stay distinct via the raw fallback");
+}
+
+# Non-BMP characters: an escaped surrogate PAIR and the literal UTF-8 must
+# hash identically, and a LONE surrogate must be rejected by the validator —
+# because json_str_decode rejects it, and a validator that accepted what the
+# decoder refuses would send the document down the emitter's verbatim
+# fallback. Validator/decoder disagreement is the one thing the
+# validate-then-emit design exists to prevent.
+fn test_canonical_surrogate_pairs() {
+    # {"a":"<U+1F600>"} with the emoji as real UTF-8 bytes.
+    var b = alloc(32);
+    store8(b + 0, 123); store8(b + 1, 34); store8(b + 2, 97);
+    store8(b + 3, 34);  store8(b + 4, 58); store8(b + 5, 34);
+    store8(b + 6, 0xF0); store8(b + 7, 0x9F);
+    store8(b + 8, 0x98); store8(b + 9, 0x80);
+    store8(b + 10, 34); store8(b + 11, 125);
+    var lit = str_new(b, 12);
+
+    var h1 = hasher_new();
+    canonical_json_hash_str(lit, h1);
+    var h2 = hasher_new();
+    canonical_json_hash_str(str_from("{\"a\":\"\\uD83D\\uDE00\"}"), h2);
+    assert(str_eq(hasher_finalize_hex(h1), hasher_finalize_hex(h2)) == 1,
+      "an escaped surrogate pair hashes as the literal UTF-8 (not CESU-8)");
+
+    assert(canonical_json_is_valid(str_from("{\"a\":\"\\uD83D\\uDE00\"}")) == 1,
+      "a well-formed surrogate pair is valid");
+    assert(canonical_json_is_valid(str_from("{\"a\":\"\\uD83D\"}")) == 0,
+      "a lone HIGH surrogate is rejected");
+    assert(canonical_json_is_valid(str_from("{\"a\":\"\\uDE00\"}")) == 0,
+      "a lone LOW surrogate is rejected");
+    assert(canonical_json_is_valid(str_from("{\"a\":\"\\uD83Dx\"}")) == 0,
+      "a high surrogate not followed by an escape is rejected");
+}
+
+# The canonical hasher must not allocate a hundred times its input.
+#
+# alloc() is the BUMP allocator — never reclaimed — and entry_compute_hash
+# runs on every verify of every entry, so an amplification factor here is a
+# permanent per-verify memory cost. 2.8.12's number normalizer originally
+# took a fixed 1032-byte buffer per NUMBER, measured at 1.19 MB of bump for a
+# 10 KB details (110x). Right-sizing it brought that to ~174 KB (16x).
+fn test_canonical_hash_allocation_bounded() {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{");
+    var i = 0;
+    while (i < 500) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"k");
+        str_builder_add(sb, str_from_int(i));
+        str_builder_add_cstr(sb, "\":");
+        str_builder_add(sb, str_from_int(i));
+        i += 1;
+    }
+    str_builder_add_cstr(sb, "}");
+    var det = str_builder_build(sb);
+    var n = str_len(det);
+
+    var before = alloc(1);
+    var h = hasher_new();
+    canonical_json_hash_str(det, h);
+    hasher_finalize_hex(h);
+    var used = alloc(1) - before;
+
+    # 40x the input is generous headroom over the ~16x measured, and still
+    # catches a return to the 110x regime.
+    assert(used < n * 40,
+      "canonical hashing allocates well under 40x the details size");
+    assert(used > 0, "the measurement is not vacuous");
+}
+
 fn test_canonical_json_validator() {
     assert(canonical_json_is_valid(str_from("{\"a\":1}")) == 1, "valid object");
     assert(canonical_json_is_valid(str_from("[1,2,3]")) == 1, "valid array");
@@ -1327,6 +1463,35 @@ fn test_filestore_agent_id_not_swallowed() {
     var b2 = _t_fs_roundtrip(e2);
     assert(str_eq(entry_agent_id(b2), str_from("nine")) == 1,
       "agent_id 'nine' survives too");
+
+    # 2.8.12 — an agent literally NAMED "null" must survive too. Only the
+    # bare JSON literal means absent, and libro's own writer never emits it.
+    var e3 = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    entry_set_agent_id(e3, str_from("null"));
+    entry_set_hash(e3, entry_compute_hash(e3));
+    var b3 = _t_fs_roundtrip(e3);
+    assert(b3 != 0, "agent_id \"null\" record reparses");
+    assert(entry_agent_id(b3) != 0,
+      "an agent NAMED null is not read as absent");
+    assert(str_eq(entry_agent_id(b3), str_from("null")) == 1,
+      "agent_id \"null\" survives verbatim");
+    assert(entry_verify(b3) == 1, "agent_id \"null\" entry verifies");
+
+    # A foreign producer's bare literal still means absent.
+    var bsb = str_builder_new();
+    str_builder_add_cstr(bsb, "{\"id\":\"41414141\"");
+    str_builder_add_cstr(bsb, ",\"timestamp\":\"2026-01-01T00:00:00Z\"");
+    str_builder_add_cstr(bsb, ",\"severity\":\"Info\"");
+    str_builder_add_cstr(bsb, ",\"source\":\"s\",\"action\":\"a\"");
+    str_builder_add_cstr(bsb, ",\"details\":\"{}\"");
+    str_builder_add_cstr(bsb, ",\"agent_id\":null");
+    str_builder_add_cstr(bsb, ",\"prev_hash\":\"\",\"hash\":\"ff\"");
+    str_builder_add_cstr(bsb, ",\"hash_algorithm\":\"sha256\"}");
+    var bare = str_builder_build(bsb);
+    var bp = _filestore_parse_entry(bare);
+    assert(bp != 0, "bare-null agent_id record reparses");
+    assert(entry_agent_id(bp) == 0, "a bare JSON null agent_id is absent");
 }
 
 # A record missing timestamp or prev_hash stored a NULL Str and every later
@@ -1391,6 +1556,31 @@ fn test_libro_is_error_discriminates() {
     assert(libro_is_error(vec_new()) == 0, "a vec is not an error");
     assert(libro_is_error(0) == 0, "null is not an error");
     assert(libro_is_ok(0) == 0, "null is not ok either");
+
+    # 2.8.12 — the predicate must be safe on the SMALL INTEGERS the
+    # count-returning verify APIs hand back on success. Before the guard,
+    # libro_is_error(5) dereferenced address 5.
+    assert(libro_is_error(1) == 0, "a count of 1 is not an error");
+    assert(libro_is_error(5) == 0, "a count of 5 is not an error");
+    assert(libro_is_error(65535) == 0, "a near-threshold count is not an error");
+    assert(libro_is_error(0 - 1) == 0, "a negative sentinel is not an error");
+    assert(libro_is_error(err + 1) == 0, "a misaligned pointer is not an error");
+
+    # And the documented usage on a real count-returning API must not crash.
+    sys_unlink("/tmp/libro_cnt_2812.jsonl");
+    var fsc = filestore_open(str_from("/tmp/libro_cnt_2812.jsonl"));
+    var c = chain_new();
+    var det2 = str_from("{}");
+    var k = 0;
+    while (k < 3) {
+        var ce = chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det2);
+        filestore_append(fsc, ce);
+        k += 1;
+    }
+    var sv = filestore_verify_streamed(fsc, 10);
+    assert(libro_is_error(sv) == 0, "a successful streamed verify is not an error");
+    assert(sv == 3, "streamed verify counted all three entries");
+    sys_unlink("/tmp/libro_cnt_2812.jsonl");
 }
 
 # entry_new_validated returns an error struct on rejection — the same
@@ -1630,6 +1820,228 @@ fn test_chain_import_requires_header() {
 
     sys_unlink("/tmp/libro_hdr_2811.jsonl");
     sys_unlink("/tmp/libro_nohdr_2811.jsonl");
+}
+
+# ── Tree-head signature coverage (2.8.12) ──
+#
+# Through 2.8.11 sign_tree_head signed the ROOT ALONE, so tree_size,
+# timestamp and algorithm rode along unauthenticated. The timestamp was the
+# sharp one: no verifier ever looked at it, so a holder of a valid proof could
+# restate when the log was attested and it still verified.
+fn test_tree_head_signature_covers_whole_head() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 4) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i += 1;
+    }
+    var sk = signing_key_generate();
+    var vk = verifying_key_from_signing(sk);
+    var ip = proof_build_signed(c, sk);
+    var sth = iproof_tree_head(ip);
+
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 1,
+      "an untampered signed head verifies");
+
+    # Tamper the TIMESTAMP only. Root, size and signature untouched.
+    var real_ts = sth_timestamp(sth);
+    sth_set_timestamp(sth, str_from("1999-01-01T00:00:00Z"));
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 0,
+      "restating the tree-head timestamp breaks the signature");
+    sth_set_timestamp(sth, real_ts);
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 1,
+      "restoring the timestamp restores validity");
+
+    # Tamper the TREE SIZE only.
+    var real_size = sth_tree_size(sth);
+    sth_set_tree_size(sth, real_size + 1);
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 0,
+      "restating the tree size breaks the signature");
+    sth_set_tree_size(sth, real_size);
+
+    # Tamper the ALGORITHM name only.
+    var real_alg = sth_algorithm(sth);
+    sth_set_algorithm(sth, str_from("ML-DSA-65"));
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 0,
+      "restating the algorithm breaks the signature");
+    sth_set_algorithm(sth, real_alg);
+
+    # And the root, which was already covered.
+    var real_root = sth_root(sth);
+    sth_set_root(sth, str_from("00"));
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 0,
+      "restating the root breaks the signature");
+    sth_set_root(sth, real_root);
+    assert(pv_tree_head_valid(proof_verify_signed(ip, vk)) == 1,
+      "head is intact again");
+}
+
+# tree_head_digest must be injective over its four fields — a length prefix on
+# each is what stops (root="ab", ts="c") colliding with (root="a", ts="bc").
+fn test_tree_head_digest_is_unambiguous() {
+    # The boundary that can actually shift is between the two ADJACENT
+    # variable-length fields, timestamp and algorithm. Root is separated from
+    # timestamp by the fixed-width 8-byte size, so a shift there cannot
+    # collide and testing it proves nothing about the length prefixes.
+    var a = tree_head_digest(str_from("r"), 1, str_from("ab"), str_from("X"));
+    var b = tree_head_digest(str_from("r"), 1, str_from("a"), str_from("bX"));
+    assert(str_eq(a, b) == 0,
+      "timestamp/algorithm boundary is unambiguous (length-prefixed)");
+    var a2 = tree_head_digest(str_from("ab"), 1, str_from("c"), str_from("X"));
+    var b2 = tree_head_digest(str_from("a"), 1, str_from("bc"), str_from("X"));
+    assert(str_eq(a2, b2) == 0, "root/timestamp boundary is unambiguous");
+    var c1 = tree_head_digest(str_from("r"), 1, str_from("t"), str_from("X"));
+    var c2 = tree_head_digest(str_from("r"), 2, str_from("t"), str_from("X"));
+    assert(str_eq(c1, c2) == 0, "tree size changes the digest");
+    var c3 = tree_head_digest(str_from("r"), 1, str_from("t"), 0);
+    assert(str_eq(c1, c3) == 0, "absent algorithm differs from a present one");
+}
+
+# A signed proof must survive JSON round-trip with its signature intact —
+# which only works if the parser rebuilds the head with the SIGNED timestamp.
+fn test_signed_proof_json_roundtrip_verifies() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 3) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i += 1;
+    }
+    var sk = signing_key_generate();
+    var vk = verifying_key_from_signing(sk);
+    var ip = proof_build_signed(c, sk);
+    var j = proof_to_json(ip);
+    var ip2 = proof_from_json(j);
+    assert(ip2 != 0, "signed proof reparses");
+    var sth2 = iproof_tree_head(ip2);
+    assert(str_eq(sth_timestamp(sth2), sth_timestamp(iproof_tree_head(ip))) == 1,
+      "timestamp survives the round trip");
+    assert(pv_tree_head_valid(proof_verify_signed(ip2, vk)) == 1,
+      "a signed head still verifies after a JSON round trip");
+    # And re-emitting it does not crash (the 2.8.11 algorithm-slot defect).
+    assert(str_len(proof_to_json(ip2)) > 0, "signed proof re-emits");
+}
+
+# ── Crash-class regressions (2.8.12) ──
+#
+# hex_decode returns 0 for a non-hex character, so the 2.8.11 guard — which
+# checked only the LENGTH — let a correct-length non-hex signature decode to a
+# null pointer that went straight to ed25519_verify / mldsa65_verify.
+fn _t_hexish(n, c) {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < n) { str_builder_add_cstr(sb, c); i += 1; }
+    return str_builder_build(sb);
+}
+
+fn test_non_hex_signature_rejected() {
+    var sk = signing_key_generate();
+    var vk = verifying_key_from_signing(sk);
+    var root = str_from("0123456789abcdef");
+    # 128 hex chars is the correct Ed25519 signature length; 'z' is not hex.
+    assert(verify_tree_head(vk, root, _t_hexish(128, "z")) == 0,
+      "correct-length non-hex tree-head signature rejected, not dereferenced");
+    assert(verify_tree_head(vk, root, _t_hexish(127, "a")) == 0,
+      "odd-length signature rejected");
+    assert(verify_tree_head(vk, root, _t_hexish(128, "a")) == 0,
+      "well-formed but wrong signature rejected");
+    var good = sign_tree_head(sk, root);
+    assert(verify_tree_head(vk, root, good) == 1, "a real signature still verifies");
+
+    # ML-DSA too — a different sigil entry point, same null-pointer hazard.
+    var sk2 = signing_key_generate_mldsa();
+    var vk2 = verifying_key_from_signing(sk2);
+    assert(verify_tree_head(vk2, root, _t_hexish(6544, "z")) == 0,
+      "correct-length non-hex ML-DSA signature rejected, not dereferenced");
+}
+
+# Every JSONL field must survive a quote, not just the four 2.8.11 escaped.
+fn test_filestore_all_fields_escaped() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    entry_set_timestamp(e, str_from("ts\"x"));
+    entry_set_prev_hash(e, str_from("pv\"x"));
+    entry_set_hash_algorithm(e, str_from("alg\"x"));
+    entry_set_hash(e, entry_compute_hash(e));
+    # A quote in the hash itself, set after the fact, must still round-trip.
+    var back = _t_fs_roundtrip(e);
+    assert(back != 0, "record with quotes in timestamp/prev_hash/alg reparses");
+    assert(str_eq(entry_timestamp(back), str_from("ts\"x")) == 1,
+      "quoted timestamp survives");
+    assert(str_eq(entry_prev_hash(back), str_from("pv\"x")) == 1,
+      "quoted prev_hash survives");
+    assert(str_eq(entry_hash_algorithm(back), str_from("alg\"x")) == 1,
+      "quoted hash_algorithm survives");
+    assert(entry_verify(back) == 1, "the reloaded entry still verifies");
+
+    var e2 = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    entry_set_hash(e2, str_from("hh\"x"));
+    var b2 = _t_fs_roundtrip(e2);
+    assert(b2 != 0, "record with a quoted hash reparses");
+    assert(str_eq(entry_hash(b2), str_from("hh\"x")) == 1,
+      "quoted hash survives verbatim");
+}
+
+fn test_non_hex_entry_signature_rejected() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    var sk = signing_key_generate();
+    var vk = verifying_key_from_signing(sk);
+    var es = sign_entry(sk, e);
+    assert(verify_entry_signature(vk, e, es) == 1, "a real entry signature verifies");
+    entry_sig_set_signature(es, _t_hexish(128, "z"));
+    assert(verify_entry_signature(vk, e, es) == 0,
+      "correct-length non-hex entry signature rejected, not dereferenced");
+    entry_sig_set_signature(es, str_from(""));
+    assert(verify_entry_signature(vk, e, es) == 0, "empty entry signature rejected");
+}
+
+# The HYBRID arm skipped the 2.8.11 length guard entirely.
+fn test_hybrid_signature_validated() {
+    var sk = signing_key_generate_hybrid();
+    var vk = verifying_key_from_signing(sk);
+    var root = str_from("0123456789abcdef");
+    var good = sign_tree_head(sk, root);
+    assert(verify_tree_head(vk, root, good) == 1, "a real hybrid signature verifies");
+    assert(verify_tree_head(vk, root, str_from("zz|zz")) == 0,
+      "short non-hex hybrid halves rejected");
+    assert(verify_tree_head(vk, root, str_from("nopipehere")) == 0,
+      "hybrid signature with no delimiter rejected");
+    var sb = str_builder_new();
+    str_builder_add(sb, _t_hexish(128, "z"));
+    str_builder_add_cstr(sb, "|");
+    str_builder_add(sb, _t_hexish(6544, "z"));
+    assert(verify_tree_head(vk, root, str_builder_build(sb)) == 0,
+      "correct-length non-hex hybrid halves rejected");
+}
+
+# Front-truncation: deleting entries from the START of a stored log left a vec
+# where every entry self-hashed and every surviving link matched, so it
+# verified completely clean.
+fn test_front_truncation_detected() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 5) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i += 1;
+    }
+    var full = chain_entries(c);
+    assert(verify_chain(full, 0) == 0, "the intact chain verifies");
+
+    # Drop the first two entries, exactly as an attacker trimming a log would.
+    var trimmed = vec_new();
+    var j = 2;
+    while (j < vec_len(full)) { vec_push(trimmed, vec_get(full, j)); j += 1; }
+    assert(libro_is_error(verify_chain(trimmed, 0)) == 1,
+      "a front-truncated chain is rejected");
+
+    # A genuine mid-chain segment is still verifiable when the caller says so.
+    var first_kept = vec_get(trimmed, 0);
+    assert(verify_chain_from(trimmed, 2, entry_prev_hash(first_kept)) == 0,
+      "an explicit mid-chain segment still verifies");
 }
 
 fn test_merkle_consistency() {
@@ -3436,6 +3848,156 @@ fn _ps_thread_body(arg) {
     return 0;
 }
 
+# ── Concurrent-hashing regression (2.8.12) ──
+#
+# hash_field, _merkle_tag and _cjh_raw_tag each stage a few bytes into a
+# buffer and then have the hasher read it back. While those buffers were
+# process-global `alloc()`s, two threads hashing at the same time interleaved
+# one's store with the other's read — a wrong digest, silently, presenting as
+# a false integrity violation with no crash to blame. 2.8.11 fixed hash_field
+# and reintroduced the pattern in _merkle_tag / _cjh_raw_tag; 2.8.12 moved all
+# three to stack slots. Nothing single-threaded can catch a regression here.
+var _hash_thr_ok = 0;
+var _hash_thr_done = 0;
+var _hash_thr_expect_entry = 0;
+var _hash_thr_expect_root = 0;
+var _hash_thr_expect_mroot = 0;
+
+# Four copies of the same deterministic entry — enough depth that merkle_build
+# tags both leaves (0x00) and internal nodes (0x01).
+fn _thr_four_entries(e) {
+    var v = vec_new();
+    vec_push(v, e); vec_push(v, e); vec_push(v, e); vec_push(v, e);
+    return v;
+}
+
+fn _hash_thr_body(arg) {
+    var ok = 1;
+    var i = 0;
+    while (i < 300) {
+        var e = entry_new_fixed_for_thread_test();
+        if (str_eq(entry_compute_hash(e), _hash_thr_expect_entry) == 0) { ok = 0; }
+        # A FOUR-leaf tree, deliberately: it calls _merkle_tag with 0x00 for
+        # each leaf and 0x01 for each internal node, so the two threads write
+        # DIFFERENT tag bytes into the shared buffer. A one-leaf tree only ever
+        # writes 0x00, and two threads writing the same byte race harmlessly —
+        # which is exactly why the first version of this test passed against a
+        # restored global.
+        var t = merkle_build(_thr_four_entries(e));
+        if (str_eq(merkle_tree_root(t), _hash_thr_expect_mroot) == 0) { ok = 0; }
+        var h = hasher_new();
+        canonical_json_hash_str(str_from("{\"a\":1 JUNK}"), h);
+        if (str_eq(hasher_finalize_hex(h), _hash_thr_expect_root) == 0) { ok = 0; }
+        i += 1;
+    }
+    _hash_thr_ok = ok;
+    _hash_thr_done = 1;
+    return 0;
+}
+
+# A deterministic entry: same uuid, timestamp and fields every call, so its
+# hash is a fixed value both threads can agree on.
+fn entry_new_fixed_for_thread_test() {
+    var e = fl_alloc(88);
+    memset(e, 0, 16);
+    store8(e, 0x5A);
+    entry_set_timestamp(e, str_from("2026-01-01T00:00:00Z"));
+    entry_set_severity(e, SEV_INFO);
+    entry_set_source(e, str_from("thr"));
+    entry_set_action(e, str_from("act"));
+    entry_set_details(e, str_from("{\"k\":\"v\",\"n\":12}"));
+    entry_set_agent_id(e, 0);
+    entry_set_prev_hash(e, str_from(""));
+    entry_set_hash_algorithm(e, str_from(HASH_ALGORITHM));
+    entry_set_hash(e, entry_compute_hash(e));
+    return e;
+}
+
+# A targeted contention test for the one-byte staging buffers.
+#
+# The broad test below drives entry/merkle/canonical hashing together and
+# reliably catches a shared 8-byte hash_field buffer, but NOT a shared 1-byte
+# tag buffer: the window between the store and the hasher's read is a few
+# instructions, and it is only observable when the two threads write DIFFERENT
+# bytes. So this hammers exactly that: the worker tags 0x01 forever while the
+# main thread tags 0x00 forever, both in a tight loop with no other work.
+var _tagrace_bad = 0;
+var _tagrace_done = 0;
+var _tagrace_expect_1 = 0;
+var _tagrace_expect_0 = 0;
+
+fn _tagrace_one(tag) {
+    var h = hasher_new();
+    _merkle_tag(h, tag);
+    hasher_update(h, "x", 1);
+    return hasher_finalize_hex(h);
+}
+
+fn _tagrace_body(arg) {
+    var i = 0;
+    while (i < 30000) {
+        if (str_eq(_tagrace_one(1), _tagrace_expect_1) == 0) { _tagrace_bad = 1; }
+        i += 1;
+    }
+    _tagrace_done = 1;
+    return 0;
+}
+
+fn test_merkle_tag_buffer_is_not_shared() {
+    _tagrace_expect_0 = _tagrace_one(0);
+    _tagrace_expect_1 = _tagrace_one(1);
+    assert(str_eq(_tagrace_expect_0, _tagrace_expect_1) == 0,
+      "tag 0x00 and 0x01 give different digests (test is not vacuous)");
+
+    _tagrace_bad = 0;
+    _tagrace_done = 0;
+    thread_create(&_tagrace_body, 0);
+    var i = 0;
+    while (i < 30000) {
+        if (str_eq(_tagrace_one(0), _tagrace_expect_0) == 0) { _tagrace_bad = 1; }
+        i += 1;
+    }
+    var spins = 0;
+    while (_tagrace_done == 0 && spins < 500) { sleep_ms(10); spins += 1; }
+    assert(_tagrace_done == 1, "tag-race worker finished");
+    assert(_tagrace_bad == 0,
+      "the merkle tag byte is not staged in shared memory");
+}
+
+fn test_concurrent_hashing_is_consistent() {
+    var ref = entry_new_fixed_for_thread_test();
+    _hash_thr_expect_entry = entry_compute_hash(ref);
+    var rh = hasher_new();
+    canonical_json_hash_str(str_from("{\"a\":1 JUNK}"), rh);
+    _hash_thr_expect_root = hasher_finalize_hex(rh);
+    _hash_thr_expect_mroot = merkle_tree_root(merkle_build(_thr_four_entries(ref)));
+
+    _hash_thr_ok = 0;
+    _hash_thr_done = 0;
+    thread_create(&_hash_thr_body, 0);
+
+    # Hash the same things on THIS thread while the worker hashes on its own.
+    var main_ok = 1;
+    var i = 0;
+    while (i < 300) {
+        var e = entry_new_fixed_for_thread_test();
+        if (str_eq(entry_compute_hash(e), _hash_thr_expect_entry) == 0) { main_ok = 0; }
+        var t = merkle_build(_thr_four_entries(e));
+        if (str_eq(merkle_tree_root(t), _hash_thr_expect_mroot) == 0) { main_ok = 0; }
+        var h = hasher_new();
+        canonical_json_hash_str(str_from("{\"a\":1 JUNK}"), h);
+        if (str_eq(hasher_finalize_hex(h), _hash_thr_expect_root) == 0) { main_ok = 0; }
+        i += 1;
+    }
+    assert(main_ok == 1, "main thread hashes consistently under concurrency");
+
+    var spins = 0;
+    while (_hash_thr_done == 0 && spins < 200) { sleep_ms(10); spins += 1; }
+    assert(_hash_thr_done == 1, "hashing worker finished");
+    assert(_hash_thr_ok == 1,
+      "worker thread computes the same digests as the main thread");
+}
+
 fn test_patrastore_read_from_another_thread() {
     sys_unlink("/tmp/libro_test_ps_thr.patra");
     var ps = patrastore_open(str_from("/tmp/libro_test_ps_thr.patra"));
@@ -3990,6 +4552,11 @@ fn main() {
     test_canonical_json_valid_unchanged();
     test_canonical_json_many_keys_order_independent();
     test_canonical_json_emits_ascending_key_order();
+    test_canonical_string_escapes_normalized();
+    test_canonical_numbers_normalized();
+    test_canonical_extreme_exponent_rejected();
+    test_canonical_surrogate_pairs();
+    test_canonical_hash_allocation_bounded();
     test_canonical_json_validator();
     test_canonical_json_depth_cap();
     test_entry_malformed_details_still_tamper_evident();
@@ -4016,6 +4583,14 @@ fn main() {
     test_filestore_empty_is_still_success();
     test_streaming_chain_has_head_hash();
     test_patrastore_by_source_is_bound();
+    test_tree_head_signature_covers_whole_head();
+    test_tree_head_digest_is_unambiguous();
+    test_signed_proof_json_roundtrip_verifies();
+    test_non_hex_signature_rejected();
+    test_non_hex_entry_signature_rejected();
+    test_filestore_all_fields_escaped();
+    test_hybrid_signature_validated();
+    test_front_truncation_detected();
     test_merkle_consistency();
     test_merkle_consistency_same_size();
 
@@ -4134,6 +4709,8 @@ fn main() {
 
     test_group("PatraStore");
     test_patrastore_open_close();
+    test_merkle_tag_buffer_is_not_shared();
+    test_concurrent_hashing_is_consistent();
     test_patrastore_read_from_another_thread();
     test_patrastore_append_load();
     test_patrastore_rejects_overlong_field();

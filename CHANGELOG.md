@@ -5,6 +5,274 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.12] - 2026-08-22 — round-2 sweep: 33 more defects, and the canonical form finally means what ADR 0007 always claimed
+
+**751** assertions green (**763** with `tpm`), up from 661. Binary 1,072,048 →
+**1,100,728 B** (1,123,512 B with `tpm`), DCE build. **Zero build warnings**
+across all five targets. `fn_table 2744 / 32768`, `identifiers 73723 / 524288`,
+`var_table 1048 / 8192`.
+
+⚠️ **BREAKING, again — and deliberately the LAST time.** 2.8.11 changed the
+entry preimage; 2.8.12 changes it once more and changes the tree-head signature
+too. This is a considered choice, not an accident: no consumer had picked up
+2.8.11 yet, so the cost of breaking is momentarily zero, and shipping the
+remaining format work now is strictly better than a third break later. After
+this release the canonical form and the signature cover everything they claim
+to. Re-export and re-anchor before upgrading a live audit trail.
+
+### Where this came from
+
+A second P(-1) sweep, aimed at what round 1 could not have covered: **the code
+2.8.11 itself introduced**, the modules round 1's own completeness critic
+flagged as unexamined, and incomplete migrations. 33 findings filed, **28
+confirmed** under adversarial verification. Five more were found by hand before
+the sweep reported, and five of the sweep's own filings came back *refuted*
+because they described defects already fixed while it ran.
+
+⭐ **Most of what this release fixes was introduced by the previous one.** That
+is the finding worth carrying forward: a release that repairs 26 defects at
+once is itself a large, unreviewed change, and reviewing it found a
+comparable number again. Full report:
+[`docs/audit/2026-08-22-audit-2.md`](docs/audit/2026-08-22-audit-2.md).
+
+### Fixed — canonical JSON now normalizes strings and numbers
+
+ADR 0007 has claimed since 2.0 that canonical means *"the same logical value
+produces the same hash regardless of incidental formatting"*, citing RFC 8785.
+It did not. Measured on 2.8.11:
+
+```
+{"a":"A"}   vs  {"a":"A"}    different digests
+{"a":1}     vs  {"a":1.0}         different digests
+{"a":1}     vs  {"a":1e0}         different digests
+```
+
+Strings were hashed with their escapes intact and numbers with their source
+spelling, so one logical value had many digests. A consumer that re-serialized
+`details` through any other JSON library got a different entry hash for content
+it considered unchanged. (This direction is *safe* — non-normalization, not
+collision — but it is a weaker equivalence than the word implies.)
+
+- **Strings** are decoded and re-emitted in RFC 8785 §3.2.2.2 minimal escaping,
+  for values *and* for object keys — which are now also SORTED by their decoded
+  form, so `"A"` and `"A"` order together as well as emit together.
+- **Numbers** are emitted in an exact plain decimal: no exponent, no leading
+  zeros, no trailing fractional zeros, no `-0`. `1`, `1.0`, `1e0`, `1.00E+00`
+  and `10e-1` all agree, and `1e50` agrees with its 51-digit expansion.
+  Computed with **digit-string arithmetic only** — no float parsing and no
+  shortest-round-trip formatter, so it is exact and carries none of the
+  accident surface a Ryu implementation in Cyrius would.
+  ⚠ This deviates from RFC 8785, which mandates ECMAScript `Number::toString`.
+  libro's form is exact where JCS's is shortest; they agree on every value
+  whose decimal expansion is short. Recorded in ADR 0007.
+- **Non-BMP characters**: an escaped surrogate pair now decodes to real UTF-8.
+  It previously encoded each half separately — CESU-8, which no other JSON
+  reader produces — so a document hashed differently depending on whether its
+  producer escaped emoji. A **lone** surrogate is rejected.
+- Numbers too extreme to expand (`1e100000`) are rejected by the validator and
+  take the injective raw fallback, so the normal form is always bounded and
+  there is no cliff where two spellings of one value straddle a cap.
+
+### Fixed — an empty `details` collided with the literal `null`
+
+`canonical_json_hash_str` short-circuited an empty document to the four bytes
+`null` — which is also exactly what the canonicaliser emits for the valid JSON
+document `null`. So `details=""` and `details="null"` produced the **identical
+preimage**: a collision between two distinct stored records, in the one branch
+that took a shortcut past the canonicaliser 2.8.11 had just hardened. Empty now
+takes the 0x00-tagged raw path.
+
+Alongside it: **FileStore and PatraStore rewrote an empty `details` to `{}`**
+on reload, so every entry stored with one failed verification after a round
+trip — a false integrity violation on an untouched log.
+
+### Fixed — the tree-head signature covered only the root
+
+`sign_tree_head(sk, root)` signed the root alone, leaving every other field of
+the SignedTreeHead unauthenticated. `tree_size` was cross-checked against the
+rebuilt tree, but **`timestamp` was never checked by anything**, so a holder of
+a valid proof could restate when the log was attested and it still verified.
+For a product whose claim is "this is what the log said, *then*", that is the
+wrong field to leave loose.
+
+The signature is now taken over `tree_head_digest(root, tree_size, timestamp,
+algorithm)`, length-prefixed. `verifying_key` is deliberately excluded: the
+verifier supplies its own trusted key and the embedded copy is never consulted,
+so binding it would imply a trust it does not carry.
+
+### Fixed — three more self-referential proofs
+
+2.8.11 fixed inclusion proofs being verified against the root carried inside
+themselves. The same shape was still present three more times:
+
+- **Consistency proofs.** `merkle_verify_consistency` checks the recomputed
+  roots against `old_root`/`new_root` from inside the proof. A proof for an
+  entirely different pair of trees verified. Now bound to the signed head via
+  `merkle_verify_consistency_against`.
+- **Anchors.** The bundle verifier checked only `anchor_verify_integrity` — the
+  anchor's own self-hash. A self-consistent anchor for a *different* tree
+  reported `ANCHOR_VALID`. Now its `merkle_root` and `entry_count` must match
+  the signed head.
+- **Inclusion, the other half.** `merkle_verify_proof_against` answers "does
+  some leaf reach the root I trust", not "is *my entry* in that tree". New
+  `merkle_verify_inclusion(mp, root, entry_hash)` binds the leaf.
+
+### Fixed — front-truncating an audit log verified clean
+
+`verify_chain` only validated linkage for `i > 0`, so **entries[0].prev_hash was
+never looked at**. Deleting entries from the *front* of a stored log left a vec
+where every entry self-hashed and every surviving link matched: it verified
+completely, with the missing genesis link the only evidence and nothing reading
+it. Truncating the tail was always detectable via the tree head; truncating the
+head was not detectable at all.
+
+`chain_verify` had guarded this since 2.0 — against the chain's rotation
+carry — but the four store paths (`filestore_load_and_verify`,
+`patrastore_load_and_verify`, `memstore_load_and_verify` and the proof bundle
+verifier) call `verify_chain` directly and inherited the hole. Both now route
+through `verify_chain_from`, which takes the expected first link; the default
+is the safe one, and a genuine mid-chain segment must say so explicitly.
+
+### Fixed — the escaping migration had stopped four fields short
+
+2.8.11 routed `source`, `action`, `details` and `agent_id` through
+`_sb_json_escape` *precisely* to stop a crafted value injecting sibling keys.
+It left `timestamp`, `prev_hash`, `hash` and `hash_algorithm` on a raw
+`str_builder_add`, in both `_filestore_entry_json` and `_export_entry_json`.
+
+All four are reachable: `entry_set_hash_algorithm` and `entry_set_timestamp`
+are public, `prev_hash` is a direct argument to `entry_new`, and an entry
+parsed from an untrusted proof carries whatever a producer put there. The
+verifier reproduced it end to end — a crafted `timestamp` survives a load,
+and after an archive/rotate cycle the stored record reads back with
+attacker-chosen `source` and `action`. A raw newline in the same field splits
+one JSONL record in two and the entry is dropped with **no error at all**.
+
+Every field of every serializer is now escaped, and `_fsj_parse_flat`
+**rejects a duplicated key** rather than letting first-match silently pick the
+injected one.
+
+### Fixed — the verifier crashed on a malformed signature
+
+`hex_decode` returns **0** for a non-hex character, and 2.8.11's guard checked
+only the *length*. So a signature of the correct length made entirely of `z`
+passed the guard, decoded to a null pointer, and went to `ed25519_verify` —
+**SIGSEGV**, confirmed directly (a null signature pointer into sigil exits
+139). Reachable from `proof_verify_signed` with an attacker-supplied proof.
+
+The **HYBRID arm skipped the length guard entirely** (`if (alg !=
+SIG_ALG_HYBRID)`), so both halves reached the crypto boundary unvalidated.
+Length *and* hex validity are now checked in one place for every algorithm.
+
+### Fixed — a heap overflow in the RFC 3161 request builder
+
+`ts_request_to_der` wrote the message imprint into a fixed `alloc(48)` while
+its length came straight from `str_len(hash_hex) / 2`. A request over a
+SHA-512 digest — 64 bytes, 66 with the TLV header — wrote **18 bytes past the
+allocation**. A non-hex hash produced a `memcpy` from address 0. The digest is
+now validated for length, hex validity and agreement with the declared
+algorithm, and the buffers are sized from it.
+
+### Fixed — defects introduced by 2.8.11, found by reviewing it
+
+- **`libro_is_error` dereferenced its argument.** 2.8.11 introduced it to make
+  a dangerous API safe and documented it as the way to check
+  `filestore_verify_streamed` — which returns a small integer **count** on
+  success. The documented usage therefore passed `5` to `load64` and crashed.
+  It now rejects non-pointer values first.
+- **`_merkle_tag` staged the RFC 9162 domain byte in a process-global buffer** —
+  the exact pattern 2.8.11 removed from `hash_field` for being thread-unsafe,
+  reintroduced in the fix for it. Now a stack slot.
+- **`_fsj_pos` carried a return value in a process-wide slot**, so two threads
+  parsing concurrently resumed at each other's offset. Now a tuple return.
+- **`_fsj_read_scalar` returned a view into the caller's line buffer** while
+  its sibling returned a copy — two lifetimes from one call site, which is how
+  a dangling `Str` gets written. Now copies.
+- **`_pfj_parse_string` could not decode `\u00XX`**, which 2.8.11's escaper had
+  just started emitting; its fallback turned `A` into the literal
+  `u0041`. **Proof JSON also never emitted `hash_algorithm`** and the parser
+  hardcoded `"sha256"` — harmless until 2.8.11 put the field in the preimage,
+  after which any entry with a different algorithm failed verification after a
+  round trip.
+- **The canonical hasher allocated 110× its input.** The new number normalizer
+  took a fixed 1,032-byte buffer *per number*: measured at **1.19 MB of
+  never-reclaimed bump memory per hash** of a 10 KB `details`, re-paid on every
+  verify. Right-sized to **174 KB** (16×), with a test that bounds it.
+
+Three decoders and three escape tables had accumulated across `entry.cyr`,
+`file_store.cyr` and `proof_json.cyr`. There is now **one decoder**
+(`json_str_decode`) and one escaper, and the other two delegate.
+
+### Fixed — the previously-unaudited modules
+
+- **`kernel_audit.log_syscall`** concatenated `action` and `data` raw into a
+  **newline-delimited kernel sink**, so a `\n` forged a second, fully-formed
+  audit record in `/proc/agnos/audit` attributed to this process — against a
+  sink libro does not own and cannot retroactively correct. Percent-encoded.
+- **The streaming topic** was `prefix/source/action` with both fields raw, so a
+  `/` in `source` forged a topic level: an entry could be delivered to a
+  subscription it should not match, or evade one it should.
+- **`memstore_load_page` / `chain_page`** clamped only the upper bound, so a
+  negative offset walked `vec_get` off the front of the vec.
+- **`src/tpm_anchor.cyr`, never audited by anything** because it sits behind
+  `-D LIBRO_TPM` and no lens had ever built it. It forwarded caller-supplied
+  `pcr_indices` with no validation into sigil's `tpm_pcr_selection`, which
+  sizes its buffer at three bytes per index — a PCR index of `1000000` renders
+  as seven digits and **overflows the allocation**. A TPM has PCRs 0-23.
+  Also: `output_dir` is a `Str` handed to sigil as a NUL-terminated cstr
+  (`strlen` over-read), and `tpm_anchor_verify` dereferenced a sealed context
+  without a null check.
+
+### Changed — toolchain pin 6.5.34 → 6.5.35
+
+6.5.35 is a **register-allocator rewrite**: linear-scan interval expiry plus
+loop-aware liveness, the first release in which the picker can time-share a
+register. Its own changelog notes that reverting the prior behaviour fails 69
+of 282 corpus tests with *wrong answers rather than crashes*, so this is the
+highest-risk bump class for a consumer. No stdlib folds moved — patra 1.13.10,
+sigil 3.12.9, sakshi 2.4.11 and bayan 1.5.2 are all unchanged from 6.5.34, and
+`[deps.sigil]` / `[deps.patra]` still equal what the toolchain folds.
+
+⚠ **A codegen differential could NOT be run, and the honest statement is that
+libro's evidence here is behavioural, not structural.** Two attempts produced
+a "byte-identical" result and both were invalid: prepending a version's `bin`
+to `PATH` changes what `cyrius --version` reports but not which `cycc`
+`cyrius build` invokes — proven by compiling cyrius's *own* corpus files that
+its changelog says changed and getting identical output — and `cyriusly use`
+only rewrites the manifest pin, leaving `~/.cyrius/bin/cycc` in place. Running
+an older compiler would require reinstalling it over the current one. What
+*is* established: 751 assertions, 33 benchmarks, 12 fuzz targets and the TPM
+build are all green on 6.5.35.
+
+### Size and performance
+
+Binary 1,072,048 → **1,100,728 B** (+28,680), entirely this release's source:
+the shared decoder, the number normalizer, the validator's surrogate rules and
+the new guards.
+
+33 benchmarks. The regressions are the cost of escaping every field rather
+than four of ten, and of encoding the streaming topic:
+
+| bench | 2.8.11 | 2.8.12 | delta |
+|---|---|---|---|
+| `export_csv_100` | 215.5us | 292.1us | +36% |
+| `export_jsonl_100` | 383.8us | 450.5us | +17% |
+| `stream_publish` | 0.35us | 0.57us | +64% (absolute cost 0.2us) |
+| `proof_build_unsigned_25` | 78.1us | 66.8us | −15% |
+| `proof_to_json_25` | 225.0us | 193.0us | −14% |
+
+`export_csv_100` was first measured at **+109%**: routing every field through
+a byte-at-a-time escaper costs 64 builder calls for a 64-char hex digest.
+`_sb_json_escape` now bulk-copies the run of bytes needing no escaping — which
+for a hash, timestamp or UUID is the whole field — recovering two thirds of it.
+
+⚠ `mldsa65_sign_entry` and `hybrid_sign_entry` are still not reported as a
+delta in either direction: across this session they swung −58%, +70% and −36%
+on the same binary. They are few-iteration benches over a multi-millisecond
+operation. An earlier measurement in this cycle was taken while seven audit
+agents saturated the box and showed a 5× swing; it was discarded rather than
+recorded.
+
 ## [2.8.11] - 2026-08-22 — P(-1) hardening sweep: 26 defects, 4 of them in the hash preimage
 
 **661** assertions green (**673** with `tpm`), up from 521. Binary 821,920 →

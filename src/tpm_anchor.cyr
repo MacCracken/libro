@@ -86,18 +86,53 @@ fn tpm_anchor_new(inner_anchor, output_dir, pcr_indices) {
         sakshi_warn("tpm_anchor: TPM unavailable", 27);
         return 0;
     }
+    # ⚠ 2.8.12 — VALIDATE pcr_indices before handing them to sigil.
+    #
+    # sigil's tpm_pcr_selection sizes its buffer as `count * 3` — two digits
+    # plus a separator per index — and then memcpy's each index's rendered
+    # text in. A PCR index of 1000000 renders as seven digits and writes past
+    # that allocation: a heap overflow in sigil, reached with a value libro
+    # forwarded without looking at it. A TPM has PCRs 0-23 and nothing else,
+    # so anything outside that range is a caller error, not a policy choice.
+    if (pcr_indices == 0) { return 0; }
+    var pcr_n = vec_len(pcr_indices);
+    if (pcr_n == 0 || pcr_n > 24) {
+        sakshi_warn("tpm_anchor: pcr index count out of range", 39);
+        return 0;
+    }
+    var pi = 0;
+    while (pi < pcr_n) {
+        var idx = vec_get(pcr_indices, pi);
+        if (idx < 0 || idx > 23) {
+            sakshi_warn("tpm_anchor: pcr index outside 0-23", 34);
+            return 0;
+        }
+        pi += 1;
+    }
+    if (output_dir == 0) { return 0; }
+
     var hash = anchor_hash(inner_anchor);
     if (hash == 0) { return 0; }
     var hash_len = str_len(hash);
-    # agnosys tpm_seal caps at TPM_SEAL_MAX_BYTES = 2048; a 64-char
-    # hex hash is well under that.
+    if (hash_len == 0) { return 0; }
+    # sigil's tpm_seal caps at TPM_SEAL_MAX_BYTES = 2048; a 64-char hex hash
+    # is well under that.
+    #
+    # 2.8.12 — output_dir is a Str but sigil takes a NUL-TERMINATED cstr and
+    # strlen()s it. str_data on a Str built by str_new(ptr, len) is not
+    # necessarily terminated, so this over-read whatever followed the buffer.
+    var out_c = _entry_to_cstr(output_dir);
     var res = tpm_seal(TPM_SHA256, pcr_indices,
-      str_data(hash), hash_len, str_data(output_dir));
+      str_data(hash), hash_len, out_c);
     if (is_err_result(res) == 1) {
         sakshi_warn("tpm_anchor: seal failed", 23);
         return 0;
     }
     var sealed = result_unwrap(res);
+    if (sealed == 0) {
+        sakshi_warn("tpm_anchor: seal returned no context", 35);
+        return 0;
+    }
     var ta = fl_alloc(32);
     store64(ta, inner_anchor);
     store64(ta + 8, sealed);
@@ -125,9 +160,16 @@ fn tpm_anchor_verify(ta) {
         return TPM_ANCHOR_UNAVAILABLE;
     }
     var hash = anchor_hash(inner);
+    if (hash == 0) { return TPM_ANCHOR_INNER_INVALID; }
     var hash_len = str_len(hash);
+    if (hash_len == 0) { return TPM_ANCHOR_INNER_INVALID; }
+    # 2.8.12 — a tpm_anchor whose sealed context is absent (constructed by
+    # hand, or deserialized) used to be dereferenced straight into
+    # tpm_unseal. Report it as an unseal failure rather than crashing.
+    var ctx = tpm_anchor_sealed_ctx(ta);
+    if (ctx == 0) { return TPM_ANCHOR_UNSEAL_FAILED; }
     var buf = alloc(hash_len);
-    var res = tpm_unseal(tpm_anchor_sealed_ctx(ta), buf, hash_len);
+    var res = tpm_unseal(ctx, buf, hash_len);
     if (is_err_result(res) == 1) {
         # tpm_unseal failure: PCR state changed since seal, sealed.ctx
         # corrupted/missing, or tpm2_unseal subprocess failed.

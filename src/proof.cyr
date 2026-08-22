@@ -11,14 +11,64 @@
 struct sth { root; tree_size; timestamp; signature; verifying_key; algorithm; }
 
 fn sth_new(root, tree_size, sig, vk_hex, alg) {
+    return sth_new_at(root, tree_size,
+      timestamp_rfc3339(get_epoch_secs()), sig, vk_hex, alg);
+}
+
+# Construct with an EXPLICIT timestamp. 2.8.12 — the signature now covers the
+# timestamp, so the value has to be fixed before signing rather than stamped
+# inside the constructor. proof_from_json also needs it, to rebuild a head
+# whose signature verifies against the timestamp it was signed with.
+fn sth_new_at(root, tree_size, timestamp, sig, vk_hex, alg) {
     var s = fl_alloc(48);
     store64(s, root);
     store64(s + 8, tree_size);
-    store64(s + 16, timestamp_rfc3339(get_epoch_secs()));
+    store64(s + 16, timestamp);
     store64(s + 24, sig);
     store64(s + 32, vk_hex);
     store64(s + 40, alg);
     return s;
+}
+
+# The digest a SignedTreeHead's signature is taken over.
+#
+# ⚠ 2.8.12 — BREAKING. Through 2.8.11 `sign_tree_head(sk, root)` signed the
+# ROOT ALONE, so every other field of the head was unauthenticated:
+#
+#   * `timestamp` — never checked by any verifier, so a holder of a valid
+#     proof could restate WHEN the head was attested and it still verified.
+#     For a product whose whole claim is "this is what the log said, then",
+#     an unauthenticated time is the wrong field to leave loose.
+#   * `tree_size` — cross-checked against the rebuilt tree by
+#     _proof_verify_common, so not forgeable in a full bundle verify, but it
+#     rested on that one call site rather than on the signature.
+#   * `algorithm` — informational; verification dispatches on the caller's
+#     verifying key, not on this field.
+#
+# (`verifying_key` is deliberately NOT in the preimage: the verifier supplies
+# its own trusted key to proof_verify_signed and the embedded copy is never
+# consulted, so binding it would suggest a trust it does not carry.)
+#
+# Fields are length-prefixed, so no concatenation is ambiguous.
+fn tree_head_digest(root, tree_size, timestamp, alg) {
+    var h = hasher_new();
+    hash_field(h, str_data(root), str_len(root));
+    var szbuf[8];
+    store64(&szbuf, tree_size);
+    hasher_update(h, &szbuf, 8);
+    hash_field(h, str_data(timestamp), str_len(timestamp));
+    if (alg == 0) {
+        hash_field(h, "", 0);
+    } else {
+        hash_field(h, str_data(alg), str_len(alg));
+    }
+    return hasher_finalize_hex(h);
+}
+
+# The digest for an already-constructed head.
+fn sth_digest(sth) {
+    return tree_head_digest(sth_root(sth), sth_tree_size(sth),
+      sth_timestamp(sth), sth_algorithm(sth));
 }
 
 # ================================================================
@@ -92,11 +142,14 @@ fn proof_build_signed(chain, sk) {
     if (tree == 0) { return 0; }
 
     var root = merkle_tree_root(tree);
-    var sig = sign_tree_head(sk, root);
     var vk_hex = signing_key_verifying_hex(sk);
     var alg_cstr = sig_alg_name(signing_key_algorithm(sk));
     var alg = str_new(alg_cstr, strlen(alg_cstr));
-    var sth = sth_new(root, merkle_tree_leaf_count(tree), sig, vk_hex, alg);
+    var tree_size = merkle_tree_leaf_count(tree);
+    # 2.8.12 — fix the timestamp first, sign the WHOLE head, then construct.
+    var ts = timestamp_rfc3339(get_epoch_secs());
+    var sig = sign_tree_head(sk, tree_head_digest(root, tree_size, ts, alg));
+    var sth = sth_new_at(root, tree_size, ts, sig, vk_hex, alg);
 
     var ip = fl_alloc(48);
     store64(ip, sth);
@@ -155,9 +208,9 @@ fn proof_verify_unsigned(ip) {
 # Verify signed proof
 fn proof_verify_signed(ip, vk) {
     var sth = load64(ip);
-    var root = sth_root(sth);
-    var sig = sth_signature(sth);
-    var th_valid = verify_tree_head(vk, root, sig);
+    # 2.8.12 — verify against the digest of the WHOLE head, not the bare root.
+    # See tree_head_digest for what changed and why.
+    var th_valid = verify_tree_head(vk, sth_digest(sth), sth_signature(sth));
     return _proof_verify_common(ip, th_valid);
 }
 
@@ -208,20 +261,37 @@ fn _proof_verify_common(ip, tree_head_valid) {
     }
     store64(pv + 24, all_inc_valid);
 
-    # Verify consistency proof if present
+    # Verify consistency proof if present — AGAINST THE SIGNED HEAD'S ROOT.
+    # 2.8.12: this called merkle_verify_consistency(cp), which checks the
+    # proof against the roots carried inside itself. See
+    # merkle_verify_consistency_against.
     var cp = load64(ip + 8);
     if (cp != 0) {
-        store64(pv + 32, merkle_verify_consistency(cp));
+        store64(pv + 32, merkle_verify_consistency_against(cp, sth_root_expected));
     }
 
-    # Verify anchor if present
+    # Verify anchor if present — AND that it anchors THIS tree.
+    # 2.8.12: this checked only anchor_verify_integrity, the anchor's own
+    # self-hash. An anchor is a statement "tree root R held N entries at time
+    # T"; a self-consistent anchor for a DIFFERENT tree passed unchallenged
+    # and pv_is_valid reported ANCHOR_VALID. Same self-referential class as
+    # the inclusion and consistency proofs.
     var anchor = load64(ip + 32);
     if (anchor != 0) {
+        var a_ok = 0;
         if (anchor_verify_integrity(anchor) == 1) {
-            store64(pv + 40, 1);
-        } else {
-            store64(pv + 40, 0);
+            a_ok = 1;
+            if (constant_time_eq_str(anchor_merkle_root(anchor),
+                sth_root_expected) == 0) {
+                sakshi_error("proof: anchor is for a different tree", 36);
+                a_ok = 0;
+            }
+            if (anchor_entry_count(anchor) != sth_tree_size(sth)) {
+                sakshi_error("proof: anchor entry count disagrees with the head", 47);
+                a_ok = 0;
+            }
         }
+        store64(pv + 40, a_ok);
     }
 
     return pv;

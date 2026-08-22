@@ -46,11 +46,33 @@ struct error { magic; code; msg; field_name; index; expected; actual; }
 # first half of a random UUID, i.e. 2^-64.
 fn libro_is_error(p) {
     if (p == 0) { return 0; }
+    # ⚠ 2.8.12 — REJECT non-pointers BEFORE dereferencing.
+    #
+    # 2.8.11 introduced this predicate and then documented it as the way to
+    # check APIs that return "a count on success, an error pointer on
+    # failure" — filestore_verify_streamed and memstore_verify_streamed both
+    # do. So the documented usage,
+    #     if (libro_is_error(filestore_verify_streamed(s, 10)) == 1) …
+    # passed a SMALL INTEGER (the count of entries verified) to load64 and
+    # segfaulted on a successful verify of a few entries. The predicate whose
+    # job is to make a dangerous API safe was itself the crash.
+    #
+    # Measured on this platform: every libro struct comes from fl_alloc/alloc
+    # in a mapped arena at ~1.4e14 and is 8-byte aligned. A count, an index,
+    # a severity or an errno-style negative can be neither.
+    if (p < 65536) { return 0; }
+    if ((p & 7) != 0) { return 0; }
     if (load64(p) == LIBRO_ERR_MAGIC) { return 1; }
     return 0;
 }
 
 # Inverse helper reading the way call sites want to: "did this succeed?"
+# "Did this succeed?" — the inverse, for pointer-returning APIs.
+#
+# ⚠ For count-returning APIs (filestore_verify_streamed,
+# memstore_verify_streamed) use `libro_is_error(r) == 0` instead: a legitimate
+# count of 0 is a SUCCESS, and libro_is_ok(0) is false by design because a null
+# pointer is not a valid result for the APIs this is meant for.
 fn libro_is_ok(p) {
     if (p == 0) { return 0; }
     if (libro_is_error(p) == 1) { return 0; }

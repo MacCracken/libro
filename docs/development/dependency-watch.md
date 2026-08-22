@@ -9,7 +9,7 @@ and what to watch when upgrading.
 
 | Dep | Pin field | Current | Resolved by | Purpose |
 |-----|-----------|---------|-------------|---------|
-| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.5.34** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
+| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.5.35** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
 | sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`     | **3.12.9** | `cyrius deps` → `lib/sigil-mldsa.cyr` + `lib/sigil_{sha_ni,sha256,hex}.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, hex. **Thin sub-surface, not the monolithic `dist/sigil.cyr`** (see below) |
 | sigil (tpm)      | `cyrius.cyml` `[deps.sigil_tpm] tag = "…"` | **3.12.9** | `cyrius deps --features tpm` → `lib/sigil_tpm_sigil-tpm.cyr` | TPM 2.0 primitives (`tpm_seal` / `tpm_unseal` / `tpm_detect`). **Optional** — activated only by the `tpm` feature for the `-D LIBRO_TPM` build |
 | patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.13.10** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |

@@ -31,10 +31,17 @@ fn log_syscall(action, data, result) {
         return error_new(LIBRO_ERR_IO, "AGNOS audit not available");
     }
 
+    # ⚠ 2.8.12 — action and data are percent-encoded before they go into a
+    # NEWLINE-DELIMITED kernel sink. They used to be concatenated raw, so a
+    # "\n" in either forged a second, fully-formed audit record in
+    # /proc/agnos/audit attributed to this process — the same line-injection
+    # class the JSONL writer had, against a sink libro does not own and
+    # cannot retroactively correct. A space is the field separator, so it is
+    # encoded too.
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, action);
+    _sb_pct_encode_cstr(sb, action, 32);
     str_builder_add_cstr(sb, " ");
-    str_builder_add_cstr(sb, data);
+    _sb_pct_encode_cstr(sb, data, 32);
     str_builder_add_cstr(sb, " ");
     str_builder_add_int(sb, result);
     str_builder_add_cstr(sb, "\n");

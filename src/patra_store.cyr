@@ -368,7 +368,12 @@ fn _patrastore_row_to_entry(rs, row) {
     if (strlen(det) > 0) {
         store64(e + 48, _ps_copy_cstr(det));
     } else {
-        store64(e + 48, str_from("{}"));
+        # 2.8.12 — preserve an EMPTY details instead of rewriting it to "{}".
+        # The substitution changed the entry's details between write and
+        # read, so every entry stored with an empty details failed
+        # verification on reload — a false integrity violation on a log
+        # nobody had touched.
+        store64(e + 48, str_from(""));
     }
 
     var aid = patra_result_get_str(rs, row, 6);

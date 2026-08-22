@@ -124,9 +124,17 @@ fn memstore_query(s, filter) {
 fn memstore_load_page(s, offset, limit) {
     var entries = load64(s);
     var n = vec_len(entries);
+    # 2.8.12 — clamp the LOWER bound too. Only `> n` was checked, so a
+    # negative offset made `start` negative and vec_get walked backwards off
+    # the front of the vec. Pagination offsets come from callers (an HTTP
+    # query parameter, typically), so a negative one is ordinary untrusted
+    # input, not misuse.
     var start = offset;
+    if (start < 0) { start = 0; }
     if (start > n) { start = n; }
-    var end = start + limit;
+    var lim = limit;
+    if (lim < 0) { lim = 0; }
+    var end = start + lim;
     if (end > n) { end = n; }
 
     var result = vec_new();

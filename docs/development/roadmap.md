@@ -30,7 +30,8 @@ Open items, sequenced fastest-to-land first, reactive items last.
   `patrastore_load_all` + `verify_chain` workaround still works and is still
   unambiguous; it is no longer necessary.
 
-- [ ] **RFC 3161 token verification (carried over from the 2.8.11 audit).**
+- [ ] **RFC 3161 token verification (carried from the 2.8.11 audit, unchanged
+  by 2.8.12).**
   2.8.11 tightened the syntactic half — DER tags are checked, a length that
   overflows is rejected, and a granted response must carry a token — but libro
   still does NOT verify the TSA's CMS signature over the token, does not parse
@@ -44,6 +45,30 @@ Open items, sequenced fastest-to-land first, reactive items last.
   That belongs in **sigil**, not here — libro should call it, not reimplement
   ASN.1 certificate handling. `ts_attestation_new`'s doc comment states the
   current limit so no caller can mistake it.
+
+- [ ] **Full RFC 8785 number formatting.** 2.8.12 made canonical JSON
+  normalize numbers to an *exact plain decimal* computed with digit-string
+  arithmetic — `1`, `1.0`, `1e0`, `1.00E+00` and `10e-1` all agree, and `1e50`
+  agrees with its 51-digit expansion. JCS instead mandates ECMAScript
+  `Number::toString` (shortest round-trip), which renders `1e100` as `1e+100`
+  rather than 101 digits.
+
+  The two agree on every value whose decimal expansion is short, which is every
+  value an audit payload carries — so this is an interop nicety, not a
+  correctness gap. Closing it needs a correct shortest-round-trip float
+  formatter (Ryu/Grisu) in Cyrius, which is a poor thing to write under time
+  pressure into a hash preimage. Deliberately deferred with that reasoning
+  recorded, not forgotten.
+
+- [ ] **A reusable scratch arena for the canonical hasher.** `alloc()` is the
+  bump allocator and `_cjh_emit_object` takes five vecs per object plus a
+  decoded `Str` per key, so hashing allocates ~16× the input and never
+  reclaims it — re-paid on every verify of every entry. 2.8.12 brought this
+  down from 110× (a fixed 1 KB buffer per number) and added
+  `test_canonical_hash_allocation_bounded` so it cannot regress further, but
+  16× is still the wrong shape for a digest. Needs a per-call arena the
+  emitters draw from and reset, which is a structural change to how libro
+  allocates.
 
 - [ ] **Hash-algorithm version discriminator.** 2.8.11 changed the entry
   preimage and the Merkle construction with no migration path — the old forms

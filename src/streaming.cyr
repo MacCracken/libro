@@ -83,13 +83,25 @@ fn stream_with_prefix(prefix) {
 }
 
 # Build topic: "{prefix}/{source}/{action}"
+# ⚠ 2.8.12 — source and action are percent-encoded.
+#
+# `/` is the topic LEVEL SEPARATOR and both fields were concatenated in raw,
+# so a source of "x/login" produced the topic "prefix/x/login/<action>" —
+# an extra level. A subscription to "prefix/*/login" then matched an entry
+# whose action was not login at all, and an entry that should have matched
+# could be pushed out of range of its subscriber. For an audit event bus,
+# delivering an event to the wrong subscription (or silently not delivering
+# it) is a routing-integrity failure, not a cosmetic one.
+#
+# C0 bytes are encoded too: _topic_match takes cstrs and strlen()s them, so an
+# embedded NUL would have truncated the topic mid-comparison.
 fn _stream_topic(s, entry) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, load64(s + 8));
     str_builder_add_cstr(sb, "/");
-    str_builder_add(sb, entry_source(entry));
+    _sb_pct_encode(sb, entry_source(entry), 47);
     str_builder_add_cstr(sb, "/");
-    str_builder_add(sb, entry_action(entry));
+    _sb_pct_encode(sb, entry_action(entry), 47);
     return str_builder_build(sb);
 }
 

@@ -84,12 +84,18 @@ fn merkle_tree_root(t) {
 #   MTH(D[n])   = HASH(0x01 || left || right) -- _merkle_hash_pair
 # ⚠ This CHANGES every Merkle root. See CHANGELOG [2.8.11].
 
-var _mk_tag = 0;
-
+# ⚠ 2.8.12 — the tag byte is staged on the STACK.
+#
+# 2.8.11 introduced this as a process-global `alloc(2)`, which is the EXACT
+# pattern the same release removed from hash_field for being thread-unsafe:
+# `store8` the byte, then `hasher_update` reads it. Two threads hashing
+# concurrently interleave one's write with the other's read, so a leaf gets
+# tagged 0x01 or an internal node 0x00 — a wrong root, silently, with no crash
+# to point at. Introducing the bug in the fix for the bug is worth recording.
 fn _merkle_tag(h, byte) {
-    if (_mk_tag == 0) { _mk_tag = alloc(2); }
-    store8(_mk_tag, byte);
-    hasher_update(h, _mk_tag, 1);
+    var tagbuf[1];
+    store8(&tagbuf, byte);
+    hasher_update(h, &tagbuf, 1);
     return 0;
 }
 
@@ -253,6 +259,22 @@ fn merkle_verify_proof(mp) {
 # mutually consistent — and it verifies. Callers holding a trusted root
 # (a signed tree head, an anchor) must use this instead. See
 # _proof_verify_common in proof.cyr, which now does.
+# Verify that THIS ENTRY is included in the tree with `expected_root`.
+#
+# ⚠ 2.8.12 — merkle_verify_proof_against below answers "does some leaf hash,
+# combined with this path, reach the root I trust". It does NOT answer "is the
+# entry I care about in that tree", because the leaf it starts from is
+# whatever the proof carries. A caller holding an entry and a proof has no way
+# to tie the two together, which is the question an inclusion proof exists to
+# answer. Since 2.8.11 the tree's leaves are 0x00-tagged, so the binding is
+# exactly merkle_leaf_hash(entry_hash(e)).
+fn merkle_verify_inclusion(mp, expected_root, entry_h) {
+    if (mp == 0 || entry_h == 0) { return 0; }
+    if (merkle_verify_proof_against(mp, expected_root) == 0) { return 0; }
+    return constant_time_eq_str(merkle_proof_leaf(mp),
+      merkle_leaf_hash(entry_h));
+}
+
 fn merkle_verify_proof_against(mp, expected_root) {
     if (merkle_verify_proof(mp) == 0) { return 0; }
     if (expected_root == 0) { return 0; }
@@ -357,6 +379,23 @@ fn _is_power_of_2(n) {
     if (n <= 0) { return 0; }
     if ((n & (n - 1)) == 0) { return 1; }
     return 0;
+}
+
+# Verify a consistency proof against an EXTERNALLY supplied new root.
+#
+# ⚠ 2.8.12 — merkle_verify_consistency below checks the recomputed roots
+# against `old_root` and `new_root` CARRIED INSIDE THE PROOF, so it answers
+# "is this bundle internally consistent", never "is this the log you signed".
+# A proof for an entirely different pair of trees — old_root, new_root, path
+# all mutually consistent — verified. That is the same self-referential shape
+# the inclusion proof had until 2.8.11 fixed it; the consistency half was left
+# behind, and an append-only proof that proves nothing about YOUR log is worse
+# than no proof, because pv_is_valid reports it as passing.
+fn merkle_verify_consistency_against(cp, expected_new_root) {
+    if (cp == 0) { return 0; }
+    if (merkle_verify_consistency(cp) == 0) { return 0; }
+    if (expected_new_root == 0) { return 0; }
+    return constant_time_eq_str(consistency_new_root(cp), expected_new_root);
 }
 
 fn merkle_verify_consistency(cp) {

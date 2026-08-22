@@ -6,10 +6,37 @@
 # non-zero for a streaming/offset segment). `verify_chain_offset` was folded
 # in. All in-tree call sites pass 0 unless verifying a sub-range.
 
-fn verify_chain(entries, base_index) {
+# Verify a chain segment whose first entry is expected to link to
+# `expected_first_prev` (a Str; empty means "this is the genesis").
+# Pass 0 for expected_first_prev to SKIP the first-entry check — only correct
+# when the caller has established that linkage some other way.
+#
+# ⚠ 2.8.12 — the check exists at all now. verify_chain only ever validated
+# linkage for `i > 0`, so entries[0].prev_hash was never looked at, and
+# DELETING ENTRIES FROM THE FRONT of a stored log produced a vec that verified
+# completely clean. Every entry still self-hashed and every surviving link
+# still matched; the only evidence of the removal was the missing genesis
+# link, which nothing read. chain_verify had guarded this since 2.0 (against
+# the chain's rotation carry) but the four STORE paths —
+# filestore_load_and_verify, patrastore_load_and_verify,
+# memstore_load_and_verify and the proof bundle verifier — all call
+# verify_chain directly and inherited the hole.
+#
+# Truncating the TAIL was always detectable via the tree head / anchor;
+# truncating the head was not detectable at all.
+fn verify_chain_from(entries, base_index, expected_first_prev) {
     sakshi_debug("verify: chain", 13);
     var n = vec_len(entries);
     if (n == 0) { return 0; }
+
+    if (expected_first_prev != 0) {
+        var first = vec_get(entries, 0);
+        var fp = entry_prev_hash(first);
+        if (constant_time_eq_str(fp, expected_first_prev) == 0) {
+            sakshi_error("verify: genesis linkage broken", 30);
+            return error_integrity(base_index, expected_first_prev, fp);
+        }
+    }
 
     var i = 0;
     while (i < n) {
@@ -38,4 +65,18 @@ fn verify_chain(entries, base_index) {
         i += 1;
     }
     return 0;
+}
+
+# Verify a chain segment. When `base_index` is 0 the segment starts at the
+# beginning of a log, so its first entry must be the genesis — prev_hash
+# empty. A caller verifying a segment that legitimately begins mid-chain (one
+# whose first entry links to an earlier, rotated-away entry) must use
+# verify_chain_from and supply that link explicitly; the default is the safe
+# one, because silently accepting any first entry is what let a front-truncated
+# log verify clean.
+fn verify_chain(entries, base_index) {
+    if (base_index == 0) {
+        return verify_chain_from(entries, base_index, str_from(""));
+    }
+    return verify_chain_from(entries, base_index, 0);
 }
