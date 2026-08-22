@@ -222,7 +222,7 @@ optional = true
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
 path = "../patra"
-tag = "1.13.9"
+tag = "1.13.10"
 modules = ["dist/patra.cyr"]
 
 # `deps.agnosys` dropped at the agnosys → agnodrm decomposition (2026-06-19).

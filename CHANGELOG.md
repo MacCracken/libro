@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.10] - 2026-08-21 — declare the patra we are actually built against
+
+### Changed
+
+- **`[deps.patra]` 1.13.9 → 1.13.10.** patra 1.13.10 removes an unconditional
+  `sakshi_set_level(SK_WARN)` from `patra_init` that clobbered the host
+  application's log level.
+
+  ⚠ **This is not cosmetic, and it is not optional once the toolchain folds
+  1.13.10.** `cyrius deps` applies a declared dep's copy *on top of* the
+  `lib sync --full` snapshot on every resolve, so a libro still declaring 1.13.9
+  would **downgrade** `lib/patra.cyr` for everything downstream the moment the
+  cyrius stdlib carries 1.13.10. That is exactly the transitive downgrade
+  bote 3.3.2 had to unpick along `agnosai → bote → libro → patra`, and this
+  release exists so it does not recur.
+
+  It also makes the declaration honest: libro 2.8.9 was built and tested against
+  1.13.10 locally (`path` beats `tag` when a sibling checkout is present), while
+  the tag said 1.13.9. A consumer resolving from git got a different patra than
+  libro was verified with.
+
+  **521 assertions green, 0 failed**, unchanged from 2.8.9 — this release moves a
+  manifest tag and nothing else. No source change, `dist/libro.cyr` byte-identical.
+
 ## [2.8.9] - 2026-08-21 — a PatraStore read from another thread no longer crashes the process
 
 ### Fixed
