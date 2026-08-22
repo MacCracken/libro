@@ -153,7 +153,7 @@ fn fuzz_der_parse(iterations) {
 
 fn fuzz_entry_create(iterations) {
     var i = 0;
-    var prev = str_from("");
+    var prev = libro_empty_str();
     while (i < iterations) {
         var sev = load8(fuzz_bytes(1)) & 0x7;
         if (sev > 5) { sev = 0; }
@@ -305,7 +305,7 @@ fn fuzz_filestore_verify_streamed(iterations) {
 
 fn fuzz_canonical_json_hash(iterations) {
     var i = 0;
-    var prev = str_from("");
+    var prev = libro_empty_str();
     while (i < iterations) {
         # Bias toward JSON-ish bytes so the nested-walker actually
         # exercises object/array/scalar branches, not just the

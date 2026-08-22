@@ -49,6 +49,15 @@ fn _sig_sig_bytes(alg) {
     return 0;
 }
 
+# Expected hex-character length of a signature for `alg`, or 0 when the
+# algorithm is composite (HYBRID) or unknown. 2.8.11 — used to reject a
+# malformed signature BEFORE it reaches hex_decode_str and the sigil
+# boundary. A 2-character "signature" previously decoded to a 1-byte buffer
+# that ed25519_verify then read 64 bytes out of; the ML-DSA path read 3309.
+fn _sig_sig_hex_len(alg) {
+    return _sig_sig_bytes(alg) * 2;
+}
+
 fn signing_key_generate() {
     sakshi_info("signing: key generate", 21);
     var sk = fl_alloc(72);
@@ -211,13 +220,30 @@ struct verifying_key { bytes; algorithm; bytes_2; }
 
 # Construct from raw Ed25519 public-key bytes (32 bytes). Kept
 # Ed25519-specific for backward compatibility with pre-2.2 callers.
-# Use `verifying_key_from_bytes_alg` for ML-DSA-65 or HYBRID.
+# Use `verifying_key_from_bytes_alg` for ML-DSA-65, and
+# `verifying_key_from_bytes_hybrid` for HYBRID — which needs BOTH public
+# keys and so has no single-buffer form. (Through 2.8.10 this comment named
+# _alg for hybrid too, and that path silently built an empty key.)
 fn verifying_key_from_bytes(bytes) {
     return verifying_key_from_bytes_alg(bytes, SIG_ALG_ED25519);
 }
 
 fn verifying_key_from_bytes_alg(bytes, alg) {
     var pk_size = _sig_pk_bytes(alg);
+    # 2.8.11 — _sig_pk_bytes has no HYBRID arm and returns 0 for it, so this
+    # used to build a key with alg = SIG_ALG_HYBRID over a ZERO-BYTE
+    # allocation: alloc(0), memcpy(pk, bytes, 0). verify_entry_signature then
+    # entered the hybrid arm and handed that empty buffer to ed25519_verify,
+    # which reads 32 bytes out of it. So a correctly-signed hybrid entry could
+    # never verify through the constructor this file's own doc comment
+    # recommends for hybrid — and verifying_key_to_hex read 32 bytes past the
+    # same empty allocation. Hybrid needs both public keys; there is no
+    # single-buffer form of it.
+    if (pk_size == 0 || bytes == 0) {
+        sakshi_error("signing: HYBRID needs both public keys; use verifying_key_from_bytes_hybrid",
+          75);
+        return 0;
+    }
     var vk = fl_alloc(24);
     var pk = alloc(pk_size);
     memcpy(pk, bytes, pk_size);
@@ -377,14 +403,28 @@ fn sign_entry_with_key_id(sk, e, key_id) {
 
 fn verify_entry_signature(vk, e, es) {
     sakshi_debug("signing: verify entry", 21);
+    # 2.8.11 — see verify_tree_head: reject null/short input before the sigil
+    # boundary rather than letting it read past an undersized decode buffer.
+    if (vk == 0 || e == 0 || es == 0) { return 0; }
     var ehash = entry_hash(e);
     var sig_ehash = entry_sig_hash(es);
+    if (ehash == 0 || sig_ehash == 0) { return 0; }
     if (constant_time_eq_str(ehash, sig_ehash) == 0) {
         sakshi_warn("signing: hash mismatch", 22);
         return 0;
     }
 
     var alg = verifying_key_algorithm(vk);
+    if (alg != SIG_ALG_HYBRID) {
+        var sig_s = entry_sig_signature(es);
+        if (sig_s == 0) { return 0; }
+        var want = _sig_sig_hex_len(alg);
+        if (want == 0) { return 0; }
+        if (str_len(sig_s) != want) {
+            sakshi_warn("signing: signature length mismatch", 34);
+            return 0;
+        }
+    }
     if (alg == SIG_ALG_ED25519) {
         var sig_bytes = hex_decode_str(entry_sig_signature(es));
         return ed25519_verify(load64(vk), str_data(sig_ehash), str_len(sig_ehash), sig_bytes);
@@ -450,7 +490,22 @@ fn sign_tree_head(sk, root_hash) {
 }
 
 fn verify_tree_head(vk, root_hash, sig_hex) {
+    # 2.8.11 — validate BEFORE touching the crypto boundary. An absent or
+    # short signature used to reach hex_decode_str, which calls str_data(0) on
+    # a null Str (SIGSEGV) or produces an undersized buffer that ed25519_verify
+    # then reads 64 bytes from. proof_verify_signed is reachable with an
+    # attacker-supplied proof, so this was a remote crash in the verifier.
+    if (vk == 0 || root_hash == 0 || sig_hex == 0) { return 0; }
+    if (str_len(root_hash) == 0) { return 0; }
     var alg = verifying_key_algorithm(vk);
+    if (alg != SIG_ALG_HYBRID) {
+        var want = _sig_sig_hex_len(alg);
+        if (want == 0) { return 0; }
+        if (str_len(sig_hex) != want) {
+            sakshi_warn("signing: signature length mismatch", 34);
+            return 0;
+        }
+    }
     if (alg == SIG_ALG_ED25519) {
         var sig_bytes = hex_decode_str(sig_hex);
         return ed25519_verify(load64(vk), str_data(root_hash), str_len(root_hash), sig_bytes);

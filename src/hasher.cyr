@@ -4,6 +4,31 @@
 
 var HASH_ALGORITHM = "sha256";
 
+# An empty Str, returned from a DELIBERATELY UNANNOTATED function.
+#
+# 2.8.11 — this exists to silence a diagnostic that cannot be satisfied any
+# other way from libro's side, without hiding a real defect.
+#
+# `#derive(accessors)` emits a bare getter — a raw 64-bit load at the field's
+# offset — with no declared return type (cyrius lex_pp.cyr
+# PP_DERIVE_ACCESSORS_BODY). So at
+# `var head = str_from(""); … head = entry_hash(e);` the compiler types `head`
+# as Str from the initializer, then sees the accessor call return an
+# undeclared value and warns "assigning non-pointer to typed pointer". The
+# value IS a Str at runtime — every write to that slot comes from
+# entry_compute_hash or a parsed Str — so all 21 sites were diagnostic noise
+# on a clean build, which trains people to ignore the warning entirely.
+#
+# Initializing from an unannotated call leaves the local untyped, which is an
+# honest description: these locals hold "a Str, or whatever a derive accessor
+# hands back", and cyrius cannot express that today.
+#
+# ⚠ The real fix is upstream: `#derive(accessors)` should carry the field's
+# declared type through to the generated getter. Filed — see
+# docs/development/dependency-watch.md. When that lands, revert these sites to
+# `str_from("")` and the diagnostic becomes load-bearing again.
+fn libro_empty_str() { return str_from(""); }
+
 # ================================================================
 # ChainHasher — wraps a SHA-256 context
 # ================================================================
@@ -57,14 +82,25 @@ fn constant_time_eq_str(a, b) {
 # Feeds 8-byte little-endian u64 length, then the raw data.
 # On x86_64, store64 is natively LE — matches Rust to_le_bytes().
 
-var _hf_lebuf = 0;
-
+# 2.8.11 — the length prefix is staged on the STACK, not in a process-global
+# 8-byte buffer.
+#
+# The old `_hf_lebuf` global (an alloc(8)) was shared by every caller in the
+# process.
+# hash_field is called eight times per entry_compute_hash, and
+# entry_compute_hash runs on whatever thread verifies — PatraStore reads from
+# a worker thread are a supported shape since 2.8.9, and libro is consumed by
+# servers (Agnostic). Two threads hashing concurrently interleave
+# the length write with the other's 8-byte hasher_update of that buffer, so an
+# entry gets hashed with another entry's field length and its digest comes out
+# wrong — silently, as a false integrity violation, with no crash to point at.
+# Same class as the 2.8.9 cross-thread prepared-statement crash.
+#
+# A stack slot is per-thread by construction and no slower.
 fn hash_field(h, data, len) {
-    if (_hf_lebuf == 0) {
-        _hf_lebuf = alloc(8);
-    }
-    store64(_hf_lebuf, len);
-    hasher_update(h, _hf_lebuf, 8);
+    var lebuf[8];
+    store64(&lebuf, len);
+    hasher_update(h, &lebuf, 8);
     if (len > 0) {
         hasher_update(h, data, len);
     }

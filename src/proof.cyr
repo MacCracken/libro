@@ -187,14 +187,21 @@ fn _proof_verify_common(ip, tree_head_valid) {
         }
     }
 
-    # Verify all inclusion proofs
+    # Verify all inclusion proofs AGAINST THE SIGNED HEAD'S ROOT.
+    #
+    # 2.8.11 — this loop used to call merkle_verify_proof(mp), which checks a
+    # proof against the root carried inside that same proof. Nothing bound
+    # that root to sth_root, so a bundle could carry inclusion proofs for a
+    # completely different tree and still report inclusions_valid = 1. The
+    # proof was verifying itself.
+    var sth_root_expected = sth_root(sth);
     var inclusions = load64(ip + 16);
     var all_inc_valid = 1;
     var ni = vec_len(inclusions);
     var i = 0;
     while (i < ni) {
         var mp = vec_get(inclusions, i);
-        if (merkle_verify_proof(mp) == 0) {
+        if (merkle_verify_proof_against(mp, sth_root_expected) == 0) {
             all_inc_valid = 0;
         }
         i += 1;

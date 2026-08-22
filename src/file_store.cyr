@@ -64,13 +64,21 @@ fn _fs_file_size(fd) {
     return syscall(SYS_LSEEK, fd, 0, 2);
 }
 
-fn filestore_load_all(s) {
+# Load every entry, or a libro error object if the file cannot be READ.
+#
+# ⚠ 2.8.11. filestore_load_all returned an empty vec when the open failed —
+# byte-identical to a healthy but empty log. filestore_load_and_verify then
+# verified that empty vec, found nothing wrong, and reported SUCCESS. A
+# deleted, renamed, or permission-stripped audit log therefore "verified
+# clean", which is precisely the outcome an attacker deleting the log wants.
+# Use libro_is_error() on the result.
+fn filestore_load_all_or_err(s) {
     sakshi_info("filestore: load all", 19);
     var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
     if (fd < 0) {
         sakshi_error("filestore: open failed", 22);
-        return vec_new();
+        return error_new(LIBRO_ERR_IO, "filestore: cannot open log for reading");
     }
 
     # Shared lock for reading
@@ -135,9 +143,20 @@ fn filestore_load_all(s) {
     return entries;
 }
 
+# Legacy shape: always a vec, empty when the log could not be read.
+# Retained so existing consumers keep compiling; prefer the _or_err form,
+# which can tell "unreadable" from "empty".
+fn filestore_load_all(s) {
+    var r = filestore_load_all_or_err(s);
+    if (libro_is_error(r) == 1) { return vec_new(); }
+    return r;
+}
+
 # ================================================================
 # Len — count entries (loads if cache invalid)
 # ================================================================
+
+var _fs_lenbuf = 0;
 
 fn filestore_len(s) {
     var cached = load64(s + 8);
@@ -149,7 +168,11 @@ fn filestore_len(s) {
     if (fd < 0) { return 0; }
     file_lock_shared(fd);
 
-    var buf = alloc(4096);
+    # 2.8.11 — reuse the module scratch buffer. This was `alloc(4096)` on
+    # every call, and alloc() is the bump allocator: never reclaimed. A
+    # long-lived consumer polling filestore_len leaked 4 KB per call.
+    if (_fs_lenbuf == 0) { _fs_lenbuf = alloc(4096); }
+    var buf = _fs_lenbuf;
     var count = 0;
     var n = 1;
     while (n > 0) {
@@ -177,7 +200,10 @@ fn filestore_is_empty(s) {
 # ================================================================
 
 fn filestore_load_and_verify(s) {
-    var entries = filestore_load_all(s);
+    var entries = filestore_load_all_or_err(s);
+    # 2.8.11 — propagate an unreadable log instead of verifying an empty vec
+    # and reporting success. See filestore_load_all_or_err.
+    if (libro_is_error(entries) == 1) { return entries; }
     var err = verify_chain(entries, 0);
     if (err != 0) {
         sakshi_error("filestore: verification failed", 30);
@@ -208,14 +234,19 @@ fn filestore_verify_streamed(s, chunk_size) {
 
     var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
-    if (fd < 0) { return 0; }
+    # 2.8.11 — returned 0, which is ALSO this function's success value for a
+    # valid empty log, so an unreadable file read as "verified, nothing wrong".
+    if (fd < 0) {
+        return error_new(LIBRO_ERR_IO,
+          "filestore: cannot open log for streamed verification");
+    }
     file_lock_shared(fd);
 
     var buf_fill = 0;
     var chunk = vec_new();
     var verified = 0;
     var offset = 0;
-    var prev_tail_hash = str_from("");
+    var prev_tail_hash = libro_empty_str();
 
     var eof = 0;
     while (eof == 0 || buf_fill > 0) {
@@ -284,7 +315,11 @@ fn filestore_verify_streamed(s, chunk_size) {
             sakshi_error("filestore: verify streamed — line exceeds 64KB", 47);
             file_unlock(fd);
             file_close(fd);
-            return 0;
+            # 2.8.11 — was `return 0`, i.e. "verified successfully, zero
+            # entries". An over-long line ABORTS the scan with entries left
+            # unverified; that must not read as a clean result.
+            return error_new(LIBRO_ERR_IO,
+              "filestore: record exceeds 64KB, verification aborted");
         }
     }
 
@@ -337,18 +372,20 @@ fn _filestore_entry_json(sb, e) {
     str_builder_add_cstr(sb, "\",\"severity\":\"");
     str_builder_add_cstr(sb, severity_as_str(entry_severity(e)));
     str_builder_add_cstr(sb, "\",\"source\":\"");
-    str_builder_add(sb, entry_source(e));
+    # 2.8.11 — source and action were written RAW. A '"' in either produced a
+    # line the reader could not parse, so the entry was silently dropped on
+    # reload (a false integrity violation at best, evidence loss at worst),
+    # and a crafted value could inject its own "hash"/"prev_hash" keys.
+    _sb_json_escape(sb, entry_source(e));
     str_builder_add_cstr(sb, "\",\"action\":\"");
-    str_builder_add(sb, entry_action(e));
+    _sb_json_escape(sb, entry_action(e));
     str_builder_add_cstr(sb, "\",\"details\":\"");
     # Escape details JSON as a string value (avoids nested object parse issues)
     _sb_json_escape(sb, entry_details(e));
     str_builder_add_cstr(sb, "\",\"agent_id\":\"");
     var aid = entry_agent_id(e);
-    if (aid == 0) {
-        str_builder_add_cstr(sb, "");
-    } else {
-        str_builder_add(sb, aid);
+    if (aid != 0) {
+        _sb_json_escape(sb, aid);
     }
     str_builder_add_cstr(sb, "\",\"prev_hash\":\"");
     str_builder_add(sb, entry_prev_hash(e));
@@ -364,25 +401,268 @@ fn _filestore_entry_json(sb, e) {
 # JSON deserialization — parse a JSON line back to AuditEntry
 # ================================================================
 
-var _fsp_pairs = 0;
+# ================================================================
+# Flat JSON record reader (2.8.11)
+# ================================================================
+#
+# ⚠ WHY THIS EXISTS instead of bayan's json_parse.
+#
+# bayan's flat-pair API captures string values VERBATIM — escapes undecoded,
+# by design (its own comment says so; the tagged-tree parser is the decoding
+# one). libro therefore had to run a second pass, _filestore_unescape, and
+# that pass handled only \" \\ and \n. A \t, \r, \b, \f or \uXXXX in any
+# field came back still escaped, so the reloaded entry differed from the one
+# written and failed verification.
+#
+# The writer had the matching hole: it emitted raw C0 bytes for everything
+# except \n, which is invalid JSON per RFC 8259 §7 and, for a raw CR,
+# truncates the record for any reader that strips line endings.
+#
+# On top of that the flat parser is permissive: it resynchronises through
+# malformed input rather than rejecting it, which is how a record with no
+# "timestamp" was accepted and stored a NULL Str.
+#
+# The record shape libro writes is fixed and flat, so a dedicated strict
+# reader is a few dozen lines, decodes escapes inline (no second pass to fall
+# out of sync with the writer), rejects malformed records outright, and keeps
+# the integrity-critical path off a third-party parser's escape semantics.
+#
+# ⚠ Correction to an earlier draft of this comment, recorded because it was
+# wrong in a way worth not repeating: it claimed bayan mis-parsed \" inside a
+# string value on BOTH 1.4.2 and 1.5.2. That was measured against 1.4.2 twice
+# — the pin under test had been reverted mid-session without being noticed.
+# bayan 1.5.1 fixed exactly that defect (see its CHANGELOG), and 1.5.2, which
+# cyrius 6.5.34 folds, is correct: it returns `{\"user\":\"bob\"}` verbatim and
+# does not lose the following key. The quoted-details round-trip break was
+# real for libro 2.8.10 as shipped, because 2.8.10 pinned 6.5.31 (bayan
+# 1.4.2) — but it was a dep bug the toolchain bump fixes, not a libro bug,
+# and nothing here is a workaround for it.
+#
+# Returns a vec of alternating [key, value, key, value, …] Strs with escapes
+# decoded, or 0 if the line is not a well-formed flat string object.
+
+fn _fsj_hexval(c) {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+fn _fsj_is_ws(c) {
+    if (c == 32 || c == 9 || c == 10 || c == 13) { return 1; }
+    return 0;
+}
+
+var _fsj_pos = 0;
+
+# Decode one JSON string starting at data[pos] (which must be '"') into a
+# freshly allocated buffer. Sets _fsj_pos past the closing quote.
+# Returns a Str, or 0 on malformed input.
+fn _fsj_read_string(data, pos, slen) {
+    if (pos >= slen || (load8(data + pos) & 0xFF) != 34) { return 0; }
+    pos += 1;
+    # Size the decode buffer to THIS string's span, not to the rest of the
+    # line. Sizing it `slen - pos` allocated ~a whole record per field, ten
+    # times per entry, out of the never-reclaimed bump allocator — measured as
+    # +66% on filestore_load_10. One cheap scan to the closing quote gives the
+    # encoded length, and the decoded form is never longer than that.
+    var scan = pos;
+    var span = 0 - 1;
+    while (scan < slen && span < 0) {
+        var sc = load8(data + scan) & 0xFF;
+        if (sc == 92) { scan += 2; }
+        elif (sc == 34) { span = scan - pos; }
+        else { scan += 1; }
+    }
+    if (span < 0) { return 0; }
+    var out = alloc(span + 1);
+    var oi = 0;
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 34) {
+            store8(out + oi, 0);
+            _fsj_pos = pos + 1;
+            return str_new(out, oi);
+        }
+        if (c == 92) {
+            if (pos + 1 >= slen) { return 0; }
+            var e = load8(data + pos + 1) & 0xFF;
+            if (e == 34)       { store8(out + oi, 34);  oi += 1; pos += 2; }
+            elif (e == 92)     { store8(out + oi, 92);  oi += 1; pos += 2; }
+            elif (e == 47)     { store8(out + oi, 47);  oi += 1; pos += 2; }
+            elif (e == 110)    { store8(out + oi, 10);  oi += 1; pos += 2; }
+            elif (e == 114)    { store8(out + oi, 13);  oi += 1; pos += 2; }
+            elif (e == 116)    { store8(out + oi, 9);   oi += 1; pos += 2; }
+            elif (e == 98)     { store8(out + oi, 8);   oi += 1; pos += 2; }
+            elif (e == 102)    { store8(out + oi, 12);  oi += 1; pos += 2; }
+            elif (e == 117) {
+                if (pos + 5 >= slen) { return 0; }
+                var h3 = _fsj_hexval(load8(data + pos + 2) & 0xFF);
+                var h2 = _fsj_hexval(load8(data + pos + 3) & 0xFF);
+                var h1 = _fsj_hexval(load8(data + pos + 4) & 0xFF);
+                var h0 = _fsj_hexval(load8(data + pos + 5) & 0xFF);
+                if (h3 < 0 || h2 < 0 || h1 < 0 || h0 < 0) { return 0; }
+                var cp = (h3 << 12) | (h2 << 8) | (h1 << 4) | h0;
+                # UTF-8 encode. libro only ever EMITS \u00XX for C0 bytes,
+                # but a foreign producer may send any BMP code point.
+                if (cp < 128) {
+                    store8(out + oi, cp); oi += 1;
+                } elif (cp < 2048) {
+                    store8(out + oi, 192 | (cp >> 6)); oi += 1;
+                    store8(out + oi, 128 | (cp & 63)); oi += 1;
+                } else {
+                    store8(out + oi, 224 | (cp >> 12)); oi += 1;
+                    store8(out + oi, 128 | ((cp >> 6) & 63)); oi += 1;
+                    store8(out + oi, 128 | (cp & 63)); oi += 1;
+                }
+                pos += 6;
+            } else {
+                return 0;
+            }
+        } else {
+            store8(out + oi, c);
+            oi += 1;
+            pos += 1;
+        }
+    }
+    return 0;
+}
+
+# A bare JSON scalar (number / true / false / null), returned as its raw
+# text. Entry records are all-strings, but chain_export's header line carries
+# `"_libro_chain":1` and `"max_capacity":N` as numbers, so the reader has to
+# take both. Strict: the token must be a plausible scalar and must end at a
+# structural byte.
+fn _fsj_read_scalar(data, pos, slen) {
+    var start = pos;
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 44 || c == 125 || c == 93) { pos = pos; }
+        if (c == 44 || c == 125 || c == 93 || _fsj_is_ws(c) == 1) {
+            if (pos == start) { return 0; }
+            _fsj_pos = pos;
+            return str_new(data + start, pos - start);
+        }
+        # Permitted scalar bytes: digits, sign, dot, exponent, and the
+        # lowercase letters of true/false/null.
+        if ((c >= 48 && c <= 57) || c == 45 || c == 43 || c == 46
+          || (c >= 97 && c <= 122)) {
+            pos += 1;
+        } else {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+fn _fsj_read_value(data, pos, slen) {
+    if (pos >= slen) { return 0; }
+    if ((load8(data + pos) & 0xFF) == 34) {
+        return _fsj_read_string(data, pos, slen);
+    }
+    return _fsj_read_scalar(data, pos, slen);
+}
+
+fn _fsj_skip_ws(data, pos, slen) {
+    while (pos < slen && _fsj_is_ws(load8(data + pos) & 0xFF) == 1) { pos += 1; }
+    return pos;
+}
+
+fn _fsj_parse_flat(line) {
+    if (line == 0) { return 0; }
+    var data = str_data(line);
+    var slen = str_len(line);
+    var pos = _fsj_skip_ws(data, 0, slen);
+    if (pos >= slen || (load8(data + pos) & 0xFF) != 123) { return 0; }
+    pos += 1;
+    var out = vec_new();
+    pos = _fsj_skip_ws(data, pos, slen);
+    if (pos < slen && (load8(data + pos) & 0xFF) == 125) { return out; }
+    var stop = 0;
+    while (stop == 0) {
+        pos = _fsj_skip_ws(data, pos, slen);
+        var k = _fsj_read_string(data, pos, slen);
+        if (k == 0) { return 0; }
+        pos = _fsj_skip_ws(data, _fsj_pos, slen);
+        if (pos >= slen || (load8(data + pos) & 0xFF) != 58) { return 0; }
+        pos = _fsj_skip_ws(data, pos + 1, slen);
+        var v = _fsj_read_value(data, pos, slen);
+        if (v == 0) { return 0; }
+        pos = _fsj_skip_ws(data, _fsj_pos, slen);
+        vec_push(out, k);
+        vec_push(out, v);
+        if (pos >= slen) { return 0; }
+        var d = load8(data + pos) & 0xFF;
+        if (d == 44) { pos += 1; }
+        elif (d == 125) { pos += 1; stop = 1; }
+        else { return 0; }
+    }
+    return out;
+}
+
+# Compare a parsed key Str against a literal cstr without materialising a Str
+# for the literal. _filestore_parse_entry does ten lookups over a ten-pair
+# list, so the naive `str_eq(k, str_from(key))` form built up to a hundred
+# throwaway Strs per record.
+fn _fsj_key_is(k, cstr) {
+    var n = str_len(k);
+    var d = str_data(k);
+    var i = 0;
+    while (i < n) {
+        var c = load8(cstr + i) & 0xFF;
+        if (c == 0) { return 0; }
+        if ((load8(d + i) & 0xFF) != c) { return 0; }
+        i += 1;
+    }
+    if ((load8(cstr + n) & 0xFF) != 0) { return 0; }
+    return 1;
+}
+
+fn _fsj_lookup(pairs, key) {
+    if (pairs == 0) { return 0; }
+    var n = vec_len(pairs);
+    var i = 0;
+    while (i + 1 < n) {
+        if (_fsj_key_is(vec_get(pairs, i), key) == 1) {
+            return vec_get(pairs, i + 1);
+        }
+        i += 2;
+    }
+    return 0;
+}
 
 fn _filestore_parse_entry(line) {
-    _fsp_pairs = json_parse(line);
-    if (vec_len(_fsp_pairs) == 0) { return 0; }
+    # 2.8.11 — the pair list is a LOCAL. It used to be published to the
+    # file-scope global `_fsp_pairs` and then read ten times through
+    # _fsp_get(), so two threads parsing concurrently — or any re-entry —
+    # assembled a single entry out of two different lines, producing a record
+    # that never existed and a false integrity violation. Same class as the
+    # 2.8.9 cross-thread prepared-statement crash, and filestore reads are a
+    # supported shape from any thread.
+    var pairs = _fsj_parse_flat(line);
+    if (pairs == 0) { return 0; }
+    if (vec_len(pairs) == 0) { return 0; }
 
     # Extract fields from JSON pairs
-    var id_hex = _fsp_get("id");
-    var ts_str = _fsp_get("timestamp");
-    var sev_str = _fsp_get("severity");
-    var source = _fsp_get("source");
-    var action = _fsp_get("action");
-    var details = _fsp_get("details");
-    var agent_id = _fsp_get("agent_id");
-    var prev_hash = _fsp_get("prev_hash");
-    var hash = _fsp_get("hash");
-    var hash_alg = _fsp_get("hash_algorithm");
+    var id_hex = _fsj_lookup(pairs, "id");
+    var ts_str = _fsj_lookup(pairs, "timestamp");
+    var sev_str = _fsj_lookup(pairs, "severity");
+    var source = _fsj_lookup(pairs, "source");
+    var action = _fsj_lookup(pairs, "action");
+    var details = _fsj_lookup(pairs, "details");
+    var agent_id = _fsj_lookup(pairs, "agent_id");
+    var prev_hash = _fsj_lookup(pairs, "prev_hash");
+    var hash = _fsj_lookup(pairs, "hash");
+    var hash_alg = _fsj_lookup(pairs, "hash_algorithm");
 
+    # 2.8.11 — timestamp and prev_hash were NOT checked, so an absent field
+    # stored a NULL Str into e+16 / e+64. entry_compute_hash calls
+    # str_data()/str_len() on both, so every verify, query and re-serialize of
+    # that entry dereferenced address 0 and SIGSEGV'd the process. A record
+    # arriving from a proof bundle or a hand-edited log is untrusted input, so
+    # this was a remote crash in the verifier. Reject the record instead.
     if (source == 0 || action == 0 || hash == 0) { return 0; }
+    if (ts_str == 0 || prev_hash == 0) { return 0; }
 
     # Build entry from raw fields (no hash recomputation)
     var e = fl_alloc(88);
@@ -397,13 +677,20 @@ fn _filestore_parse_entry(line) {
     if (details == 0 || str_len(details) == 0) {
         store64(e + 48, str_from("{}"));
     } else {
-        # Details was escaped as a string — unescape backslash sequences
-        store64(e + 48, _filestore_unescape(details));
+        # _fsj_read_string already decoded the escapes; the old
+        # _filestore_unescape second pass is gone (it would double-decode).
+        store64(e + 48, details);
     }
     if (agent_id != 0 && str_len(agent_id) > 0) {
-        # Check for "null" literal
-        var ad = str_data(agent_id);
-        if (str_len(agent_id) == 4 && (load8(ad) & 0xFF) == 110) {
+        # 2.8.11 — this tested `len == 4 && first byte == 'n'`, so EVERY
+        # four-character agent_id beginning with n — "node", "nine", "n123" —
+        # was read back as absent. The entry then hashed with an empty
+        # agent_id and reported a false integrity violation on a chain nobody
+        # had touched. Now the whole literal must match.
+        # ⚠ An agent genuinely named "null" is still read as absent; libro's
+        # own writer emits "" for absent, so this arm exists only for foreign
+        # producers.
+        if (str_eq(agent_id, str_from("null")) == 1) {
             store64(e + 56, 0);
         } else {
             store64(e + 56, agent_id);
@@ -420,13 +707,6 @@ fn _filestore_parse_entry(line) {
     }
 
     return e;
-}
-
-fn _fsp_get(key) {
-    var skey = str_from(key);
-    var v = json_get(_fsp_pairs, skey);
-    if (v == 0) { return 0; }
-    return v;
 }
 
 fn _parse_severity(s) {
@@ -469,10 +749,15 @@ fn _filestore_unescape(s) {
 }
 
 fn _filestore_parse_uuid(buf, hex_str) {
-    if (hex_str == 0) {
-        memset(buf, 0, 16);
-        return 0;
-    }
+    # 2.8.11 — zero the field UNCONDITIONALLY. This memset used to run only on
+    # the hex_str == 0 path; every other path left whatever bytes fl_alloc(88)
+    # handed back for however many of the 16 the id decoded short of. The 16
+    # id bytes are the FIRST thing entry_compute_hash feeds, so a short or
+    # empty "id" made the entry's hash depend on recycled freelist memory:
+    # the same record parsed twice produced two different hashes. Reachable
+    # from filestore_load_all, chain_import and proof JSON import.
+    memset(buf, 0, 16);
+    if (hex_str == 0) { return 0; }
     # UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars)
     # Strip dashes, decode 32 hex chars to 16 bytes
     var hd = str_data(hex_str);

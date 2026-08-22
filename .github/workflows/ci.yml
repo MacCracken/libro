@@ -104,13 +104,13 @@ jobs:
           # local-buffer cases). Any addition here should be justified
           # by a comment in the edited source file.
           declare -A ALLOW
-          ALLOW[src/anchoring.cyr]="a r _hf_lebuf"
+          ALLOW[src/anchoring.cyr]="a r"
           ALLOW[src/chain.cyr]="a c"
           ALLOW[src/entry.cyr]="e _ts_buf"
-          ALLOW[src/error.cyr]="e"
+          ALLOW[src/error.cyr]="e p"
           ALLOW[src/export.cyr]="sb"
           ALLOW[src/file_store.cyr]="e s"
-          ALLOW[src/hasher.cyr]="h _hf_lebuf"
+          ALLOW[src/hasher.cyr]="h"
           # main.cyr: test locals. *_layout names are intentional
           # raw-offset probes in the #derive(accessors) layout-invariant
           # tests (test_layout_* — see ADR 0005). Added per-struct as
@@ -255,7 +255,7 @@ jobs:
           check_offset_bound src/anchoring.cyr     r      receipt          5
           check_offset_bound src/chain.cyr         a      archive          2
           check_offset_bound src/entry.cyr         e      entry           11
-          check_offset_bound src/error.cyr         e      error            6
+          check_offset_bound src/error.cyr         e      error            7
           check_offset_bound src/file_store.cyr    e      entry           11
           check_offset_bound src/file_store.cyr    s      filestore        3
           check_offset_bound src/patra_store.cyr   e      entry           11

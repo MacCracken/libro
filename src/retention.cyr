@@ -97,6 +97,13 @@ fn _retention_first_after(entries, cutoff_secs) {
     while (i < n) {
         var e = vec_get(entries, i);
         var ts = _query_parse_ts(entry_timestamp(e));
+        # 2.8.11 — an entry whose timestamp cannot be parsed is treated as
+        # RETAINED (the split point stops here), never as expired. Retention
+        # decides what gets deleted from an audit log; deleting a record whose
+        # age cannot be established is not a decision this library should make
+        # silently. Through 2.8.10 the garbage value from an unvalidated parse
+        # flowed straight into this comparison.
+        if (ts == QUERY_TS_INVALID) { return i; }
         if (ts > cutoff_secs) {
             return i;
         }

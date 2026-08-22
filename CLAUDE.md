@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.8.8 (2026-08-19)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.31 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.8.11 (2026-08-22)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.34 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -28,8 +28,8 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra (agnosys dropped at the agnosys → agnodrm decomposition — TPM now sourced from sigil ≥ 3.9.0)
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
-- **Tests**: 518 default / 530 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 821,688 B default (2.8.8, measured; `.bss` thin at 80,368 B). Capacity headroom at 2.8.8: `fn_table 2266 / 32768`, `identifiers 61179 / 524288`, `var_table 917 / 8192` (`CYRIUS_STATS=1`) — well clear of the 8192 fn_table threshold behind the 6.4.75 P0. Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. Benches/fuzz likewise ~0.6 MB. See quirk #9 for the auto-include mechanism (why the fat dep bloated every binary and how to diagnose it — always isolate OUTSIDE the project dir).
+- **Tests**: 661 default / 673 with `-D LIBRO_TPM` (all pass)
+- **Binary**: 1,072,048 B default (2.8.11, measured; 1,094,712 B with `tpm`). Capacity headroom: `fn_table 2704 / 32768`, `identifiers 72435 / 524288`, `var_table 1039 / 8192` (`CYRIUS_STATS=1`) — well clear of the 8192 fn_table threshold behind the 6.4.75 P0. **The 2.8.11 jump from 821,920 B is 83% toolchain, not libro**: 2.8.10 source at 6.5.34 already measures 1,029,256 B, so +207,336 B is the fold bump (overwhelmingly bayan 1.4.2 → 1.5.2, whose 1.5.0 PDF/YAML surface DCE NOPs but does not remove) and only +42,792 B is 2.8.11's own source. **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` (100 KB) is the same move 2.8.0 made for sigil and is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. Was ~14 MB briefly after the 6.4.62 bump because libro pulled the monolithic `dist/sigil.cyr` (its x509/RSA `.bss` ~13 MB, auto-included) — 2.8.0 thinned `[deps.sigil]` to the mldsa+sha256+hex sub-surface, dropping `.bss` 13 MB → ~79 KB. See quirk #9 for the auto-include mechanism (why a fat dep bloats every binary and how to diagnose it — always isolate OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -171,7 +171,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.31"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.34"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -187,7 +187,7 @@ docs/ (when earned):
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 
-## Known Cyrius Compiler Quirks (6.5.27)
+## Known Cyrius Compiler Quirks (6.5.34)
 
 > ## ⚠️ BIG NOTE — sigil needs `lib/thread_local.cyr` before it (or SIGILL)
 >
@@ -230,6 +230,44 @@ docs/ (when earned):
 > see quirk #4. cyrius 6.0.53 raised it 64 → 512, so `tpm_anchor` is
 > back to `#derive(accessors)` and the 2.6.5 hand-written-accessor
 > workaround is gone as of 2.7.1.)*
+
+> ## ⚠️ BIG NOTE — 2.8.11 changed the hash preimage; pre-2.8.11 chains do not verify
+>
+> Four fixes in 2.8.11 alter what goes into an entry hash and a Merkle root:
+> `hash_algorithm` joined the entry preimage as step 9, the canonical-JSON
+> hasher now rejects malformed `details` instead of silently skipping bytes,
+> Merkle gained RFC 9162 `0x00`/`0x01` domain separation, and `merkle_build`
+> promotes an odd trailing node instead of duplicating it. **A chain written by
+> libro ≤ 2.8.10 will not verify against 2.8.11**, and neither will proofs,
+> anchors or tree-head signatures over it. There is no migration path — the old
+> preimage was unsound. Consumers re-export and re-anchor.
+>
+> ⭐ **What this cost to find, and the transferable lesson:** the canonical-JSON
+> collision (`{"a":1}`, `{ZZZZ"a":1}`, `{"a":1 JUNK}`, `{"a" 1}` and
+> `{"a":1}XXXXXXX` all hashing identically) survived 521 green assertions
+> because **every in-tree `details` was produced by libro itself**. The hasher
+> was never fed anything it had not written. If a parser is only ever tested on
+> its own output, its tolerance is untested by construction — feed it junk.
+>
+> ⚠ **Adding `hash_algorithm` to the preimage immediately turned PatraStore
+> red**, exposing a latent bug: `patrastore_append` bound the column with
+> `strlen()` on a `Str` fat pointer, so column 9 had held garbage on every
+> INSERT since the column existed. Making a field load-bearing is a good way to
+> find out nobody was checking it.
+
+> ## ⚠️ BIG NOTE — the CI raw-offset gate scans COMMENTS, unanchored
+>
+> `.github/workflows/ci.yml`'s raw-offset allowlist greps for
+> `(load64|store64)\(<ident>` with no anchoring, so **prose inside a `#`
+> comment matches**. Writing `load64(p + 72)` or `store64(_hf_lebuf, len)` in an
+> explanatory comment fails the gate on an unregistered param name. Hit twice
+> while writing 2.8.11's comments. Describe the operation in words, or use a
+> name already in that file's allowlist. This is the same class as the
+> `cyrius.cyml` note about never writing a bracketed `deps.NAME` header inside a
+> comment.
+>
+> Stack buffers are exempt: `store64(&lebuf, len)` starts with `&`, which the
+> gate's `[a-zA-Z_]` character class does not match, so it is skipped entirely.
 
 Most cc3-era workarounds documented in earlier libro versions are now resolved.
 Quirks still worth knowing:

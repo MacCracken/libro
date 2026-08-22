@@ -13,42 +13,82 @@ enum LibroErr {
     LIBRO_ERR_DER = 8;
 }
 
+# Discriminator magic, 2.8.11. "LBROERR!" little-endian.
+#
+# ⚠ WHY THIS EXISTS. libro's pervasive convention is "return the value on
+# success, an error struct pointer on failure". Both are non-zero pointers, so
+# the natural `if (r != 0)` check reads a FAILURE as a success. That is not a
+# theoretical hazard — every one of these shipped it:
+#
+#   patrastore_load_and_verify   entries vec  | error ptr
+#   filestore_load_and_verify    entries vec  | error ptr
+#   entry_new_validated          entry ptr    | error ptr (whose fields then
+#                                              read as a max-severity entry)
+#   memstore_verify_streamed     count        | error ptr
+#
+# For an integrity library, "an integrity violation is indistinguishable from
+# success" is the worst available failure mode. Every error constructor now
+# stamps this magic at offset 0 so libro_is_error() can answer the question,
+# and the whole class becomes checkable rather than documented-around.
+var LIBRO_ERR_MAGIC = 0x214C42524F455252;
+
 # Error — generated accessors:
-#   error_code, error_msg, error_field_name, error_index,
+#   error_magic, error_code, error_msg, error_field_name, error_index,
 #   error_expected, error_actual (+ setters)
 #derive(accessors)
-struct error { code; msg; field_name; index; expected; actual; }
+struct error { magic; code; msg; field_name; index; expected; actual; }
+
+# Is `p` one of libro's error objects?
+#
+# Safe on any pointer to at least 8 readable bytes, which every libro struct
+# and every stdlib vec satisfies. A false positive needs a non-error object
+# whose first 8 bytes happen to equal the magic — for an entry that is the
+# first half of a random UUID, i.e. 2^-64.
+fn libro_is_error(p) {
+    if (p == 0) { return 0; }
+    if (load64(p) == LIBRO_ERR_MAGIC) { return 1; }
+    return 0;
+}
+
+# Inverse helper reading the way call sites want to: "did this succeed?"
+fn libro_is_ok(p) {
+    if (p == 0) { return 0; }
+    if (libro_is_error(p) == 1) { return 0; }
+    return 1;
+}
 
 fn error_new(code, msg) {
-    var e = fl_alloc(48);
-    store64(e, code);
-    store64(e + 8, msg);
-    store64(e + 16, 0);
+    var e = fl_alloc(56);
+    store64(e, LIBRO_ERR_MAGIC);
+    store64(e + 8, code);
+    store64(e + 16, msg);
     store64(e + 24, 0);
     store64(e + 32, 0);
     store64(e + 40, 0);
+    store64(e + 48, 0);
     return e;
 }
 
 fn error_integrity(index, expected, actual) {
-    var e = fl_alloc(48);
-    store64(e, LIBRO_ERR_INTEGRITY);
-    store64(e + 8, "integrity violation");
-    store64(e + 16, 0);
-    store64(e + 24, index);
-    store64(e + 32, expected);
-    store64(e + 40, actual);
+    var e = fl_alloc(56);
+    store64(e, LIBRO_ERR_MAGIC);
+    store64(e + 8, LIBRO_ERR_INTEGRITY);
+    store64(e + 16, "integrity violation");
+    store64(e + 24, 0);
+    store64(e + 32, index);
+    store64(e + 40, expected);
+    store64(e + 48, actual);
     return e;
 }
 
 fn error_field(field, len, max_val) {
-    var e = fl_alloc(48);
-    store64(e, LIBRO_ERR_FIELD_TOO_LONG);
-    store64(e + 8, "field too long");
-    store64(e + 16, field);
-    store64(e + 24, len);
-    store64(e + 32, max_val);
-    store64(e + 40, 0);
+    var e = fl_alloc(56);
+    store64(e, LIBRO_ERR_MAGIC);
+    store64(e + 8, LIBRO_ERR_FIELD_TOO_LONG);
+    store64(e + 16, "field too long");
+    store64(e + 24, field);
+    store64(e + 32, len);
+    store64(e + 40, max_val);
+    store64(e + 48, 0);
     return e;
 }
-

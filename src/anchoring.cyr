@@ -74,9 +74,11 @@ fn anchor_compute_hash(a) {
     hash_field(hasher, str_data(mr), str_len(mr));
 
     # 3. entry_count as 8-byte LE
-    if (_hf_lebuf == 0) { _hf_lebuf = alloc(8); }
-    store64(_hf_lebuf, load64(a + 24));
-    hasher_update(hasher, _hf_lebuf, 8);
+    # 2.8.11 — staged on the stack, not the shared _hf_lebuf global. See
+    # hash_field in hasher.cyr for why that global was a cross-thread hazard.
+    var cntbuf[8];
+    store64(&cntbuf, load64(a + 24));
+    hasher_update(hasher, &cntbuf, 8);
 
     # 4. chain_head (length-prefixed)
     var ch = load64(a + 32);

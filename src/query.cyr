@@ -99,10 +99,15 @@ fn query_matches(q, e) {
         if (entry_severity(e) < qmin) { return 0; }
     }
 
-    # After filter (exclusive: entry timestamp > after)
+    # After filter (exclusive: entry timestamp > after).
+    # 2.8.11 — an unparseable timestamp no longer compares as a garbage
+    # number; it matches NO time window. Fail-closed is the right direction
+    # for a filter: a record whose time cannot be established must not be
+    # presented as falling inside a queried period.
     var qafter = load64(q + 24);
     if (qafter != 0) {
         var ets = _query_parse_ts(entry_timestamp(e));
+        if (ets == QUERY_TS_INVALID) { return 0; }
         if (ets <= qafter) { return 0; }
     }
 
@@ -110,33 +115,75 @@ fn query_matches(q, e) {
     var qbefore = load64(q + 32);
     if (qbefore != 0) {
         var ets2 = _query_parse_ts(entry_timestamp(e));
+        if (ets2 == QUERY_TS_INVALID) { return 0; }
         if (ets2 >= qbefore) { return 0; }
     }
 
     return 1;
 }
 
-# Parse RFC 3339 timestamp Str back to epoch seconds (simple parser)
-# Expects "YYYY-MM-DDTHH:MM:SSZ" format
+# Sentinel returned by _query_parse_ts for a timestamp it cannot parse.
+# Distinct from every real epoch value, including pre-1970 negatives.
+var QUERY_TS_INVALID = 0 - 0x4000000000000000;
+
+# Parse an RFC 3339 timestamp Str back to epoch seconds.
+# Expects exactly "YYYY-MM-DDTHH:MM:SSZ" (20 chars).
+# Returns QUERY_TS_INVALID if the input is not that shape.
+#
+# ⚠ 2.8.11 — this read 20 bytes from a Str OF ANY LENGTH and validated
+# nothing: _parse_digits did `result * 10 + (byte - 48)` with no digit check.
+# Measured on 2.8.10:
+#     ""                     -> -1554199139047   (read 20 bytes past a
+#                                                 zero-length Str)
+#     "2026"                 ->  1358407617
+#     "not-a-timestamp!!!!!" ->  2114694242535
+# Timestamps arrive from disk and from proof bundles verbatim
+# (_filestore_parse_entry, _pfj_parse_one_entry), so one truncated or garbage
+# value made query_after / query_before silently include or exclude a record —
+# a compliance time-window query quietly dropping evidence and reporting
+# success. The same function drives retention, so it also decided WHICH
+# ENTRIES GET DELETED: with a truncated timestamp, retention_sox() (keep 7
+# years) returned split_index 0.
+#
+# In-tree entries always come from timestamp_rfc3339, which is well-formed —
+# that is why 521 tests never fed this anything it had not produced itself.
 fn _query_parse_ts(ts) {
+    if (ts == 0) { return QUERY_TS_INVALID; }
+    if (str_len(ts) != 20) { return QUERY_TS_INVALID; }
     var d = str_data(ts);
+    # Fixed separators: YYYY-MM-DDTHH:MM:SSZ
+    if ((load8(d + 4) & 0xFF) != 45)  { return QUERY_TS_INVALID; }
+    if ((load8(d + 7) & 0xFF) != 45)  { return QUERY_TS_INVALID; }
+    if ((load8(d + 10) & 0xFF) != 84) { return QUERY_TS_INVALID; }
+    if ((load8(d + 13) & 0xFF) != 58) { return QUERY_TS_INVALID; }
+    if ((load8(d + 16) & 0xFF) != 58) { return QUERY_TS_INVALID; }
+    if ((load8(d + 19) & 0xFF) != 90) { return QUERY_TS_INVALID; }
+
     var year = _parse_digits(d, 4);
     var month = _parse_digits(d + 5, 2);
     var day = _parse_digits(d + 8, 2);
     var hour = _parse_digits(d + 11, 2);
     var minute = _parse_digits(d + 14, 2);
     var second = _parse_digits(d + 17, 2);
+    if (year < 0 || month < 0 || day < 0) { return QUERY_TS_INVALID; }
+    if (hour < 0 || minute < 0 || second < 0) { return QUERY_TS_INVALID; }
+    if (month < 1 || month > 12) { return QUERY_TS_INVALID; }
+    if (day < 1 || day > 31) { return QUERY_TS_INVALID; }
+    if (hour > 23 || minute > 59 || second > 60) { return QUERY_TS_INVALID; }
 
     # Convert to epoch seconds (days since epoch + time of day)
     var days = _days_from_civil(year, month, day);
     return days * 86400 + hour * 3600 + minute * 60 + second;
 }
 
+# Returns the parsed value, or -1 if any of the `count` bytes is not a digit.
 fn _parse_digits(buf, count) {
     var result = 0;
     var i = 0;
     while (i < count) {
-        result = result * 10 + ((load8(buf + i) & 0xFF) - 48);
+        var c = load8(buf + i) & 0xFF;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        result = result * 10 + (c - 48);
         i += 1;
     }
     return result;

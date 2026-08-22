@@ -239,7 +239,7 @@ fn patrastore_append(s, e) {
     if (_ps_field_too_long("agent_id", 8, str_len(aid)) == 1) { over = 1; }
     if (_ps_field_too_long("prev_hash", 9, str_len(ph)) == 1) { over = 1; }
     if (_ps_field_too_long("hash", 4, str_len(hash)) == 1) { over = 1; }
-    if (_ps_field_too_long("hash_algorithm", 14, strlen(halg)) == 1) { over = 1; }
+    if (_ps_field_too_long("hash_algorithm", 14, str_len(halg)) == 1) { over = 1; }
     if (over == 1) {
         sakshi_error("patrastore: append rejected, entry not stored", 44);
         return PATRA_ERR_ROWSZ;
@@ -259,7 +259,12 @@ fn patrastore_append(s, e) {
     patra_bind_text(st, 6, str_data(aid),  str_len(aid));
     patra_bind_text(st, 7, str_data(ph),   str_len(ph));
     patra_bind_text(st, 8, str_data(hash), str_len(hash));
-    patra_bind_text(st, 9, halg,           strlen(halg));   # cstr: entry_hash_algorithm
+    # 2.8.11 — `halg` is a Str (entry.cyr:506 stores str_from(HASH_ALGORITHM)),
+    # NOT a cstr. The old `strlen(halg)` walked the Str fat-pointer struct and
+    # bound its raw bytes, so column 9 held garbage on every INSERT. Latent
+    # while hash_algorithm sat outside the entry preimage; the moment 2.8.11
+    # put it in, every reloaded PatraStore entry failed verification.
+    patra_bind_text(st, 9, str_data(halg), str_len(halg));
     var r = patra_exec_prepared(db, st);
     patra_finalize(st);
     if (r != PATRA_OK) {
@@ -294,13 +299,22 @@ fn patrastore_append_batch(s, entries) {
 # Load all
 # ================================================================
 
-fn patrastore_load_all(s) {
+# Load every row, or a libro error object if the query fails.
+#
+# 2.8.11 — same defect as filestore_load_all_or_err: a failed query returned
+# an empty vec, indistinguishable from an empty table, so
+# patrastore_load_and_verify reported an unreadable or corrupt database as
+# successfully verified. Check with libro_is_error().
+fn patrastore_load_all_or_err(s) {
     sakshi_info("patrastore: load all", 20);
     var db = load64(s);
     # Parsed on the calling thread — never a cached handle. See
     # `_patrastore_prepare_stmts` for what reusing one across threads costs.
     var rs = patra_query(db, _ps_select_sql);
-    if (rs == 0) { return vec_new(); }
+    if (rs == 0) {
+        sakshi_error("patrastore: select failed", 25);
+        return error_new(LIBRO_ERR_STORE, "patrastore: query failed");
+    }
 
     var entries = vec_new();
     var n = patra_result_count(rs);
@@ -403,8 +417,23 @@ fn patrastore_is_empty(s) {
 # Load and verify
 # ================================================================
 
+# Legacy shape: always a vec, empty when the query failed. Prefer
+# patrastore_load_all_or_err, which can tell "unreadable" from "empty".
+fn patrastore_load_all(s) {
+    var r = patrastore_load_all_or_err(s);
+    if (libro_is_error(r) == 1) { return vec_new(); }
+    return r;
+}
+
+# Load and verify. Returns the entries vec on success, or a libro error
+# object on either a store failure or an integrity violation.
+#
+# 2.8.11 — both are non-zero pointers, so `if (r != 0)` reads an integrity
+# violation as a successful load. The answer is now `libro_is_error(r)`; that
+# was the open item filed alongside the 2.8.9 threading fix.
 fn patrastore_load_and_verify(s) {
-    var entries = patrastore_load_all(s);
+    var entries = patrastore_load_all_or_err(s);
+    if (libro_is_error(entries) == 1) { return entries; }
     var err = verify_chain(entries, 0);
     if (err != 0) {
         sakshi_error("patrastore: verify failed", 25);
@@ -426,15 +455,29 @@ fn patrastore_query(s, filter) {
 # Query by source — uses the STR index on `src` (patra 1.7.0)
 # ================================================================
 
+# 2.8.11 — this interpolated `source` straight into the SQL text between
+# single quotes. patrastore_append had already been migrated to bound
+# parameters in 2.8.1 after exactly this bug corrupted argonaut's log, but the
+# read path was left behind. Consequences, in order of severity:
+#   * a source containing `'` produced malformed SQL and returned ZERO rows —
+#     a query over an audit log silently answering "no such events";
+#   * a crafted source can widen the predicate to the WHOLE table, turning a
+#     scoped lookup into a full dump of every audit entry;
+#   * `source` reaches here from consumer-supplied and stored data.
+# Now bound, like the write path: the value is compared as bytes and never
+# reparsed as SQL, so no escaping is involved at all.
 fn patrastore_by_source(s, source) {
     var db = load64(s);
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb,
-      "SELECT * FROM audit_entries WHERE src = '");
-    str_builder_add(sb, source);
-    str_builder_add_cstr(sb, "'");
-    var sql = str_builder_build(sb);
-    var rs = patra_query(db, _entry_to_cstr(sql));
+    if (source == 0) { return vec_new(); }
+    var st = patra_prepare(db,
+      "SELECT * FROM audit_entries WHERE src = ?");
+    if (st == 0) {
+        sakshi_error("patrastore: by_source prepare failed", 36);
+        return vec_new();
+    }
+    patra_bind_text(st, 0, str_data(source), str_len(source));
+    var rs = patra_query_prepared(db, st);
+    patra_finalize(st);
     if (rs == 0) { return vec_new(); }
 
     var entries = vec_new();

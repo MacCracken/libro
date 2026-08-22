@@ -9,10 +9,10 @@ and what to watch when upgrading.
 
 | Dep | Pin field | Current | Resolved by | Purpose |
 |-----|-----------|---------|-------------|---------|
-| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.5.27** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
+| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.5.34** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
 | sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`     | **3.12.9** | `cyrius deps` → `lib/sigil-mldsa.cyr` + `lib/sigil_{sha_ni,sha256,hex}.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, hex. **Thin sub-surface, not the monolithic `dist/sigil.cyr`** (see below) |
 | sigil (tpm)      | `cyrius.cyml` `[deps.sigil_tpm] tag = "…"` | **3.12.9** | `cyrius deps --features tpm` → `lib/sigil_tpm_sigil-tpm.cyr` | TPM 2.0 primitives (`tpm_seal` / `tpm_unseal` / `tpm_detect`). **Optional** — activated only by the `tpm` feature for the `-D LIBRO_TPM` build |
-| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.13.8** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
+| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.13.10** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
 
 Zero third-party crates. No transitive graph to audit.
 
@@ -20,6 +20,40 @@ Zero third-party crates. No transitive graph to audit.
 
 1. **`agnosys` is gone.** libro's only agnosys surface was the TPM primitives used by `src/tpm_anchor.cyr`. The agnosys → agnodrm decomposition (2026-06-19) moved the trust stack into sigil, which promoted TPM to first-class at 3.9.0 — so TPM now resolves from the sigil pin and the separate `[deps.agnosys]` entry was removed. `src/tpm_anchor.cyr` is unchanged: same symbol names, different source.
 2. **The sigil surface is thin, and that is load-bearing.** `cyrius build` auto-includes every *active* `[deps.*]` module, so a fat dep dist lands in every binary whether or not `src/*.cyr` includes it. The monolithic `dist/sigil.cyr` inlines an x509/RSA/authenticode fold carrying ~13 MB of static `.bss` libro never calls — it put `build/libro` at ~14 MB. `[deps.sigil]` therefore pulls only `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`, and TPM sits behind the optional `tpm` feature so default builds never link it. `.bss` is **80,152 B** at 2.8.3. Do not "simplify" this back to the monolith. See CLAUDE.md quirk #9 — including the trap that any isolation test must be built **outside** the project dir, or the manifest auto-include silently pulls the full surface into your control build too.
+
+## Upstream items libro is waiting on
+
+Things libro has worked around locally and would rather not.
+
+### `#derive(accessors)` getters carry no declared return type
+
+`PP_DERIVE_ACCESSORS_BODY` (cyrius `src/frontend/lex_pp.cyr`) emits
+`fn Name_field(p) { … }` with no `: Type` annotation, because the struct
+declaration has no per-field types to carry through. The consequence in a
+consumer is a diagnostic that cannot be satisfied: a `Str`-typed local
+reassigned from an accessor gets `assigning non-pointer to typed pointer`,
+even though the value is a `Str` at runtime.
+
+libro carried **21** such warnings until 2.8.11. All 21 were benign — and that
+is the actual cost, because the one REAL instance of the same class (an integer
+written into `sth.algorithm`, a `Str` slot; see
+[`docs/audit/2026-08-22-audit.md`](../audit/2026-08-22-audit.md) Finding 9) did
+not warn at all, since the check fires on assignment into a typed local rather
+than on argument passing into an untyped parameter. Twenty-one ignorable
+warnings is how a real one hides.
+
+**Workaround in libro (2.8.11):** those sites initialize from
+`libro_empty_str()` (`src/hasher.cyr`), deliberately unannotated, which leaves
+the local untyped. Honest, but it discards type information.
+
+**What would fix it upstream:** typed struct fields feeding the generated
+getter's return type — `struct entry { hash: Str; }` producing
+`fn entry_hash(p): Str`. Then the diagnostic becomes load-bearing and these
+sites should revert to `str_from("")`.
+
+**Related, and worth pairing with it:** annotating `sth_new`'s `sig` / `vk_hex`
+/ `alg` parameters as `: Str` would have caught Finding 9 at the call site. The
+argument-passing direction of this check does not exist today.
 
 ## Cyrius stdlib modules used
 

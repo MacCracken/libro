@@ -96,9 +96,17 @@ fn chain_is_empty(c) {
 fn chain_head_hash(c) {
     var entries = load64(c);
     var n = vec_len(entries);
-    if (n == 0) { return 0; }
-    var last = vec_get(entries, n - 1);
-    return entry_hash(last);
+    if (n > 0) {
+        var last = vec_get(entries, n - 1);
+        return entry_hash(last);
+    }
+    # 2.8.11 — a STREAMING chain retains no entries by design and keeps its
+    # head in the prev_hash carry slot (see _chain_retain). This returned 0
+    # for it, so anchor_new / timestamping built from a streaming chain bound
+    # to an EMPTY head and then verified as valid — an anchor attesting to
+    # nothing, reported as ANCHOR_VALID.
+    if (load64(c + 32) == 1) { return load64(c + 8); }
+    return 0;
 }
 
 # ================================================================
@@ -197,7 +205,7 @@ fn chain_rotate(c) {
     var n = vec_len(entries);
     sakshi_info("chain: rotate", 13);
 
-    var head = str_from("");
+    var head = libro_empty_str();
     if (n > 0) {
         var last = vec_get(entries, n - 1);
         head = entry_hash(last);
@@ -372,7 +380,7 @@ fn chain_apply_retention(c, policy) {
     }
 
     # Head hash of last archived entry
-    var head = str_from("");
+    var head = libro_empty_str();
     if (vec_len(archived) > 0) {
         var last_arch = vec_get(archived, vec_len(archived) - 1);
         head = entry_hash(last_arch);

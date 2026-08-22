@@ -5,6 +5,367 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.11] - 2026-08-22 — P(-1) hardening sweep: 26 defects, 4 of them in the hash preimage
+
+**661** assertions green (**673** with `tpm`), up from 521. Binary 821,920 →
+**1,072,048 B** (1,094,712 B with `tpm`), DCE build. **Zero build warnings**
+across all five targets — main, three benches, fuzz — down from 21.
+`fn_table 2704 / 32768`, `identifiers 72435 / 524288`, `var_table 1039 / 8192`.
+
+⚠️ **BREAKING — every stored entry hash and every Merkle root changes.** Four
+fixes alter the hash preimage. A chain written by libro ≤ 2.8.10 will NOT
+verify against 2.8.11, and proofs, anchors and tree-head signatures over it
+will not either. There is no migration path in this release: the old preimage
+was unsound, so re-anchoring is the only honest option. Re-export and re-anchor
+before upgrading a live audit trail.
+
+### Where this came from
+
+A P(-1) sweep over `src/` — seven independent lenses, every finding
+adversarially verified, then a completeness pass that found more than the sweep
+did. Full report: [`docs/audit/2026-08-22-audit.md`](docs/audit/2026-08-22-audit.md).
+Every defect below was reproduced with a probe binary built against the real
+tree before it was fixed, and every fix is mutation-verified: reverting it
+turns a named assertion red.
+
+### Fixed — the canonical-JSON hasher accepted junk, so entries collided
+
+⭐ **The most serious defect in the sweep.** `_cjh_emit_object`'s
+`else { pos += 1; }` fallthrough silently dropped any byte it did not
+recognise, the `:` was optional, and trailing bytes after the top-level value
+were ignored. Measured on 2.8.10 — all five produced digest
+`015abd7f5cc57a2d…`:
+
+```
+{"a":1}        {ZZZZ"a":1}      {"a":1 JUNK}
+{"a" 1}        {"a":1}XXXXXXX
+```
+
+That is a forgery primitive, not a cosmetic parser bug. The injected bytes sit
+INSIDE a stored `details`, so a record could be rewritten — `{"a":1}` to
+`{approved_by_legal"a":1}` — with the entry hash, the chain linkage, the Merkle
+root and any tree-head signature all unchanged, and `verify_chain` returning
+clean. Any junk free of `"`, `,` and `}` worked.
+
+`details` is untrusted on every ingress (proof import, JSONL reload, PatraStore
+row), and it is the one entry field a consumer routinely fills from its own
+callers' data.
+
+The document is now validated strictly before anything is emitted
+(`canonical_json_is_valid`). **Well-formed input takes the same canonical path
+as before and produces the identical digest** — that half is not a format
+change. Anything else falls back to a `0x00`-tagged, length-prefixed hash of
+the raw bytes: distinct from every canonical emission and injective among
+malformed inputs, so a malformed document can no longer collide with anything.
+
+### Fixed — three more hash-preimage defects
+
+- **`hash_algorithm` was outside the entry preimage.** `entry_compute_hash`
+  covered fields 1–8 and never fed field 11, so
+  `entry_set_hash_algorithm(e, "md5-lol")` left `entry_verify` returning 1.
+  Every serializer round-trips the field and `_filestore_parse_entry` reads it
+  straight off disk, making it an attacker-writable field on a tamper-evident
+  record. The sibling struct already got this right — `anchor_compute_hash`
+  step 5 length-prefixes `hash_alg`. It is now step 9.
+
+- **Merkle had no leaf/internal domain separation.** A parent was
+  `HASH(left || right)` with no tag and a leaf was the bare entry hash — both
+  64-char hex, so a leaf and an internal node were indistinguishable and an
+  internal node could be presented as a leaf. Now RFC 9162 §2.1.1:
+  `MTH({d}) = HASH(0x00 || d)`, `MTH(D) = HASH(0x01 || left || right)`.
+  `merkle_leaf_hash` is public so a consumer can compute the expected leaf.
+
+- **`merkle_build` duplicated an odd trailing node while
+  `merkle_canonical_root` promoted it.** So `{d}` and `{d, d}` shared a root,
+  and the tree's two root definitions disagreed for every non-power-of-2 size —
+  meaning a proof bundle's inclusion root and its consistency root could never
+  have been bound to one another. `merkle_build` now promotes, per RFC 9162
+  §2.1.2, and `merkle_tree_root == merkle_canonical_root` is asserted at every
+  size from 1 to 9.
+
+### Fixed — an inclusion proof verified itself
+
+`_proof_verify_common` called `merkle_verify_proof(mp)`, which checks a proof
+against the root carried **inside that same proof**. Nothing bound that root to
+`sth_root`, so a bundle could carry inclusion proofs for a completely different
+tree and still report `inclusions_valid = 1`. New
+`merkle_verify_proof_against(mp, expected_root)` takes the trusted root, and
+the bundle verifier passes the signed head's.
+
+### Fixed — error objects were indistinguishable from success
+
+libro's convention is "return the value, or an error struct pointer". Both are
+non-zero, so the natural `if (r != 0)` reads a **failure as a success**. For an
+integrity library that is the worst available failure mode, and four APIs
+shipped it: `patrastore_load_and_verify`, `filestore_load_and_verify`,
+`entry_new_validated` (whose error fields then read as a max-severity entry),
+and `memstore_verify_streamed`.
+
+Every error constructor now stamps a magic at offset 0 and **`libro_is_error(p)`
+/ `libro_is_ok(p)`** answer the question. The `error` struct grows a `magic`
+field at +0 (7 fields, 56 bytes); the CI raw-offset bound moved 6 → 7.
+
+Wired through:
+
+- **`filestore_load_all` returned an empty vec when the open failed** —
+  byte-identical to a healthy empty log — so `filestore_load_and_verify`
+  verified that empty vec and reported SUCCESS. **A deleted, renamed or
+  permission-stripped audit log verified clean**, which is exactly what an
+  attacker deleting the log wants. New `filestore_load_all_or_err` /
+  `patrastore_load_all_or_err`; the old names stay as legacy wrappers.
+- **`filestore_verify_streamed` returned `0`** for open-failure and for an
+  aborted over-64KB line — the same value it returns for "verified
+  successfully, nothing wrong".
+- **`chain_head_hash` returned 0 for a streaming chain**, which retains no
+  entries by design and keeps its head in the prev-hash carry slot. Anchors
+  built from one bound to an empty head and then verified as `ANCHOR_VALID`.
+
+### Fixed — FileStore round-trip corrupted or dropped ordinary records
+
+Measured against pristine 2.8.10 on the new toolchain:
+
+```
+quoted source: parse FAILED (entry lost)
+agent_id 'node'   = DROPPED         entry_verify = 0
+no-timestamp record: ACCEPTED, timestamp slot = 0
+```
+
+- **`source` and `action` were written raw.** A `"` in either produced a line
+  the reader could not parse, so the entry was **silently dropped on reload**,
+  and a crafted value could inject its own `"hash"` / `"prev_hash"` keys. Now
+  escaped, like `details` already was.
+- **Every four-character `agent_id` beginning with `n`** — `node`, `nine`,
+  `n123` — was read back as absent, because the null-literal check was
+  `len == 4 && first byte == 'n'`. The entry then hashed with an empty
+  `agent_id` and reported a false integrity violation on a chain nobody had
+  touched. Now the whole literal must match.
+- **A record missing `timestamp` or `prev_hash` stored a NULL Str.**
+  `entry_compute_hash` calls `str_data()`/`str_len()` on both, so every verify,
+  query and re-serialize of that entry **dereferenced address 0**. Such records
+  arrive from proof bundles and hand-edited logs. Now rejected.
+- **`_filestore_parse_uuid` left the 16 UUID bytes uninitialised** when the
+  `id` field decoded short, and those bytes are the FIRST thing
+  `entry_compute_hash` feeds — so the same record parsed twice produced two
+  different hashes, over recycled freelist memory. The `memset` used to run
+  only on the `hex_str == 0` path; it is now unconditional.
+- **Control bytes were emitted raw.** `_sb_json_escape` handled only the quote,
+  the backslash and newline; every other C0 byte went through verbatim, which
+  is invalid JSON per RFC 8259 §7 — and a raw CR truncates the record for any
+  reader that strips line endings. All C0 bytes are now escaped, with a
+  `\u00XX` form for those without a shorthand.
+
+The JSONL reader is now libro's own strict flat parser (`_fsj_*`) rather than
+bayan's permissive one plus a second `_filestore_unescape` pass that handled
+only three escapes. It decodes inline (nothing to fall out of sync with the
+writer), rejects malformed records outright, and keeps the integrity-critical
+path off a third-party parser's escape semantics.
+
+⚠ **Correction, recorded because the mistake is worth not repeating.** An
+earlier draft of this entry claimed bayan mis-parsed an escaped quote inside a
+string value on both 1.4.2 and 1.5.2. That was measured against 1.4.2 twice —
+the pin under test had been reverted mid-session without being noticed.
+**bayan 1.5.1 fixed exactly that defect and 1.5.2 is correct.** The
+quoted-`details` round-trip break was real for libro 2.8.10 as shipped, because
+2.8.10 pinned 6.5.31 (bayan 1.4.2) — but it was a dep bug the toolchain bump
+repairs, not a libro bug, and none of the above is a workaround for it. A
+regression test pins the behaviour so a future fold cannot reintroduce it
+silently.
+
+### Fixed — `patrastore_by_source` interpolated its argument into SQL
+
+The write path was migrated to bound parameters in 2.8.1 after exactly this bug
+corrupted argonaut's log; **the read path was left behind.** A `source`
+containing a single quote produced malformed SQL and returned ZERO rows — a
+query over an audit log silently answering "no such events" — and a crafted
+value could widen the predicate to the whole table. Now bound, like the write
+path.
+
+Found alongside it: **`patrastore_append` bound `hash_algorithm` with
+`strlen()` on a `Str` fat pointer**, so column 9 held the struct's raw bytes on
+every INSERT since the column existed. Latent while `hash_algorithm` sat
+outside the preimage; the moment this release put it in, every reloaded
+PatraStore entry failed verification. That is what the preimage fix surfaced.
+
+### Fixed — unbounded and quadratic work on untrusted `details`
+
+- **No recursion bound.** `_cjh_emit` / `_cjh_emit_object` / `_cjh_emit_array`
+  are mutually recursive with one native frame per level. About 130 KB of
+  nested array opens drove the process into its guard page: SIGSEGV on append
+  AND on every subsequent verify. `CJH_MAX_DEPTH = 128` is enforced by the
+  validator before any emit runs.
+- **Quadratic key sort.** `_cjh_emit_object` insertion-sorted attacker-supplied
+  object keys — O(n²) string comparisons, re-paid on every verify of every
+  entry. Replaced with a stable bottom-up merge sort; stability reproduces the
+  old ordering for equal keys exactly, so no well-formed digest moves. The
+  canonical form's exact bytes are now pinned by a test, because an
+  order-independence test alone passes under a reversed comparator.
+
+### Fixed — signature and key handling reached the crypto boundary unchecked
+
+- **`verifying_key_from_bytes_alg(bytes, SIG_ALG_HYBRID)` built a key over a
+  ZERO-BYTE allocation** — `_sig_pk_bytes` has no HYBRID arm and returns 0 —
+  and `verify_entry_signature` then handed that empty buffer to
+  `ed25519_verify`, which reads 32 bytes out of it. So a correctly-signed
+  hybrid entry could never verify through the constructor **this file's own doc
+  comment recommended for hybrid**. Now rejected with a message naming
+  `verifying_key_from_bytes_hybrid`; the comment is corrected.
+- **No signature length validation.** A 2-character "signature" decoded to a
+  1-byte buffer that `ed25519_verify` read 64 bytes from (the ML-DSA path,
+  3309). An absent signature reached `str_data(0)`. `proof_verify_signed` is
+  reachable with an attacker-supplied proof, so this was a remote crash in the
+  verifier. Both verify paths now validate before decoding.
+
+### Fixed — `proof_from_json` wrote an integer into a `Str` slot
+
+`sth.algorithm` holds a `Str` in every producer, and its only consumer calls
+`str_len()` on it. The parser stored a raw int — `0`, or `1` for `"ML-DSA-65"` —
+which `sth_new` wrote through unconditionally. Re-emitting such a proof (the
+ordinary parse-then-forward flow) evaluated `str_len(1)` and **segfaulted**;
+measured exit 139 for any JSON whose tree head says `"algorithm": "ML-DSA-65"`.
+On the Ed25519 and Hybrid paths there was no crash, but the algorithm identity
+was silently dropped on every round trip. The parsed `Str` is now kept.
+
+### Fixed — RFC 3161 responses were accepted without checking a single DER tag
+
+`_der_parse_tlv` never looked at the tag, so any byte string whose second byte
+was a plausible length parsed as a `PKIStatusInfo`, and if the decoded status
+came out 0 or 1, `ts_attestation_new` built a **granted** attestation out of
+junk. Tags are now checked, a length that overflows is rejected, and a granted
+response carrying no token is refused.
+
+⚠ **Scope, stated plainly rather than implied:** libro still does NOT verify the
+TSA's CMS signature over the token, does not parse TSTInfo to confirm the
+token's `messageImprint` matches the hash, and does not check the nonce. An
+attestation therefore proves "a syntactically valid granted response was
+obtained", not "a trusted TSA attested to THIS hash". A genuine response for one
+hash can still be presented alongside another. Full token verification needs
+CMS/PKCS#7 checking against a TSA certificate chain, which belongs in sigil —
+tracked on the roadmap. `ts_attestation_new` now says all of this in its doc
+comment.
+
+### Fixed — process-global scratch shared across threads
+
+Same class as the 2.8.9 cross-thread prepared-statement crash, which made
+threaded reads a supported shape.
+
+- **`hash_field` staged its 8-byte length prefix in a process-global buffer.**
+  It runs nine times per `entry_compute_hash`, on whatever thread verifies. Two
+  threads hashing concurrently interleave the length write with the other's
+  update, so an entry gets hashed with another entry's field length and its
+  digest comes out wrong — silently, as a false integrity violation, with no
+  crash to point at. Now a stack slot; `anchor_compute_hash`'s copy too.
+- **`_filestore_parse_entry` published its pair list to a file-scope global**
+  and then read it ten times, so two concurrent parses assembled one entry out
+  of two different lines. Now a local.
+
+### Fixed — smaller correctness and robustness items
+
+- **`_query_parse_ts` read 20 bytes from a `Str` of any length and validated
+  nothing.** Measured: the empty string gave `-1554199139047` (a read past the
+  Str), `"2026"` gave `1358407617`, `"not-a-timestamp!!!!!"` gave
+  `2114694242535`. Timestamps arrive from disk and from proof bundles verbatim,
+  so one garbage value made `query_after` / `query_before` silently include or
+  exclude a record — and the same function drives **which entries get
+  deleted**: with a truncated timestamp, `retention_sox()` (keep 7 years)
+  returned `split_index = 0`. Now strictly validated, returning
+  `QUERY_TS_INVALID`. Both callers fail closed: an unparseable timestamp
+  matches no time window, and is retained rather than expired.
+- **`chain_import` never returned 0 for a bad header**, though its doc comment
+  promised it did — `_chain_import_apply_meta`'s result was discarded after line
+  0 had already been consumed. A plain FileStore JSONL (same entry shape, no
+  header) imported with its **genesis entry silently eaten**, and the loose
+  `verify_chain` — which only checks linkage for `i > 0` — called the truncated
+  result valid. The header is now identified by its `_libro_chain` marker and
+  the result is checked.
+- **`export.cyr` emitted `details` raw** into a JSON value position, so a
+  newline split one entry across several lines of the export and invalid JSON
+  produced an unparseable line. Now escaped as a string, matching the JSONL
+  writer. `proof_json`'s copy keeps the nested-object format but **validates
+  first**, emitting `null` (and logging) for anything malformed, so a crafted
+  `details` can no longer inject sibling keys.
+- **`filestore_len` bump-allocated 4 KB per call** and never reclaimed it. Now a
+  module scratch buffer.
+
+### Fixed — 21 build warnings, and why the diagnostic could not see the real bug
+
+The build emitted 21 `assigning non-pointer to typed pointer` warnings. All 21
+were benign: `#derive(accessors)` emits a getter with no declared return type,
+so `var head = str_from(""); … head = entry_hash(e);` types `head` as `Str`
+from its initializer and then warns about a value that IS a `Str` at runtime.
+
+⭐ **The one real instance of this class did not warn at all** — the
+`sth.algorithm` type confusion above, because the diagnostic fires on
+assignment into a typed local, not on argument passing into an untyped
+parameter. A clean build with 21 ignorable warnings is how that survived.
+
+Sites now initialize from `libro_empty_str()`, deliberately unannotated, which
+leaves the local untyped — an honest description of a value cyrius cannot type
+today. **All five build targets are now warning-free.** The real fix is
+upstream: `#derive(accessors)` should carry the field's declared type through to
+the generated getter. Recorded in
+[`docs/development/dependency-watch.md`](docs/development/dependency-watch.md);
+when it lands, revert these sites and the diagnostic becomes load-bearing.
+
+### Changed — toolchain pin 6.5.31 → 6.5.34
+
+Picks up three `CYRIUS_IR=3` miscompiles, the `CYRIUS_PKG_VERSION`-in-includes
+fix, and the stdlib folds across 6.5.32–6.5.34 — notably **bayan 1.4.2 → 1.5.2**,
+which carries two heap buffer overflows in `csv`, a one-byte remote crash in
+`base64`, an out-of-bounds read in `cyml`, a remote memory-exhaustion DoS in
+`json`, and the flat-parser escape fix described above.
+
+`[deps.sigil]` **3.12.9** and `[deps.patra]` **1.13.10** are unchanged and
+already equal what 6.5.34 folds — the invariant that keeps a declared dep from
+downgrading `lib/` for every transitive consumer. Lock: **112** default,
+**113** with `--features tpm`, the documented one-more relationship.
+
+### Size
+
+Binary 821,920 → **1,072,048 B**, attributed by direct measurement rather than
+inference:
+
+| build | bytes |
+|---|---|
+| 2.8.10 source @ 6.5.31 | 821,920 |
+| 2.8.10 source @ 6.5.34 | 1,029,256 |
+| 2.8.11 source @ 6.5.34 | 1,072,048 |
+
+So **+207,336 B is the toolchain and fold bump** (overwhelmingly bayan's new
+PDF/YAML surface, which DCE NOPs but does not remove) and **+42,792 B is this
+release's source**. libro's own bayan surface is still just `json_parse` /
+`json_get`; thinning `[deps.bayan]` to `dist/bayan-json.cyr` would recover most
+of the first row and is filed on the roadmap, not done here — it changes the dep
+graph, and the manifest documents at length why that is not a patch-release
+move.
+
+### Performance
+
+33 benchmarks. The regressions are the direct cost of the correctness fixes and
+are stated rather than buried:
+
+| bench | 2.8.10 | 2.8.11 | delta |
+|---|---|---|---|
+| `merkle_build_100` | 126.9us | 219.9us | +73% |
+| `proof_unsigned_100` | 132.0us | 234.5us | +78% |
+| `proof_build_unsigned_25` | 50.9us | 78.1us | +53% |
+| `entry_hash` | 1.39us | 1.67us | +20% |
+| `chain_verify_100` | 185.1us | 218.4us | +18% |
+| `filestore_load_10` | 48.8us | 67.9us | +39% |
+
+The merkle row is one extra SHA-256 per leaf — the RFC 9162 leaf tag, i.e. the
+second-preimage fix itself — and `proof_*_unsigned` is `merkle_build`.
+`entry_hash` is the ninth `hash_field` plus the canonical-JSON validation pass,
+and `chain_verify` / `chain_review` / `streamed_verify` follow it.
+`filestore_load_10` is a strict validating parser replacing a permissive one; it
+was first measured at +66% and two passes over the reader — right-sizing the
+decode buffer, and comparing keys without materialising a `Str` per comparison —
+brought it to +39%.
+
+⚠ **`mldsa65_sign_entry` and `hybrid_sign_entry` swung by ±50% between
+consecutive runs of the same binary** and are not reported as a delta in either
+direction. They are few-iteration benches over a multi-millisecond operation;
+treat them as noise until they are re-measured on a quiet box.
+
 ## [2.8.10] - 2026-08-21 — declare the patra we are actually built against
 
 ### Changed

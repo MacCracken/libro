@@ -30,14 +30,38 @@ fn _sb_proof_entry(sb, e) {
     _sb_json_escape(sb, entry_source(e));
     str_builder_add_cstr(sb, "\",\"action\":\"");
     _sb_json_escape(sb, entry_action(e));
+    # `details` is a nested JSON value here (unlike the JSONL record, which
+    # stores it as an escaped string), and _pfj_parse_one_entry reads it back
+    # as a raw span — so the format stays as-is for well-formed input.
+    #
+    # 2.8.11 — but it is now VALIDATED first. Emitting arbitrary bytes into a
+    # JSON value position let a crafted `details` close its own value and
+    # inject sibling keys: details of `1,"hash":"FORGED"` produced a record
+    # with two "hash" keys, and _pfj_find_key_at takes the first. The import
+    # still failed verify_chain (which recomputes the hash), so this corrupts
+    # a proof rather than forging a passing one — but a proof that cannot be
+    # parsed back is a broken artifact either way, and malformed details also
+    # simply produced an unparseable file.
+    #
+    # A well-formed JSON value is balanced and self-delimiting, so it cannot
+    # escape its position. Anything else is emitted as null and logged.
     str_builder_add_cstr(sb, "\",\"details\":");
-    str_builder_add(sb, entry_details(e));
+    var det = entry_details(e);
+    if (det != 0 && canonical_json_is_valid(det) == 1) {
+        str_builder_add(sb, det);
+    } else {
+        sakshi_error("proof_json: entry details is not well-formed JSON, emitted as null", 65);
+        str_builder_add_cstr(sb, "null");
+    }
     str_builder_add_cstr(sb, ",\"agent_id\":");
     _sb_json_str_or_null(sb, entry_agent_id(e));
+    # 2.8.11 — escaped, not raw. These are hex digests for libro-produced
+    # entries, but an entry parsed from an untrusted proof carries whatever
+    # the producer put there, and this is a re-emit path.
     str_builder_add_cstr(sb, ",\"prev_hash\":\"");
-    str_builder_add(sb, entry_prev_hash(e));
+    _sb_json_escape(sb, entry_prev_hash(e));
     str_builder_add_cstr(sb, "\",\"hash\":\"");
-    str_builder_add(sb, entry_hash(e));
+    _sb_json_escape(sb, entry_hash(e));
     str_builder_add_cstr(sb, "\"}");
     return 0;
 }
@@ -361,35 +385,51 @@ fn _pfj_parse_tree_head(d, start, end) {
     if (_pfj_end_pos < 0) { return 0; }
 
     var tsp = _pfj_find_key_at(d, start, end, "timestamp");
-    var timestamp = str_from("");
+    var timestamp = libro_empty_str();
     if (tsp >= 0) {
         var t = _pfj_parse_string(d, tsp, end);
         if (_pfj_end_pos >= 0) { timestamp = t; }
     }
 
     var sig_pos = _pfj_find_key_at(d, start, end, "signature");
-    var sig = str_from("");
+    var sig = libro_empty_str();
     if (sig_pos >= 0) {
         var s = _pfj_parse_string_or_null(d, sig_pos, end);
         if (s != 0) { sig = s; }
     }
 
     var vk_pos = _pfj_find_key_at(d, start, end, "verifying_key");
-    var vk = str_from("");
+    var vk = libro_empty_str();
     if (vk_pos >= 0) {
         var v = _pfj_parse_string_or_null(d, vk_pos, end);
         if (v != 0) { vk = v; }
     }
 
+    # ⚠ 2.8.11 — `sth.algorithm` is a Str SLOT, not an integer.
+    #
+    # Every producer stores a Str there: proof_build_signed stores
+    # str_new(sig_alg_name(alg), …) (proof.cyr:98), and the sole consumer,
+    # _sb_json_str_or_null (proof_json.cyr), calls str_len() on it — i.e. a
+    # load at the Str's length offset. This parser stored a raw INT instead:
+    # `var alg = 0` and `alg = 1`
+    # when the JSON said "ML-DSA-65", handed straight to sth_new, which does
+    # an unconditional store into the slot.
+    #
+    # Re-emitting such a proof — the ordinary parse-then-forward flow —
+    # therefore evaluated str_len(1) -> load64(9) and SEGFAULTED. Measured:
+    # proof_to_json(proof_from_json(json)) exits 139 for any JSON whose
+    # tree_head says "algorithm": "ML-DSA-65", so untrusted input crashed the
+    # process. On the Ed25519 and Hybrid paths there was no crash but the
+    # integer 0 read back as "absent", so the algorithm identity of a signed
+    # tree head was silently dropped on every round trip.
+    #
+    # Keep the parsed Str. It round-trips all three algorithms and cannot be
+    # dereferenced as something it is not.
     var alg_pos = _pfj_find_key_at(d, start, end, "algorithm");
-    var alg = 0;  # SIG_ALG_ED25519 is 0
+    var alg = 0;
     if (alg_pos >= 0) {
         var a = _pfj_parse_string_or_null(d, alg_pos, end);
-        # If present and equals "ML-DSA-65" or similar, would map to 1.
-        # For now accept only null or Ed25519 (matches what 2.0.x emits).
-        if (a != 0 && str_len(a) > 0 && str_eq(a, str_from("ML-DSA-65")) == 1) {
-            alg = 1;
-        }
+        if (a != 0 && str_len(a) > 0) { alg = a; }
     }
 
     var sth = sth_new(root, tree_size, sig, vk, alg);
@@ -441,7 +481,7 @@ fn _pfj_parse_one_entry(d, start, end) {
     }
 
     var ph_pos = _pfj_find_key_at(d, start, end, "prev_hash");
-    var prev_hash = str_from("");
+    var prev_hash = libro_empty_str();
     if (ph_pos >= 0) {
         var ph = _pfj_parse_string(d, ph_pos, end);
         if (_pfj_end_pos >= 0) { prev_hash = ph; }

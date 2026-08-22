@@ -67,7 +67,7 @@ fn memstore_verify_streamed(s, chunk_size) {
     var entries = load64(s);
     var n = vec_len(entries);
     var verified = 0;
-    var prev_tail_hash = str_from("");
+    var prev_tail_hash = libro_empty_str();
     var offset = 0;
 
     while (offset < n) {

@@ -260,6 +260,219 @@ fn timestamp_rfc3339(epoch_secs) {
 # see a hash break on re-verify — which is correct behaviour and one
 # of the reasons this is a 2.0 feature.
 
+# Maximum nesting depth accepted by the canonical-JSON hasher.
+#
+# 2.8.11. _cjh_emit / _cjh_emit_object / _cjh_emit_array are mutually
+# recursive with one native frame per nesting level and had NO bound, so a
+# `details` of ~130 KB of `[[[[…` drove the process into its guard page:
+# SIGSEGV on append AND on every subsequent verify. `details` is untrusted on
+# every ingress (proof import, JSONL reload, PatraStore row), so that was a
+# remote crash in a verifier. The validator below enforces the cap BEFORE any
+# emit runs, so the emit recursion inherits the same bound.
+#
+# 128 is far above any real audit payload and far below the ~8 MB default
+# stack divided by the measured per-level frame cost.
+var CJH_MAX_DEPTH = 128;
+
+fn _cjv_is_hex(c) {
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c >= 97 && c <= 102) { return 1; }
+    if (c >= 65 && c <= 70) { return 1; }
+    return 0;
+}
+
+# Strict RFC 8259 string. Precondition: data[pos] == '"'.
+# Returns the position after the closing quote, or -1 if malformed.
+fn _cjv_string(data, pos, slen) {
+    pos += 1;
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c == 34) { return pos + 1; }
+        if (c == 92) {
+            if (pos + 1 >= slen) { return 0 - 1; }
+            var e = load8(data + pos + 1) & 0xFF;
+            if (e == 117) {
+                # \uXXXX — four hex digits required.
+                if (pos + 5 >= slen) { return 0 - 1; }
+                var k = 0;
+                while (k < 4) {
+                    if (_cjv_is_hex(load8(data + pos + 2 + k) & 0xFF) == 0) {
+                        return 0 - 1;
+                    }
+                    k += 1;
+                }
+                pos += 6;
+            } elif (e == 34 || e == 92 || e == 47 || e == 98 || e == 102
+              || e == 110 || e == 114 || e == 116) {
+                pos += 2;
+            } else {
+                return 0 - 1;
+            }
+        } elif (c < 32) {
+            # Raw control bytes are not permitted inside a JSON string.
+            return 0 - 1;
+        } else {
+            pos += 1;
+        }
+    }
+    return 0 - 1;
+}
+
+fn _cjv_digits(data, pos, slen) {
+    var start = pos;
+    while (pos < slen) {
+        var c = load8(data + pos) & 0xFF;
+        if (c < 48 || c > 57) { return pos; }
+        pos += 1;
+    }
+    if (pos == start) { return start; }
+    return pos;
+}
+
+# Strict RFC 8259 number. Returns end position or -1.
+fn _cjv_number(data, pos, slen) {
+    if (pos < slen && (load8(data + pos) & 0xFF) == 45) { pos += 1; }
+    if (pos >= slen) { return 0 - 1; }
+    var c = load8(data + pos) & 0xFF;
+    if (c == 48) {
+        pos += 1;
+    } elif (c >= 49 && c <= 57) {
+        var after = _cjv_digits(data, pos, slen);
+        pos = after;
+    } else {
+        return 0 - 1;
+    }
+    if (pos < slen && (load8(data + pos) & 0xFF) == 46) {
+        pos += 1;
+        var fs = pos;
+        pos = _cjv_digits(data, pos, slen);
+        if (pos == fs) { return 0 - 1; }
+    }
+    if (pos < slen) {
+        var ec = load8(data + pos) & 0xFF;
+        if (ec == 101 || ec == 69) {
+            pos += 1;
+            if (pos < slen) {
+                var sc = load8(data + pos) & 0xFF;
+                if (sc == 43 || sc == 45) { pos += 1; }
+            }
+            var es = pos;
+            pos = _cjv_digits(data, pos, slen);
+            if (pos == es) { return 0 - 1; }
+        }
+    }
+    return pos;
+}
+
+fn _cjv_literal(data, pos, slen, lit, llen) {
+    if (pos + llen > slen) { return 0 - 1; }
+    var k = 0;
+    while (k < llen) {
+        if ((load8(data + pos + k) & 0xFF) != (load8(lit + k) & 0xFF)) {
+            return 0 - 1;
+        }
+        k += 1;
+    }
+    return pos + llen;
+}
+
+fn _cjv_object(data, pos, slen, depth) {
+    pos += 1;
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos < slen && (load8(data + pos) & 0xFF) == 125) { return pos + 1; }
+    var stop = 0;
+    while (stop == 0) {
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { return 0 - 1; }
+        if ((load8(data + pos) & 0xFF) != 34) { return 0 - 1; }
+        pos = _cjv_string(data, pos, slen);
+        if (pos < 0) { return 0 - 1; }
+        pos = _cjh_skip_ws(data, pos, slen);
+        # The colon is MANDATORY. Through 2.8.10 it was optional, so
+        # {"a" 1} and {"a":1} hashed identically.
+        if (pos >= slen || (load8(data + pos) & 0xFF) != 58) { return 0 - 1; }
+        pos += 1;
+        pos = _cjv_value(data, pos, slen, depth + 1);
+        if (pos < 0) { return 0 - 1; }
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { return 0 - 1; }
+        var d = load8(data + pos) & 0xFF;
+        if (d == 44) { pos += 1; }
+        elif (d == 125) { pos += 1; stop = 1; }
+        else { return 0 - 1; }
+    }
+    return pos;
+}
+
+fn _cjv_array(data, pos, slen, depth) {
+    pos += 1;
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos < slen && (load8(data + pos) & 0xFF) == 93) { return pos + 1; }
+    var stop = 0;
+    while (stop == 0) {
+        pos = _cjv_value(data, pos, slen, depth + 1);
+        if (pos < 0) { return 0 - 1; }
+        pos = _cjh_skip_ws(data, pos, slen);
+        if (pos >= slen) { return 0 - 1; }
+        var d = load8(data + pos) & 0xFF;
+        if (d == 44) { pos += 1; }
+        elif (d == 93) { pos += 1; stop = 1; }
+        else { return 0 - 1; }
+    }
+    return pos;
+}
+
+# Strict validator for one JSON value. Returns end position or -1.
+fn _cjv_value(data, pos, slen, depth) {
+    if (depth > CJH_MAX_DEPTH) { return 0 - 1; }
+    pos = _cjh_skip_ws(data, pos, slen);
+    if (pos >= slen) { return 0 - 1; }
+    var c = load8(data + pos) & 0xFF;
+    if (c == 123) { return _cjv_object(data, pos, slen, depth); }
+    if (c == 91)  { return _cjv_array(data, pos, slen, depth); }
+    if (c == 34)  { return _cjv_string(data, pos, slen); }
+    if (c == 116) { return _cjv_literal(data, pos, slen, "true", 4); }
+    if (c == 102) { return _cjv_literal(data, pos, slen, "false", 5); }
+    if (c == 110) { return _cjv_literal(data, pos, slen, "null", 4); }
+    return _cjv_number(data, pos, slen);
+}
+
+# Is the whole buffer exactly one well-formed JSON value (plus optional
+# surrounding whitespace)?
+fn canonical_json_is_valid(json_str) {
+    var slen = str_len(json_str);
+    if (slen == 0) { return 0; }
+    var d = str_data(json_str);
+    var end = _cjv_value(d, 0, slen, 0);
+    if (end < 0) { return 0; }
+    end = _cjh_skip_ws(d, end, slen);
+    if (end != slen) { return 0; }
+    return 1;
+}
+
+# Canonical-JSON contribution to a hash preimage.
+#
+# ⚠ 2.8.11 — THE COLLISION FIX. Through 2.8.10 the emitters were tolerant:
+# _cjh_emit_object's `else { pos += 1; }` fallthrough silently dropped any
+# byte it did not recognise, the colon was optional, and trailing bytes after
+# the top-level value were ignored. Measured on 2.8.10, all five of these
+# produced the SAME digest 015abd7f5cc57a2d…:
+#
+#     {"a":1}        {ZZZZ"a":1}      {"a":1 JUNK}
+#     {"a" 1}        {"a":1}XXXXXXX
+#
+# Those collisions are a forgery primitive, not a cosmetic defect: the
+# injected bytes sit INSIDE a stored `details`, so a record could be rewritten
+# — {"a":1} to {approved_by_legal"a":1} — with the entry hash, the chain
+# linkage, the Merkle root and any tree-head signature all unchanged, and
+# verify_chain returning clean. Any junk free of '"', ',' and '}' worked.
+#
+# The document is now validated STRICTLY first. Well-formed input takes the
+# same canonical path as before (identical digest — this half is not a
+# format change). Anything else falls back to a 0x00-tagged, length-prefixed
+# hash of the raw bytes: distinct from every canonical emission (which never
+# begins 0x00) and injective among malformed inputs, so a malformed document
+# can no longer collide with anything at all.
 fn canonical_json_hash_str(json_str, hasher) {
     var slen = str_len(json_str);
     if (slen == 0) {
@@ -267,7 +480,21 @@ fn canonical_json_hash_str(json_str, hasher) {
         return 0;
     }
     var sdata = str_data(json_str);
+    if (canonical_json_is_valid(json_str) == 0) {
+        _cjh_raw_tag(hasher);
+        hash_field(hasher, sdata, slen);
+        return 0;
+    }
     _cjh_emit(sdata, 0, slen, hasher);
+    return 0;
+}
+
+var _cjh_tagbuf = 0;
+
+fn _cjh_raw_tag(hasher) {
+    if (_cjh_tagbuf == 0) { _cjh_tagbuf = alloc(2); }
+    store8(_cjh_tagbuf, 0);
+    hasher_update(hasher, _cjh_tagbuf, 1);
     return 0;
 }
 
@@ -378,6 +605,62 @@ fn _cjh_emit(data, pos, slen, hasher) {
     return scalar_end;
 }
 
+# Stable bottom-up merge sort of `idx` by keys[idx[i]] lexicographically.
+#
+# 2.8.11 — was an insertion sort, i.e. O(n^2) string comparisons over
+# ATTACKER-CONTROLLED object keys, re-paid on every entry_compute_hash and so
+# on every verify of every entry. Measured on 2.8.10: a single 1 MiB `details`
+# of many short keys cost minutes of CPU per hash. Keys arrive from untrusted
+# JSON on every ingress path, so the cost was remotely selectable.
+#
+# Stability (`<= 0` takes the left run) reproduces the insertion sort's
+# ordering for equal keys exactly, so duplicate keys keep their document
+# order and no well-formed document's digest moves.
+fn _cjh_sort_idx(idx, keys, n) {
+    if (n < 2) { return 0; }
+    var buf = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(buf, 0); i += 1; }
+
+    var width = 1;
+    while (width < n) {
+        var lo = 0;
+        while (lo < n) {
+            var mid = lo + width;
+            var hi = lo + width * 2;
+            if (mid > n) { mid = n; }
+            if (hi > n) { hi = n; }
+            var a = lo;
+            var b = mid;
+            var o = lo;
+            while (o < hi) {
+                var take_a = 0;
+                if (a < mid && b < hi) {
+                    if (_str_cmp(vec_get(keys, vec_get(idx, a)),
+                        vec_get(keys, vec_get(idx, b))) <= 0) {
+                        take_a = 1;
+                    }
+                } elif (a < mid) {
+                    take_a = 1;
+                }
+                if (take_a == 1) {
+                    vec_set(buf, o, vec_get(idx, a));
+                    a += 1;
+                } else {
+                    vec_set(buf, o, vec_get(idx, b));
+                    b += 1;
+                }
+                o += 1;
+            }
+            lo = hi;
+        }
+        i = 0;
+        while (i < n) { vec_set(idx, i, vec_get(buf, i)); i += 1; }
+        width = width * 2;
+    }
+    return 0;
+}
+
 # Emit an object with keys sorted lexicographically. Parallel vecs hold
 # each pair's key and its value byte-range in `data` so we can recurse
 # into values after sort without materializing an AST.
@@ -417,24 +700,7 @@ fn _cjh_emit_object(data, start, slen, hasher) {
     var i = 0;
     while (i < n) { vec_push(idx, i); i += 1; }
 
-    # Insertion sort idx by keys[idx[i]] lexicographically.
-    i = 1;
-    while (i < n) {
-        var ki = vec_get(idx, i);
-        var j = i - 1;
-        var settled = 0;
-        while (j >= 0 && settled == 0) {
-            var kj = vec_get(idx, j);
-            if (_str_cmp(vec_get(keys, kj), vec_get(keys, ki)) > 0) {
-                vec_set(idx, j + 1, kj);
-                j -= 1;
-            } else {
-                settled = 1;
-            }
-        }
-        vec_set(idx, j + 1, ki);
-        i += 1;
-    }
+    _cjh_sort_idx(idx, keys, n);
 
     hasher_update(hasher, "{", 1);
     i = 0;
@@ -577,6 +843,21 @@ fn entry_compute_hash(e) {
     # 8. Previous hash (length-prefixed)
     var ph = load64(e + 64);
     hash_field(hasher, str_data(ph), str_len(ph));
+
+    # 9. Hash algorithm (length-prefixed). 2.8.11 — was OUTSIDE the preimage
+    # through 2.8.10, so `entry_set_hash_algorithm(e, "md5-lol")` mutated a
+    # field on a tamper-evident record and `entry_verify` still returned 1.
+    # Every serializer round-trips it (export.cyr, file_store.cyr, proof JSON)
+    # and _filestore_parse_entry reads it straight off disk, so it was an
+    # attacker-writable field. The sibling struct already got this right —
+    # anchor_compute_hash step 5 length-prefixes hash_alg (anchoring.cyr:85).
+    # ⚠ This CHANGES every entry hash. See CHANGELOG [2.8.11].
+    var alg = load64(e + 80);
+    if (alg == 0) {
+        hash_field(hasher, "", 0);
+    } else {
+        hash_field(hasher, str_data(alg), str_len(alg));
+    }
 
     return hasher_finalize_hex(hasher);
 }

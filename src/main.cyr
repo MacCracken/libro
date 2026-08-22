@@ -250,7 +250,7 @@ fn test_entry_create() {
     var src = str_from("test-source");
     var act = str_from("test-action");
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var e = entry_new(SEV_INFO, src, act, det, prev);
 
     assert_nonnull(e, "entry created");
@@ -265,7 +265,7 @@ fn test_entry_verify() {
     var src = str_from("audit");
     var act = str_from("login");
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var e = entry_new(SEV_INFO, src, act, det, prev);
 
     assert(entry_verify(e) == 1, "entry verify valid");
@@ -275,7 +275,7 @@ fn test_entry_tamper() {
     var src = str_from("audit");
     var act = str_from("login");
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var e = entry_new(SEV_INFO, src, act, det, prev);
 
     # Tamper with severity
@@ -287,7 +287,7 @@ fn test_entry_with_agent() {
     var src = str_from("monitor");
     var act = str_from("check");
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var e = entry_new(SEV_DEBUG, src, act, det, prev);
     var hash_before = entry_hash(e);
 
@@ -446,7 +446,7 @@ fn test_query_empty_matches_all() {
 fn test_retention_keep_count() {
     var det = str_from("{}");
     var entries = vec_new();
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 5) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -702,7 +702,7 @@ fn test_memstore_basic() {
 fn test_memstore_verify() {
     var s = memstore_new();
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -719,7 +719,7 @@ fn test_memstore_verify() {
 fn test_memstore_streamed() {
     var s = memstore_new();
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 10) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -750,7 +750,7 @@ fn test_memstore_query() {
 fn test_memstore_page() {
     var s = memstore_new();
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 5) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -895,6 +895,741 @@ fn test_merkle_odd_leaf_count() {
         assert(merkle_verify_proof(mp) == 1, "merkle odd proof verifies");
         i += 1;
     }
+}
+
+# ── 2.8.11 hardening regressions (P(-1) sweep, 2026-08-22) ──
+
+# Canonical-JSON digest of a literal, for collision assertions.
+fn _t_cjh(cstr) {
+    var h = hasher_new();
+    canonical_json_hash_str(str_from(cstr), h);
+    return hasher_finalize_hex(h);
+}
+
+# THE COLLISION FIX. All five of these produced digest 015abd7f5cc57a2d…
+# on 2.8.10, so arbitrary bytes could be injected into a stored `details`
+# without moving the entry hash, the chain linkage or the Merkle root.
+fn test_canonical_json_no_junk_collision() {
+    var base = _t_cjh("{\"a\":1}");
+    assert(str_eq(_t_cjh("{ZZZZ\"a\":1}"), base) == 0,
+      "junk before key no longer collides");
+    assert(str_eq(_t_cjh("{\"a\":1 JUNK}"), base) == 0,
+      "junk after value no longer collides");
+    assert(str_eq(_t_cjh("{\"a\" 1}"), base) == 0,
+      "missing colon no longer collides");
+    assert(str_eq(_t_cjh("{\"a\":1}XXXXXXX"), base) == 0,
+      "trailing content no longer collides");
+    # And the malformed forms must not collide with EACH OTHER either —
+    # the raw fallback is length-prefixed, so it is injective.
+    assert(str_eq(_t_cjh("{ZZZZ\"a\":1}"), _t_cjh("{\"a\":1 JUNK}")) == 0,
+      "distinct malformed inputs stay distinct");
+    assert(str_eq(_t_cjh("{\"a\" 1}"), _t_cjh("{\"a\":1}XXXXXXX")) == 0,
+      "distinct malformed inputs stay distinct (2)");
+}
+
+# The other half of the contract: WELL-FORMED input must hash exactly as it
+# did before, or 2.8.11 would silently invalidate every stored chain twice
+# over. Whitespace-insensitive, key-order-insensitive, value-sensitive.
+fn test_canonical_json_valid_unchanged() {
+    assert(str_eq(_t_cjh("{\"a\":1}"), _t_cjh("{ \"a\" : 1 }")) == 1,
+      "whitespace does not change the canonical digest");
+    assert(str_eq(_t_cjh("{\"a\":1,\"b\":2}"),
+        _t_cjh("{\"b\":2,\"a\":1}")) == 1,
+      "key order does not change the canonical digest");
+    assert(str_eq(_t_cjh("{\"a\":1}"), _t_cjh("{\"a\":2}")) == 0,
+      "value change does change the canonical digest");
+    assert(str_eq(_t_cjh("{}"), _t_cjh("[]")) == 0,
+      "empty object and empty array stay distinct");
+}
+
+# Exercises the merge sort past width 1 and asserts key order still does not
+# affect the digest for a large object. Also the perf regression guard: this
+# object cost O(n^2) key comparisons through 2.8.10.
+fn test_canonical_json_many_keys_order_independent() {
+    var fwd = str_builder_new();
+    var rev = str_builder_new();
+    str_builder_add_cstr(fwd, "{");
+    str_builder_add_cstr(rev, "{");
+    var n = 64;
+    var i = 0;
+    while (i < n) {
+        if (i > 0) { str_builder_add_cstr(fwd, ","); }
+        str_builder_add_cstr(fwd, "\"k");
+        str_builder_add(fwd, str_from_int(i));
+        str_builder_add_cstr(fwd, "\":");
+        str_builder_add(fwd, str_from_int(i));
+        i += 1;
+    }
+    i = n - 1;
+    var first = 1;
+    while (i >= 0) {
+        if (first == 0) { str_builder_add_cstr(rev, ","); }
+        first = 0;
+        str_builder_add_cstr(rev, "\"k");
+        str_builder_add(rev, str_from_int(i));
+        str_builder_add_cstr(rev, "\":");
+        str_builder_add(rev, str_from_int(i));
+        i -= 1;
+    }
+    str_builder_add_cstr(fwd, "}");
+    str_builder_add_cstr(rev, "}");
+    var sf = str_builder_build(fwd);
+    var sr = str_builder_build(rev);
+    assert(canonical_json_is_valid(sf) == 1, "64-key object is valid JSON");
+    var hf = hasher_new();
+    canonical_json_hash_str(sf, hf);
+    var df = hasher_finalize_hex(hf);
+    var hr = hasher_new();
+    canonical_json_hash_str(sr, hr);
+    var dr = hasher_finalize_hex(hr);
+    assert(str_eq(df, dr) == 1,
+      "64-key object hashes identically in either key order");
+}
+
+# Pins the canonical form's exact BYTES, not just its stability. The
+# order-independence test above passes under a reversed comparator too, so it
+# cannot detect a sort-direction change — which would silently move every
+# multi-key digest. Canonical output is ascending key order, no whitespace,
+# so its digest must equal plain SHA-256 of that literal byte string.
+fn test_canonical_json_emits_ascending_key_order() {
+    var h = hasher_new();
+    canonical_json_hash_str(str_from("{\"b\":1,\"a\":2}"), h);
+    var got = hasher_finalize_hex(h);
+    var want = _t_untagged_hash1(str_from("{\"a\":2,\"b\":1}"));
+    assert(str_eq(got, want) == 1,
+      "canonical form is ascending key order, exact bytes");
+
+    var h2 = hasher_new();
+    canonical_json_hash_str(str_from("{\"z\":1,\"m\":2,\"a\":3}"), h2);
+    assert(str_eq(hasher_finalize_hex(h2),
+        _t_untagged_hash1(str_from("{\"a\":3,\"m\":2,\"z\":1}"))) == 1,
+      "three-key canonical form is ascending, exact bytes");
+}
+
+fn test_canonical_json_validator() {
+    assert(canonical_json_is_valid(str_from("{\"a\":1}")) == 1, "valid object");
+    assert(canonical_json_is_valid(str_from("[1,2,3]")) == 1, "valid array");
+    assert(canonical_json_is_valid(str_from("{}")) == 1, "empty object valid");
+    assert(canonical_json_is_valid(str_from("[]")) == 1, "empty array valid");
+    assert(canonical_json_is_valid(str_from("null")) == 1, "null valid");
+    assert(canonical_json_is_valid(str_from("-1.5e+3")) == 1, "number valid");
+    assert(canonical_json_is_valid(str_from("{\"a\" 1}")) == 0, "missing colon invalid");
+    assert(canonical_json_is_valid(str_from("{ZZ\"a\":1}")) == 0, "junk in object invalid");
+    assert(canonical_json_is_valid(str_from("{\"a\":1}X")) == 0, "trailing byte invalid");
+    assert(canonical_json_is_valid(str_from("{\"a\":1")) == 0, "unterminated object invalid");
+    assert(canonical_json_is_valid(str_from("\"unterminated")) == 0, "unterminated string invalid");
+    assert(canonical_json_is_valid(str_from("01")) == 0, "leading zero invalid");
+    assert(canonical_json_is_valid(str_from("tru")) == 0, "truncated literal invalid");
+    assert(canonical_json_is_valid(str_from("[1,]")) == 0, "trailing comma invalid");
+}
+
+# Deep nesting must be REJECTED, not recursed into. Through 2.8.10 the
+# mutually-recursive emitters had no bound and ~130 KB of "[" segfaulted the
+# process on append and on every verify.
+fn test_canonical_json_depth_cap() {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < 4000) { str_builder_add_cstr(sb, "["); i += 1; }
+    i = 0;
+    while (i < 4000) { str_builder_add_cstr(sb, "]"); i += 1; }
+    var deep = str_builder_build(sb);
+    assert(canonical_json_is_valid(deep) == 0,
+      "4000-deep nesting rejected by the depth cap");
+    # And hashing it must return, not crash.
+    var h = hasher_new();
+    canonical_json_hash_str(deep, h);
+    assert(str_len(hasher_finalize_hex(h)) == 64,
+      "over-deep details still yields a digest without crashing");
+}
+
+# An entry whose details is malformed still verifies, and still detects a
+# tamper — the fallback must be a real hash, not a constant.
+fn test_entry_malformed_details_still_tamper_evident() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{\"a\":1 JUNK}"), str_from(""));
+    assert(entry_verify(e) == 1, "malformed-details entry verifies");
+    entry_set_details(e, str_from("{\"a\":1 OTHERJUNK}"));
+    assert(entry_verify(e) == 0,
+      "tampering malformed details breaks verification");
+}
+
+# The entry preimage must cover hash_algorithm. Through 2.8.10 field 11 sat
+# OUTSIDE entry_compute_hash, so this mutation left entry_verify at 1.
+fn test_entry_hash_covers_algorithm() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    assert(entry_verify(e) == 1, "entry verifies before alg tamper");
+    entry_set_hash_algorithm(e, str_from("md5-lol"));
+    assert(entry_verify(e) == 0,
+      "hash_algorithm tamper breaks entry_verify");
+}
+
+# RFC 9162 leaf/internal domain separation. A leaf must not be presentable
+# as an internal node: the tree's leaf is HASH(0x00 || entry_hash), never
+# the bare entry hash it was through 2.8.10.
+# Untagged HASH(a) / HASH(a || b) — the pre-2.8.11 constructions. Used to
+# assert the domain tags actually contribute; comparing merkle_leaf_hash
+# against itself would move with the mutation and prove nothing.
+fn _t_untagged_hash1(a) {
+    var h = hasher_new();
+    hasher_update(h, str_data(a), str_len(a));
+    return hasher_finalize_hex(h);
+}
+
+fn _t_untagged_hash2(a, b) {
+    var h = hasher_new();
+    hasher_update(h, str_data(a), str_len(a));
+    hasher_update(h, str_data(b), str_len(b));
+    return hasher_finalize_hex(h);
+}
+
+fn test_merkle_leaf_domain_separated() {
+    var c = chain_new();
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), str_from("{}"));
+    var entries = chain_entries(c);
+    var eh = entry_hash(vec_get(entries, 0));
+    var tree = merkle_build(entries);
+
+    assert(str_eq(merkle_tree_root(tree), eh) == 0,
+      "single-leaf root is not the bare entry hash");
+    assert(str_eq(merkle_tree_root(tree), merkle_leaf_hash(eh)) == 1,
+      "single-leaf root is the leaf hash");
+    # The 0x00 tag must CHANGE the digest, not just be documented.
+    assert(str_eq(merkle_leaf_hash(eh), _t_untagged_hash1(eh)) == 0,
+      "leaf hash is 0x00-tagged, not bare SHA-256");
+}
+
+# The 0x01 internal tag must likewise contribute, and a two-leaf root must
+# not equal the untagged concatenation an attacker could reconstruct.
+fn test_merkle_internal_domain_separated() {
+    var c = chain_new();
+    var det = str_from("{}");
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+    var entries = chain_entries(c);
+    var l0 = merkle_leaf_hash(entry_hash(vec_get(entries, 0)));
+    var l1 = merkle_leaf_hash(entry_hash(vec_get(entries, 1)));
+    var tree = merkle_build(entries);
+    assert(str_eq(merkle_tree_root(tree), _t_untagged_hash2(l0, l1)) == 0,
+      "internal node is 0x01-tagged, not bare concat");
+}
+
+# merkle_build's level walk and merkle_canonical_root's RFC 9162 split must
+# agree at EVERY size. Through 2.8.10 merkle_build duplicated an odd trailing
+# node while canonical_root promoted it, so the two disagreed for every
+# non-power-of-2 size and a bundle's two roots could never be bound.
+fn test_merkle_root_matches_canonical() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var n = 1;
+    while (n <= 9) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        var tree = merkle_build(chain_entries(c));
+        assert(constant_time_eq_str(merkle_tree_root(tree),
+            merkle_canonical_root(tree, n)) == 1,
+          "merkle_tree_root == merkle_canonical_root");
+        n += 1;
+    }
+}
+
+# An inclusion proof must be checked against an EXTERNAL trusted root, not
+# the one it carries. merkle_verify_proof answers only "is this bundle
+# self-consistent" and accepts a proof for an entirely different tree.
+fn test_merkle_proof_bound_to_external_root() {
+    var ca = chain_new();
+    var cb = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 4) {
+        chain_append(ca, SEV_INFO, str_from("a"), str_from("a"), det);
+        chain_append(cb, SEV_INFO, str_from("b"), str_from("b"), det);
+        i += 1;
+    }
+    var ta = merkle_build(chain_entries(ca));
+    var tb = merkle_build(chain_entries(cb));
+    var mpb = merkle_inclusion_proof(tb, 0);
+
+    assert(merkle_verify_proof(mpb) == 1,
+      "foreign proof is self-consistent");
+    assert(merkle_verify_proof_against(mpb, merkle_tree_root(tb)) == 1,
+      "foreign proof verifies against its own tree root");
+    assert(merkle_verify_proof_against(mpb, merkle_tree_root(ta)) == 0,
+      "foreign proof rejected against another tree's root");
+    assert(merkle_verify_proof_against(mpb, 0) == 0,
+      "null expected root rejected");
+}
+
+# A proof bundle whose inclusion proofs belong to a different tree must not
+# report inclusions_valid. This is the _proof_verify_common binding.
+fn test_proof_rejects_foreign_inclusions() {
+    var ca = chain_new();
+    var cb = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 4) {
+        chain_append(ca, SEV_INFO, str_from("a"), str_from("a"), det);
+        chain_append(cb, SEV_INFO, str_from("b"), str_from("b"), det);
+        i += 1;
+    }
+    var pa = proof_build_unsigned(ca);
+    var pv_ok = proof_verify_unsigned(pa);
+    assert(pv_inclusions_valid(pv_ok) == 1,
+      "own inclusions valid");
+
+    var tb = merkle_build(chain_entries(cb));
+    var foreign = vec_new();
+    vec_push(foreign, merkle_inclusion_proof(tb, 0));
+    iproof_set_inclusions(pa, foreign);
+    var pv_bad = proof_verify_unsigned(pa);
+    assert(pv_inclusions_valid(pv_bad) == 0,
+      "foreign inclusion proof rejected by bundle verify");
+}
+
+# ── FileStore round-trip regressions (2.8.11) ──
+
+# Build a JSONL record with a short fixed id, optionally omitting the
+# `timestamp` and/or `prev_hash` field. Assembled rather than written as one
+# literal so the test lines stay under the 120-char lint bound.
+fn _t_rec(with_ts, with_ph) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"id\":\"41414141\"");
+    if (with_ts == 1) {
+        str_builder_add_cstr(sb, ",\"timestamp\":\"2026-01-01T00:00:00Z\"");
+    }
+    str_builder_add_cstr(sb, ",\"severity\":\"Info\"");
+    str_builder_add_cstr(sb, ",\"source\":\"s\",\"action\":\"a\"");
+    str_builder_add_cstr(sb, ",\"details\":\"{}\",\"agent_id\":\"\"");
+    if (with_ph == 1) {
+        str_builder_add_cstr(sb, ",\"prev_hash\":\"\"");
+    }
+    str_builder_add_cstr(sb, ",\"hash\":\"ff\"");
+    str_builder_add_cstr(sb, ",\"hash_algorithm\":\"sha256\"}");
+    return str_builder_build(sb);
+}
+
+# Serialize an entry to a JSONL line and read it straight back.
+fn _t_fs_roundtrip(e) {
+    var sb = str_builder_new();
+    _filestore_entry_json(sb, e);
+    return _filestore_parse_entry(str_builder_build(sb));
+}
+
+# `details` of {"user":"bob"} must survive the round trip byte-for-byte.
+# This broke for libro 2.8.10 as shipped — not through libro's own code, but
+# through the bayan 1.4.2 its 6.5.31 pin folded, which mis-parsed \" inside a
+# string value and dropped every key after it. bayan 1.5.1 fixed that and
+# 6.5.34 folds 1.5.2, so the bump alone repairs it; this test pins the
+# behaviour so a future fold regression is caught here rather than in a
+# consumer's audit log.
+fn test_filestore_roundtrip_quoted_details() {
+    var det = str_from("{\"user\":\"bob\",\"n\":1}");
+    var e = entry_new(SEV_INFO, str_from("svc"), str_from("act"), det,
+      str_from(""));
+    var back = _t_fs_roundtrip(e);
+    assert(back != 0, "quoted details reparses");
+    assert(str_eq(entry_details(back), det) == 1,
+      "quoted details survives the round trip verbatim");
+    assert(entry_verify(back) == 1,
+      "quoted details entry still verifies after reload");
+    # And the fields AFTER details must survive too — bayan lost them.
+    assert(str_eq(entry_hash(back), entry_hash(e)) == 1,
+      "hash field after details survives");
+    assert(str_eq(entry_hash_algorithm(back),
+        entry_hash_algorithm(e)) == 1,
+      "hash_algorithm (last field) survives");
+}
+
+# source and action were written unescaped, so a quote produced an
+# unparseable line and the entry vanished on reload.
+fn test_filestore_roundtrip_quoted_source_action() {
+    var e = entry_new(SEV_INFO, str_from("sv\"c"), str_from("a\\ct"),
+      str_from("{}"), str_from(""));
+    var back = _t_fs_roundtrip(e);
+    assert(back != 0, "quoted source/action reparses");
+    assert(str_eq(entry_source(back), str_from("sv\"c")) == 1,
+      "quoted source survives");
+    assert(str_eq(entry_action(back), str_from("a\\ct")) == 1,
+      "backslash action survives");
+    assert(entry_verify(back) == 1,
+      "quoted source/action entry still verifies");
+}
+
+# Control bytes must be escaped, not emitted raw — a newline splits the
+# JSONL record in two and a CR truncates it for most readers.
+fn test_filestore_roundtrip_control_chars() {
+    var det = str_from("{\"a\":\"x\ny\tz\"}");
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det,
+      str_from(""));
+    var sb = str_builder_new();
+    _filestore_entry_json(sb, e);
+    var line = str_builder_build(sb);
+    var ld = str_data(line);
+    var ll = str_len(line);
+    var raw_nl = 0;
+    var i = 0;
+    while (i < ll) {
+        var c = load8(ld + i) & 0xFF;
+        if (c < 32) { raw_nl = 1; }
+        i += 1;
+    }
+    assert(raw_nl == 0, "no raw control byte survives into the JSONL line");
+    var back = _filestore_parse_entry(line);
+    assert(back != 0, "control-char record reparses");
+    assert(str_eq(entry_details(back), det) == 1,
+      "control chars survive the round trip");
+    assert(entry_verify(back) == 1, "control-char entry verifies");
+
+    # A C0 byte with NO shorthand escape (0x01) must take the \u00XX path.
+    # Testing only \n and \t leaves that branch unexercised.
+    var raw = alloc(16);
+    store8(raw + 0, 123); store8(raw + 1, 34); store8(raw + 2, 97);
+    store8(raw + 3, 34);  store8(raw + 4, 58); store8(raw + 5, 34);
+    store8(raw + 6, 1);   store8(raw + 7, 34); store8(raw + 8, 125);
+    var det2 = str_new(raw, 9);
+    var e2 = entry_new(SEV_INFO, str_from("s"), str_from("a"), det2,
+      str_from(""));
+    var sb2 = str_builder_new();
+    _filestore_entry_json(sb2, e2);
+    var line2 = str_builder_build(sb2);
+    var l2d = str_data(line2);
+    var l2l = str_len(line2);
+    var raw_ctl = 0;
+    var j = 0;
+    while (j < l2l) {
+        if ((load8(l2d + j) & 0xFF) < 32) { raw_ctl = 1; }
+        j += 1;
+    }
+    assert(raw_ctl == 0, "0x01 is escaped, not emitted raw");
+    var back2 = _filestore_parse_entry(line2);
+    assert(back2 != 0, "0x01 record reparses");
+    assert(str_eq(entry_details(back2), det2) == 1,
+      "0x01 survives the round trip via \\u00XX");
+    assert(entry_verify(back2) == 1, "0x01 entry verifies");
+}
+
+# Any four-character agent_id starting with n was read back as absent.
+fn test_filestore_agent_id_not_swallowed() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    entry_set_agent_id(e, str_from("node"));
+    entry_set_hash(e, entry_compute_hash(e));
+    var back = _t_fs_roundtrip(e);
+    assert(back != 0, "agent_id record reparses");
+    assert(entry_agent_id(back) != 0, "agent_id 'node' is not dropped");
+    assert(str_eq(entry_agent_id(back), str_from("node")) == 1,
+      "agent_id 'node' survives verbatim");
+    assert(entry_verify(back) == 1, "agent_id 'node' entry verifies");
+    # The genuine "null" literal is still honoured.
+    var e2 = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    entry_set_agent_id(e2, str_from("nine"));
+    entry_set_hash(e2, entry_compute_hash(e2));
+    var b2 = _t_fs_roundtrip(e2);
+    assert(str_eq(entry_agent_id(b2), str_from("nine")) == 1,
+      "agent_id 'nine' survives too");
+}
+
+# A record missing timestamp or prev_hash stored a NULL Str and every later
+# str_len() on it segfaulted the process.
+fn test_filestore_rejects_null_fields() {
+    var no_ts = _t_rec(0, 1);
+    assert(_filestore_parse_entry(no_ts) == 0,
+      "record with no timestamp is rejected, not stored as NULL");
+    var no_ph = _t_rec(1, 0);
+    assert(_filestore_parse_entry(no_ph) == 0,
+      "record with no prev_hash is rejected");
+    assert(_filestore_parse_entry(str_from("not json")) == 0,
+      "non-object line is rejected");
+    assert(_filestore_parse_entry(str_from("{\"a\":\"b\" \"c\":\"d\"}")) == 0,
+      "missing comma is rejected");
+}
+
+# A short "id" left the 16 UUID bytes as recycled freelist memory, and those
+# bytes are the first thing entry_compute_hash feeds — so the same record
+# parsed twice produced two different hashes.
+fn test_filestore_short_uuid_is_deterministic() {
+    var line = _t_rec(1, 1);
+    # Dirty the freelist between the two parses so residue would differ.
+    var d1 = fl_alloc(88);
+    memset(d1, 0x11, 88);
+    fl_free(d1);
+    var a = _filestore_parse_entry(line);
+    var ha = entry_compute_hash(a);
+    var d2 = fl_alloc(88);
+    memset(d2, 0x77, 88);
+    fl_free(d2);
+    var b = _filestore_parse_entry(line);
+    var hb = entry_compute_hash(b);
+    assert(str_eq(ha, hb) == 1,
+      "short uuid hashes deterministically, not over freelist residue");
+    var idb = entry_id(b);
+    var zeros = 1;
+    var i = 4;
+    while (i < 16) {
+        if ((load8(idb + i) & 0xFF) != 0) { zeros = 0; }
+        i += 1;
+    }
+    assert(zeros == 1, "unparsed uuid bytes are zero-filled");
+}
+
+# ── Error-signalling regressions (2.8.11) ──
+
+# The discriminator itself: an error must be distinguishable from a value.
+fn test_libro_is_error_discriminates() {
+    var err = error_new(LIBRO_ERR_IO, "boom");
+    assert(libro_is_error(err) == 1, "error object is recognised");
+    assert(libro_is_ok(err) == 0, "error object is not ok");
+    assert(libro_is_error(error_integrity(1, str_from("a"), str_from("b"))) == 1,
+      "integrity error is recognised");
+    assert(libro_is_error(error_field("f", 9, 4)) == 1,
+      "field error is recognised");
+
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    assert(libro_is_error(e) == 0, "an entry is not an error");
+    assert(libro_is_ok(e) == 1, "an entry is ok");
+    assert(libro_is_error(vec_new()) == 0, "a vec is not an error");
+    assert(libro_is_error(0) == 0, "null is not an error");
+    assert(libro_is_ok(0) == 0, "null is not ok either");
+}
+
+# entry_new_validated returns an error struct on rejection — the same
+# non-zero pointer shape as a valid entry, whose fields then read as a
+# max-severity entry. It must now be detectable.
+fn test_entry_new_validated_error_detectable() {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < 2000) { str_builder_add_cstr(sb, "x"); i += 1; }
+    var too_long = str_builder_build(sb);
+    var r = entry_new_validated(SEV_INFO, too_long, str_from("a"),
+      str_from("{}"), str_from(""));
+    assert(r != 0, "over-long source still returns non-zero (the trap)");
+    assert(libro_is_error(r) == 1,
+      "over-long source result is detectable as an error");
+    assert(error_code(r) == LIBRO_ERR_FIELD_TOO_LONG, "code is FIELD_TOO_LONG");
+
+    var ok = entry_new_validated(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    assert(libro_is_ok(ok) == 1, "valid entry is ok");
+}
+
+# An unreadable log must not verify clean.
+fn test_filestore_unreadable_is_not_success() {
+    var s = filestore_open(str_from("/nonexistent-dir-libro/x.jsonl"));
+    var r = filestore_load_all_or_err(s);
+    assert(libro_is_error(r) == 1,
+      "unreadable log reports an error, not an empty vec");
+    assert(error_code(r) == LIBRO_ERR_IO, "code is IO");
+
+    var v = filestore_load_and_verify(s);
+    assert(libro_is_error(v) == 1,
+      "load_and_verify on an unreadable log is an error, not success");
+
+    var sv = filestore_verify_streamed(s, 10);
+    assert(libro_is_error(sv) == 1,
+      "verify_streamed on an unreadable log is an error, not the count 0");
+}
+
+# A genuinely empty log is still a clean success — the fix must not turn
+# "empty" into "error".
+fn test_filestore_empty_is_still_success() {
+    sys_unlink("/tmp/libro_empty_2811.jsonl");
+    var s = filestore_open(str_from("/tmp/libro_empty_2811.jsonl"));
+    var r = filestore_load_all_or_err(s);
+    assert(libro_is_error(r) == 0, "empty log is not an error");
+    assert(vec_len(r) == 0, "empty log has no entries");
+    var sv = filestore_verify_streamed(s, 10);
+    assert(libro_is_error(sv) == 0, "empty log verifies clean");
+    assert(sv == 0, "empty log verifies 0 entries");
+    sys_unlink("/tmp/libro_empty_2811.jsonl");
+}
+
+# A streaming chain has a real head; chain_head_hash returned 0 for it, so an
+# anchor built from one bound to nothing and still verified.
+fn test_streaming_chain_has_head_hash() {
+    var c = chain_new_streaming();
+    var e = chain_append(c, SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"));
+    assert(chain_len(c) == 0, "streaming chain retains nothing");
+    var h = chain_head_hash(c);
+    assert(h != 0, "streaming chain reports a head hash");
+    assert(str_len(h) == 64, "streaming head hash is a 64-char digest");
+
+    var c2 = chain_new();
+    assert(chain_head_hash(c2) == 0, "empty retaining chain still has no head");
+}
+
+# The read path must bind its parameter, not interpolate it.
+fn test_patrastore_by_source_is_bound() {
+    sys_unlink("/tmp/libro_ps_inj.patra");
+    var ps = patrastore_open(str_from("/tmp/libro_ps_inj.patra"));
+    var det = str_from("{}");
+    var prev = libro_empty_str();
+
+    var quoted = str_from("o'brien");
+    var e1 = entry_new(SEV_INFO, quoted, str_from("a"), det, prev);
+    patrastore_append(ps, e1);
+    prev = entry_hash(e1);
+    var e2 = entry_new(SEV_INFO, str_from("other"), str_from("a"), det, prev);
+    patrastore_append(ps, e2);
+
+    # A quote in the predicate used to produce malformed SQL and zero rows.
+    var got = patrastore_by_source(ps, quoted);
+    assert(vec_len(got) == 1, "source containing a quote matches its own row");
+    assert(str_eq(entry_source(vec_get(got, 0)), quoted) == 1,
+      "matched row is the right one");
+
+    # A classic widening payload must match NOTHING, not the whole table.
+    var inj = patrastore_by_source(ps, str_from("x' OR '1'='1"));
+    assert(vec_len(inj) == 0,
+      "injection payload matches no rows instead of dumping the table");
+
+    patrastore_close(ps);
+    sys_unlink("/tmp/libro_ps_inj.patra");
+    sys_unlink("/tmp/libro_ps_inj.patra.wal");
+}
+
+# ── Robustness regressions (2.8.11) ──
+
+fn test_query_parse_ts_validates() {
+    assert(_query_parse_ts(str_from("2026-08-22T10:00:00Z")) == 1787392800,
+      "well-formed timestamp still parses");
+    assert(_query_parse_ts(str_from("")) == QUERY_TS_INVALID,
+      "empty timestamp rejected, not read 20 bytes past the Str");
+    assert(_query_parse_ts(str_from("2026")) == QUERY_TS_INVALID,
+      "short timestamp rejected");
+    assert(_query_parse_ts(str_from("not-a-timestamp!!!!!")) == QUERY_TS_INVALID,
+      "non-digit timestamp rejected");
+    assert(_query_parse_ts(str_from("2026-08-22 10:00:00Z")) == QUERY_TS_INVALID,
+      "wrong separator rejected");
+    assert(_query_parse_ts(str_from("2026-13-22T10:00:00Z")) == QUERY_TS_INVALID,
+      "month 13 rejected");
+    assert(_query_parse_ts(str_from("2026-08-22T25:00:00Z")) == QUERY_TS_INVALID,
+      "hour 25 rejected");
+    assert(_query_parse_ts(0) == QUERY_TS_INVALID, "null timestamp rejected");
+    # Every separator is in the right place here; only the LENGTH check can
+    # reject it. Without that check the trailing byte is silently ignored and
+    # a 21-byte value parses as if it were 20.
+    assert(_query_parse_ts(str_from("2026-08-22T10:00:00Z9")) == QUERY_TS_INVALID,
+      "over-long timestamp rejected by the length check");
+}
+
+# A record whose time cannot be established must not be reported as falling
+# inside a queried window, and must not be selected for deletion.
+fn test_bad_timestamp_fails_closed() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"),
+      str_from("{}"), str_from(""));
+    entry_set_timestamp(e, str_from("garbage"));
+    var q = query_new();
+    query_after(q, 1);
+    assert(query_matches(q, e) == 0,
+      "unparseable timestamp matches no after-window");
+    var q2 = query_new();
+    query_before(q2, 9999999999);
+    assert(query_matches(q2, e) == 0,
+      "unparseable timestamp matches no before-window");
+
+    var entries = vec_new();
+    vec_push(entries, e);
+    assert(_retention_first_after(entries, 0) == 0,
+      "unparseable timestamp is retained, never expired");
+}
+
+# A hybrid key has two public keys; the single-buffer constructor used to
+# build one over a ZERO-BYTE allocation and hand it to ed25519_verify.
+fn test_verifying_key_from_bytes_alg_rejects_hybrid() {
+    var buf = alloc(64);
+    memset(buf, 0x41, 64);
+    assert(verifying_key_from_bytes_alg(buf, SIG_ALG_HYBRID) == 0,
+      "hybrid rejected by the single-algorithm constructor");
+    assert(verifying_key_from_bytes_alg(buf, 999) == 0,
+      "unknown algorithm rejected");
+    assert(verifying_key_from_bytes_alg(0, SIG_ALG_ED25519) == 0,
+      "null bytes rejected");
+    assert(verifying_key_from_bytes_alg(buf, SIG_ALG_ED25519) != 0,
+      "ed25519 still constructs");
+}
+
+# A malformed or absent signature must be rejected before it reaches the
+# crypto boundary, not decoded into an undersized buffer and read past.
+fn test_signature_length_validated() {
+    var sk = signing_key_generate();
+    var vk = verifying_key_from_signing(sk);
+    var root = str_from("aa");
+    assert(verify_tree_head(vk, root, str_from("")) == 0,
+      "empty signature rejected");
+    assert(verify_tree_head(vk, root, str_from("ff")) == 0,
+      "2-char signature rejected");
+    assert(verify_tree_head(vk, root, 0) == 0, "null signature rejected");
+    assert(verify_tree_head(0, root, str_from("ff")) == 0, "null key rejected");
+    assert(verify_tree_head(vk, str_from(""), str_from("ff")) == 0,
+      "empty root rejected");
+    # And a real signature still verifies.
+    var real_root = str_from("0123456789abcdef");
+    var sig = sign_tree_head(sk, real_root);
+    assert(verify_tree_head(vk, real_root, sig) == 1,
+      "a genuine tree-head signature still verifies");
+}
+
+# Junk DER must not become a granted attestation.
+fn test_ts_response_rejects_junk_der() {
+    var junk = alloc(32);
+    memset(junk, 0x41, 32);
+    var r = ts_response_from_der(junk, 32);
+    assert(ts_status_is_granted(ts_response_status(r)) == 0,
+      "junk DER is not a granted response");
+
+    # The above is rejected on LENGTH alone, so it cannot tell whether tags
+    # are checked. This one is length-consistent all the way down and decodes
+    # to status 0 (= TS_GRANTED); only the tag check stops it. Every tag is
+    # 0x41 where DER requires 0x30 (SEQUENCE) / 0x02 (INTEGER).
+    var forged = alloc(32);
+    memset(forged, 0x41, 32);
+    store8(forged + 0, 0x41); store8(forged + 1, 0x1E);   # "outer", len 30
+    store8(forged + 2, 0x41); store8(forged + 3, 0x03);   # "statusinfo", len 3
+    store8(forged + 4, 0x41); store8(forged + 5, 0x01);   # "status", len 1
+    store8(forged + 6, 0x00);                             # value 0 = GRANTED
+    var r2 = ts_response_from_der(forged, 32);
+    assert(ts_status_is_granted(ts_response_status(r2)) == 0,
+      "length-consistent junk with wrong DER tags is not granted");
+    assert(ts_attestation_new(str_from("hh"), TS_MERKLE_ROOT, TS_SHA256, r2) == 0,
+      "wrong-tag response yields no attestation");
+    assert(ts_attestation_new(str_from("hh"), TS_MERKLE_ROOT, TS_SHA256, r) == 0,
+      "junk DER yields no attestation");
+    assert(ts_attestation_new(str_from("hh"), TS_MERKLE_ROOT, TS_SHA256, 0) == 0,
+      "null response yields no attestation");
+}
+
+# A headerless JSONL must not import with its genesis entry silently eaten.
+fn test_chain_import_requires_header() {
+    var c = chain_new();
+    var det = str_from("{}");
+    var i = 0;
+    while (i < 3) {
+        chain_append(c, SEV_INFO, str_from("s"), str_from("a"), det);
+        i += 1;
+    }
+    sys_unlink("/tmp/libro_hdr_2811.jsonl");
+    chain_export(c, str_from("/tmp/libro_hdr_2811.jsonl"));
+    var ok = chain_import(str_from("/tmp/libro_hdr_2811.jsonl"));
+    assert(ok != 0, "exported chain re-imports");
+    assert(chain_len(ok) == 3, "all three entries import");
+
+    # Now a plain FileStore log — same entry shape, NO header line.
+    sys_unlink("/tmp/libro_nohdr_2811.jsonl");
+    var fs = filestore_open(str_from("/tmp/libro_nohdr_2811.jsonl"));
+    var entries = chain_entries(c);
+    var j = 0;
+    while (j < vec_len(entries)) {
+        filestore_append(fs, vec_get(entries, j));
+        j += 1;
+    }
+    var bad = chain_import(str_from("/tmp/libro_nohdr_2811.jsonl"));
+    assert(bad == 0,
+      "headerless log is rejected, not imported minus its genesis entry");
+
+    sys_unlink("/tmp/libro_hdr_2811.jsonl");
+    sys_unlink("/tmp/libro_nohdr_2811.jsonl");
 }
 
 fn test_merkle_consistency() {
@@ -1584,20 +2319,22 @@ fn test_layout_archive() {
 }
 
 fn test_layout_error() {
-    # 6 fields × 8 bytes = 48 bytes.
-    var error_layout = fl_alloc(48);
-    store64(error_layout,      0x1111111111111111);    # code
-    store64(error_layout + 8,  0x2222222222222222);    # msg
-    store64(error_layout + 16, 0x3333333333333333);    # field_name
-    store64(error_layout + 24, 0x4444444444444444);    # index
-    store64(error_layout + 32, 0x5555555555555555);    # expected
-    store64(error_layout + 40, 0x6666666666666666);    # actual
-    assert(error_code(error_layout)       == 0x1111111111111111, "error.code at +0");
-    assert(error_msg(error_layout)        == 0x2222222222222222, "error.msg at +8");
-    assert(error_field_name(error_layout) == 0x3333333333333333, "error.field_name at +16");
-    assert(error_index(error_layout)      == 0x4444444444444444, "error.index at +24");
-    assert(error_expected(error_layout)   == 0x5555555555555555, "error.expected at +32");
-    assert(error_actual(error_layout)     == 0x6666666666666666, "error.actual at +40");
+    # 7 fields × 8 bytes = 56 bytes (2.8.11 added `magic` at +0).
+    var error_layout = fl_alloc(56);
+    store64(error_layout,      0x1111111111111111);    # magic
+    store64(error_layout + 8,  0x2222222222222222);    # code
+    store64(error_layout + 16, 0x3333333333333333);    # msg
+    store64(error_layout + 24, 0x4444444444444444);    # field_name
+    store64(error_layout + 32, 0x5555555555555555);    # index
+    store64(error_layout + 40, 0x6666666666666666);    # expected
+    store64(error_layout + 48, 0x7777777777777777);    # actual
+    assert(error_magic(error_layout)      == 0x1111111111111111, "error.magic at +0");
+    assert(error_code(error_layout)       == 0x2222222222222222, "error.code at +8");
+    assert(error_msg(error_layout)        == 0x3333333333333333, "error.msg at +16");
+    assert(error_field_name(error_layout) == 0x4444444444444444, "error.field_name at +24");
+    assert(error_index(error_layout)      == 0x5555555555555555, "error.index at +32");
+    assert(error_expected(error_layout)   == 0x6666666666666666, "error.expected at +40");
+    assert(error_actual(error_layout)     == 0x7777777777777777, "error.actual at +48");
 }
 
 fn test_layout_integrity() {
@@ -2119,7 +2856,7 @@ fn test_filestore_verify() {
 
     var fs = filestore_open(path);
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -2312,7 +3049,7 @@ fn test_filestore_verify_streamed() {
 
     var fs = filestore_open(path);
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 12) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -2344,7 +3081,7 @@ fn test_filestore_verify_streamed_chunk_sizes() {
 
     var fs = filestore_open(path);
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 7) {
         var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), det, prev);
@@ -2412,7 +3149,7 @@ fn test_chain_import_count_reports() {
 fn test_retention_keep_duration() {
     var det = str_from("{}");
     var entries = vec_new();
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 5) {
         var e = entry_new(SEV_INFO, str_from("s"),
@@ -2429,7 +3166,7 @@ fn test_retention_keep_duration() {
 fn test_retention_keep_after() {
     var det = str_from("{}");
     var entries = vec_new();
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),
@@ -2446,7 +3183,7 @@ fn test_retention_keep_after() {
 fn test_retention_keep_duration_future() {
     var det = str_from("{}");
     var entries = vec_new();
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),
@@ -2588,7 +3325,7 @@ fn test_filestore_multiple_appends() {
     sys_unlink("/tmp/libro_test_fma.jsonl");
     var fs = filestore_open(path);
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 10) {
         var e = entry_new(SEV_INFO, str_from("s"),
@@ -2804,7 +3541,7 @@ fn test_patrastore_verify() {
     var ps = patrastore_open(str_from(
         "/tmp/libro_test_ps3.patra"));
     var det = str_from("{}");
-    var prev = str_from("");
+    var prev = libro_empty_str();
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),
@@ -3248,6 +3985,37 @@ fn main() {
     test_merkle_inclusion_proof();
     test_merkle_proof_out_of_bounds();
     test_merkle_odd_leaf_count();
+    test_entry_hash_covers_algorithm();
+    test_canonical_json_no_junk_collision();
+    test_canonical_json_valid_unchanged();
+    test_canonical_json_many_keys_order_independent();
+    test_canonical_json_emits_ascending_key_order();
+    test_canonical_json_validator();
+    test_canonical_json_depth_cap();
+    test_entry_malformed_details_still_tamper_evident();
+    test_merkle_leaf_domain_separated();
+    test_merkle_internal_domain_separated();
+    test_merkle_root_matches_canonical();
+    test_merkle_proof_bound_to_external_root();
+    test_proof_rejects_foreign_inclusions();
+    test_filestore_roundtrip_quoted_details();
+    test_filestore_roundtrip_quoted_source_action();
+    test_filestore_roundtrip_control_chars();
+    test_filestore_agent_id_not_swallowed();
+    test_filestore_rejects_null_fields();
+    test_filestore_short_uuid_is_deterministic();
+    test_query_parse_ts_validates();
+    test_bad_timestamp_fails_closed();
+    test_verifying_key_from_bytes_alg_rejects_hybrid();
+    test_signature_length_validated();
+    test_ts_response_rejects_junk_der();
+    test_chain_import_requires_header();
+    test_libro_is_error_discriminates();
+    test_entry_new_validated_error_detectable();
+    test_filestore_unreadable_is_not_success();
+    test_filestore_empty_is_still_success();
+    test_streaming_chain_has_head_hash();
+    test_patrastore_by_source_is_bound();
     test_merkle_consistency();
     test_merkle_consistency_same_size();
 

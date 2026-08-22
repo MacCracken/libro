@@ -19,13 +19,53 @@ Open items, sequenced fastest-to-land first, reactive items last.
   `test_patrastore_read_from_another_thread`, mutation-verified: restoring the
   cache makes the suite dump core.
 
-  ⚠ **Still open, filed with it:** `patrastore_load_and_verify` returns the
-  entries vec on success and an error object on failure — **both non-zero
-  pointers** — so the natural `if (r != 0)` reads an integrity violation as a
-  successful load. An integrity check whose failure is indistinguishable from
-  success deserves a separate signature (an out-param, or 0-on-success plus an
-  out-vec). Agnostic sidesteps it by calling `patrastore_load_all` then
-  `verify_chain` directly, which is unambiguous.
+  ✅ **The open item filed with it is RESOLVED in 2.8.11.**
+  `patrastore_load_and_verify` returned the entries vec on success and an error
+  object on failure — both non-zero pointers — so `if (r != 0)` read an
+  integrity violation as a successful load. The 2.8.11 audit found the same
+  shape in three more APIs (`filestore_load_and_verify`, `entry_new_validated`,
+  `memstore_verify_streamed`), so the fix is a discriminator rather than a
+  per-site signature change: every error constructor stamps a magic at offset 0
+  and `libro_is_error(p)` / `libro_is_ok(p)` answer the question. Agnostic's
+  `patrastore_load_all` + `verify_chain` workaround still works and is still
+  unambiguous; it is no longer necessary.
+
+- [ ] **RFC 3161 token verification (carried over from the 2.8.11 audit).**
+  2.8.11 tightened the syntactic half — DER tags are checked, a length that
+  overflows is rejected, and a granted response must carry a token — but libro
+  still does NOT verify the TSA's CMS signature over the token, does not parse
+  TSTInfo to confirm the token's `messageImprint` matches the hash it is
+  attesting, and does not check the nonce against the request. So a
+  `ts_attestation` proves "a syntactically valid granted response was obtained",
+  not "a trusted TSA attested to THIS hash at THAT time", and a genuine response
+  for one hash can be presented alongside another.
+
+  Unblocker: CMS/PKCS#7 signature verification against a TSA certificate chain.
+  That belongs in **sigil**, not here — libro should call it, not reimplement
+  ASN.1 certificate handling. `ts_attestation_new`'s doc comment states the
+  current limit so no caller can mistake it.
+
+- [ ] **Hash-algorithm version discriminator.** 2.8.11 changed the entry
+  preimage and the Merkle construction with no migration path — the old forms
+  were unsound, so re-anchoring was the only honest option, but that is a cost
+  every consumer paid at once. A version field inside the preimage would let a
+  future correction verify old and new entries side by side instead. Design
+  question worth answering before the next preimage change, not after.
+
+- [ ] **Thin `[deps.bayan]` to `dist/bayan-json.cyr`.** libro's entire bayan
+  surface is `json_parse` and `json_get`, and it pulls the 641 KB monolith —
+  json + bigint + base64 + csv + toml + cyml + u128 + yaml + the 1.5.0 PDF
+  writer/reader. Measured at the 2.8.11 bump: the bayan 1.4.2 → 1.5.2 fold alone
+  accounts for the bulk of a +207 KB binary growth, and DCE NOPs the dead code
+  rather than removing it. `dist/bayan-json.cyr` is 100 KB.
+
+  This is the same shape as the 2.8.0 sigil thinning (14 MB → 724 KB), and bayan
+  ships the sub-bundles already. It is NOT a drop-in: `bayan` currently comes
+  from `[deps].stdlib`, so moving it to a git dep changes the dep graph, and
+  `cyrius.cyml` documents at length why that has bitten this repo before —
+  a declared dep overlays the snapshot on every resolve, and a downstream
+  consumer holding both the fold and the sub-bundle gets duplicate definitions.
+  Needs the transitive consumers (bote → agnosai) checked first.
 
 - [ ] **RFC 6901 JSON Pointer queries** (`/entries/0/hash` etc.).
   Unblocker satisfied: `lib/bayan.cyr` exports `bayan_json_v_pointer`

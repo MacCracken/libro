@@ -93,7 +93,18 @@ fn chain_import(path) {
             # json_parse creates Str views pointing into the raw bytes.
             var line_str = str_clone(str_new(buf + pos, line_len));
             if (line_idx == 0) {
-                _chain_import_apply_meta(c, line_str);
+                # 2.8.11 — the header line's parse result is CHECKED. Its
+                # doc comment promises "0 on failure (missing/invalid
+                # header)" and it never did: _chain_import_apply_meta's
+                # return was discarded, and line 0 had already been consumed
+                # as a header. A plain FileStore JSONL (same entry shape, no
+                # header) therefore imported with its GENESIS ENTRY SILENTLY
+                # EATEN, and the loose verify_chain — which only checks
+                # linkage for i > 0 — called the truncated result valid.
+                if (_chain_import_apply_meta(c, line_str) != 0) {
+                    sakshi_error("chain_io: import missing or invalid header", 41);
+                    return 0;
+                }
             } else {
                 var e = _filestore_parse_entry(line_str);
                 if (e != 0) { vec_push(chain_entries(c), e); }
@@ -109,16 +120,25 @@ fn chain_import(path) {
 
 fn chain_import_count() { return _ci_last_imported; }
 
+# Apply the export header. Returns 0 on success, non-zero if `line` is not a
+# chain-export header. 2.8.11 — was `return 0` on every path, including the
+# unparseable one, and used bayan's json_parse (which desynchronises on a
+# backslash escape); now uses libro's own strict flat reader.
 fn _chain_import_apply_meta(c, line) {
-    var pairs = json_parse(line);
-    if (vec_len(pairs) == 0) { return 0; }
+    var pairs = _fsj_parse_flat(line);
+    if (pairs == 0) { return 1; }
+    if (vec_len(pairs) == 0) { return 1; }
 
-    var prev = json_get(pairs, str_from("prev_chain_hash"));
+    # A header must actually BE a header. chain_export stamps the
+    # `_libro_chain` marker; an entry record has no such key. Requiring it is
+    # what stops a headerless JSONL from having its first entry eaten.
+    if (_fsj_lookup(pairs, "_libro_chain") == 0) { return 1; }
+    var prev = _fsj_lookup(pairs, "prev_chain_hash");
+    var cap = _fsj_lookup(pairs, "max_capacity");
+
     if (prev != 0 && str_len(prev) > 0) {
         chain_set_prev_hash(c, prev);
     }
-
-    var cap = json_get(pairs, str_from("max_capacity"));
     if (cap != 0 && str_len(cap) > 0) {
         chain_set_max_capacity(c, str_to_int(cap));
     }

@@ -273,8 +273,25 @@ fn ts_request_to_der(r) {
 # Parse a TLV header. Returns (total_consumed_bytes, value_ptr) — value_len is
 # derivable as total - (value_ptr - data). total == 0 signals parse failure;
 # value_ptr is undefined in that case.
-fn _der_parse_tlv(data, data_len) {
+# DER tags libro's response parser expects.
+var DER_TAG_INTEGER = 0x02;
+var DER_TAG_SEQUENCE = 0x30;
+
+# Parse one DER TLV. `expect_tag` is the tag byte that MUST be present, or 0
+# to accept any tag (the pre-2.8.11 behaviour, kept for the encode-side
+# helpers that legitimately do not care).
+#
+# ⚠ 2.8.11 — this never looked at the tag at all. ts_response_from_der walked
+# three nested TLVs without checking one of them, so ANY byte string whose
+# second byte happens to be a plausible length parsed as a PKIStatusInfo, and
+# _der_decode_unsigned over whatever followed produced a "status". If that
+# status came out 0 or 1, ts_status_is_granted returned 1 and
+# ts_attestation_new built a GRANTED attestation out of junk.
+fn _der_parse_tlv_tagged(data, data_len, expect_tag) {
     if (data_len < 2) { return (0, 0); }
+    if (expect_tag != 0) {
+        if ((load8(data) & 0xFF) != expect_tag) { return (0, 0); }
+    }
 
     var len_byte = load8(data + 1) & 0xFF;
     var header_size = 2;
@@ -293,9 +310,14 @@ fn _der_parse_tlv(data, data_len) {
     }
 
     var total = header_size + length;
+    if (total < header_size) { return (0, 0); }   # length overflowed
     if (data_len < total) { return (0, 0); }
 
     return (total, data + header_size);
+}
+
+fn _der_parse_tlv(data, data_len) {
+    return _der_parse_tlv_tagged(data, data_len, 0);
 }
 
 # Decode unsigned integer from DER bytes
@@ -319,8 +341,8 @@ struct ts_response { status; token; status_string; }
 fn ts_response_from_der(data, data_len) {
     var resp = fl_alloc(24);
 
-    # Parse outer SEQUENCE
-    var total, seq_data = _der_parse_tlv(data, data_len);
+    # Parse outer SEQUENCE — tag-checked since 2.8.11.
+    var total, seq_data = _der_parse_tlv_tagged(data, data_len, DER_TAG_SEQUENCE);
     if (total == 0) {
         store64(resp, TS_REJECTION);
         store64(resp + 8, 0);
@@ -330,7 +352,7 @@ fn ts_response_from_der(data, data_len) {
     var seq_len = total - (seq_data - data);
 
     # Parse PKIStatusInfo SEQUENCE
-    var si_total, si_data = _der_parse_tlv(seq_data, seq_len);
+    var si_total, si_data = _der_parse_tlv_tagged(seq_data, seq_len, DER_TAG_SEQUENCE);
     if (si_total == 0) {
         store64(resp, TS_REJECTION);
         store64(resp + 8, 0);
@@ -340,7 +362,7 @@ fn ts_response_from_der(data, data_len) {
     var si_len = si_total - (si_data - seq_data);
 
     # Parse status INTEGER from PKIStatusInfo
-    var st_total, st_data = _der_parse_tlv(si_data, si_len);
+    var st_total, st_data = _der_parse_tlv_tagged(si_data, si_len, DER_TAG_INTEGER);
     if (st_total == 0) {
         store64(resp, TS_REJECTION);
         store64(resp + 8, 0);
@@ -374,8 +396,30 @@ fn ts_response_from_der(data, data_len) {
 #derive(accessors)
 struct ts_attestation { hash; subject; algorithm; token; tsa_url; created_at; }
 
+# Build an attestation from a TSA response.
+#
+# ⚠ SCOPE OF VERIFICATION — read this before relying on the result.
+# libro checks that the response is well-formed DER, that its PKIStatus is
+# granted, and that a token is present. It does NOT verify the TSA's CMS
+# signature over the token, and it does NOT yet parse TSTInfo to confirm the
+# token's messageImprint matches `hash` or that the nonce echoes the request.
+# So an attestation proves "a syntactically valid granted response was
+# obtained", not "a trusted TSA attested to THIS hash at THAT time" — and a
+# genuine response for one hash can still be presented alongside another.
+# Full token verification needs CMS/PKCS#7 signature checking against a TSA
+# certificate chain, which belongs in sigil; tracked on the roadmap.
+#
+# 2.8.11 tightened the syntactic half: the DER tags are now checked (junk no
+# longer parses as a granted PKIStatusInfo) and a granted response with no
+# token is rejected instead of yielding an attestation with a null token.
 fn ts_attestation_new(hash, subject, algorithm, response) {
+    if (response == 0) { return 0; }
     if (ts_status_is_granted(ts_response_status(response)) == 0) {
+        return 0;
+    }
+    var tok = ts_response_token(response);
+    if (tok == 0 || str_len(tok) == 0) {
+        sakshi_error("timestamping: granted response carries no token", 46);
         return 0;
     }
     var a = fl_alloc(48);

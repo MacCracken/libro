@@ -76,8 +76,39 @@ fn merkle_tree_root(t) {
 # Hash pair — parent hash from two children
 # ================================================================
 
+# RFC 9162 §2.1.1 domain separation. Through 2.8.10 a parent was
+# HASH(left || right) with NO tag, and a leaf was the bare entry hash — both
+# 64-char hex, so a leaf and an internal node were indistinguishable and an
+# internal node could be presented as a leaf (classic second-preimage).
+#   MTH({d})    = HASH(0x00 || d)          -- _merkle_hash_leaf
+#   MTH(D[n])   = HASH(0x01 || left || right) -- _merkle_hash_pair
+# ⚠ This CHANGES every Merkle root. See CHANGELOG [2.8.11].
+
+var _mk_tag = 0;
+
+fn _merkle_tag(h, byte) {
+    if (_mk_tag == 0) { _mk_tag = alloc(2); }
+    store8(_mk_tag, byte);
+    hasher_update(h, _mk_tag, 1);
+    return 0;
+}
+
+# Leaf hash of an entry hash. Public so a consumer can compute the expected
+# leaf for an entry and compare it against merkle_proof_leaf.
+fn merkle_leaf_hash(entry_h) {
+    var h = hasher_new();
+    _merkle_tag(h, 0);
+    hasher_update(h, str_data(entry_h), str_len(entry_h));
+    return hasher_finalize_hex(h);
+}
+
+fn _merkle_hash_leaf(entry_h) {
+    return merkle_leaf_hash(entry_h);
+}
+
 fn _merkle_hash_pair(left, right) {
     var h = hasher_new();
+    _merkle_tag(h, 1);
     hasher_update(h, str_data(left), str_len(left));
     hasher_update(h, str_data(right), str_len(right));
     return hasher_finalize_hex(h);
@@ -93,12 +124,13 @@ fn merkle_build(entries) {
 
     var nodes = vec_new();
 
-    # Extract leaf hashes
+    # Extract leaf hashes, RFC 9162 leaf-tagged (2.8.11 — was the bare
+    # entry hash, which collided with the internal-node domain).
     var leaves = vec_new();
     var i = 0;
     while (i < n) {
         var e = vec_get(entries, i);
-        vec_push(leaves, entry_hash(e));
+        vec_push(leaves, _merkle_hash_leaf(entry_hash(e)));
         i += 1;
     }
 
@@ -113,16 +145,23 @@ fn merkle_build(entries) {
             i += 1;
         }
 
-        # Compute next level
+        # Compute next level. 2.8.11 — an odd trailing node is PROMOTED
+        # unchanged (RFC 9162 §2.1.2), not paired with itself. The old
+        # `right = left` duplication made {d} and {d, d} share a root, and
+        # made merkle_tree_root disagree with merkle_canonical_root (which
+        # already implemented the no-duplication rule) for every non-power-
+        # of-2 size — so a proof bundle's two root definitions could never
+        # be bound to each other. Level-by-level promotion is equivalent to
+        # the RFC's split-at-largest-power-of-2, so the two now agree.
         var next = vec_new();
         i = 0;
         while (i < cl) {
-            var left = vec_get(current, i);
-            var right = left;
             if (i + 1 < cl) {
-                right = vec_get(current, i + 1);
+                vec_push(next, _merkle_hash_pair(vec_get(current, i),
+                    vec_get(current, i + 1)));
+            } else {
+                vec_push(next, vec_get(current, i));
             }
-            vec_push(next, _merkle_hash_pair(left, right));
             i = i + 2;
         }
         current = next;
@@ -159,19 +198,18 @@ fn merkle_inclusion_proof(tree, index) {
             sibling_idx = idx - 1;
         }
 
-        var sibling_hash = 0;
+        # 2.8.11 — an odd trailing node has NO sibling: it is promoted
+        # unchanged, so no path element is contributed at this level. The old
+        # code fell back to `vec_get(nodes, level_start + idx)` (the node
+        # itself), matching the duplication rule merkle_build no longer uses.
         if (sibling_idx < level_size) {
-            sibling_hash = vec_get(nodes, level_start + sibling_idx);
-        } else {
-            sibling_hash = vec_get(nodes, level_start + idx);
+            var sibling_hash = vec_get(nodes, level_start + sibling_idx);
+            var side = SIDE_RIGHT;
+            if ((idx & 1) != 0) {
+                side = SIDE_LEFT;
+            }
+            vec_push(path, proof_node_new(sibling_hash, side));
         }
-
-        var side = SIDE_RIGHT;
-        if ((idx & 1) != 0) {
-            side = SIDE_LEFT;
-        }
-
-        vec_push(path, proof_node_new(sibling_hash, side));
 
         level_start = level_start + level_size;
         level_size = (level_size + 1) / 2;
@@ -204,6 +242,21 @@ fn merkle_verify_proof(mp) {
         i += 1;
     }
     return constant_time_eq_str(current, merkle_proof_root(mp));
+}
+
+# Verify an inclusion proof against an EXTERNALLY supplied root.
+#
+# 2.8.11. merkle_verify_proof above checks the recomputed root against the
+# root carried INSIDE the proof, so it answers "is this bundle internally
+# consistent", never "is this entry in the tree you signed". An attacker can
+# hand over a proof for an entirely different tree — leaf, path and root all
+# mutually consistent — and it verifies. Callers holding a trusted root
+# (a signed tree head, an anchor) must use this instead. See
+# _proof_verify_common in proof.cyr, which now does.
+fn merkle_verify_proof_against(mp, expected_root) {
+    if (merkle_verify_proof(mp) == 0) { return 0; }
+    if (expected_root == 0) { return 0; }
+    return constant_time_eq_str(merkle_proof_root(mp), expected_root);
 }
 
 # ================================================================
