@@ -514,6 +514,110 @@ fn test_chain_append_nokeep() {
     assert(str_eq(entry_prev_hash(after), h2) == 1,
       "nokeep: the next entry links to the nokeep head — same carry slot");
 
+    # ⚠ 2.10.0 — ZERO allocation per streaming append, and the linkage still
+    # holds. Those two must be asserted together: making it free is only
+    # interesting if the chain is still a chain.
+    #
+    # ⚠ The details here MUST be well-formed JSON. An earlier version of this
+    # test used "c", which is not, so it took canonical_json_hash_str's raw
+    # fallback and never entered the object emitter at all — the emitter that
+    # turned out to hold ~87% of the per-append cost. It measured 0 and passed
+    # while the real path allocated 696 bytes a record. Build the input the way
+    # the PRODUCER builds it: argonaut's details are always JSON objects.
+    var zc = chain_new_streaming();
+    var det0 = str_from("{}");
+    var src0 = str_from("s");
+    var act0 = str_from("a");
+    chain_append_nokeep(zc, SEV_INFO, src0, act0, det0);   # warm the scratch
+    chain_append_nokeep(zc, SEV_INFO, src0, act0, det0);
+    var z0 = alloc_used();
+    var zi = 0;
+    while (zi < 100) { chain_append_nokeep(zc, SEV_INFO, src0, act0, det0); zi = zi + 1; }
+    assert_eq((alloc_used() - z0) / 100, 0, "nokeep: a streaming append allocates NOTHING");
+
+    # The head must still advance every time — a scratch that stopped being
+    # rewritten would also allocate nothing.
+    var za = chain_head_hash(zc);
+    chain_append_nokeep(zc, SEV_INFO, src0, act0, str_from("{\"x\":1}"));
+    assert(str_eq(za, chain_head_hash(zc)) == 0, "nokeep: the head still advances at zero cost");
+
+    # And the carry slot still feeds the next entry: an ordinary append must
+    # record the last scratch head as its predecessor. This is the assertion
+    # that would catch the head buffer being overwritten before it was consumed.
+    var zh = chain_head_hash(zc);
+    var zafter = chain_append(zc, SEV_INFO, src0, act0, det0);
+    assert(str_eq(entry_prev_hash(zafter), zh) == 1,
+      "nokeep: prev-link survives the reused hash buffer");
+
+    # ⚠ THE INLINE AND SPILL PATHS MUST PRODUCE THE SAME DIGEST.
+    #
+    # _cjh_emit_object collects up to CJH_INLINE_KEYS keys in stack arrays and
+    # promotes to vecs beyond that. Those are two different code paths through
+    # a TAMPER-EVIDENCE PREIMAGE: if they ever disagree by one byte, chains
+    # written on one side of the boundary stop verifying on the other, and the
+    # boundary is a key count nobody watches. Both sorts are stable under the
+    # same comparator so they are permutation-identical by construction — but
+    # "by construction" is exactly the kind of claim this repo has had refuted
+    # before, so hash the SAME documents both ways and compare.
+    #
+    # Setting the global to 0 forces every object to spill, including nested
+    # and empty ones. Only LOWERING it is safe (_cjh_emit_object clamps the
+    # other direction, since raising it would overrun four stack buffers).
+    var cj_saved = CJH_INLINE_KEYS;
+    var cj_docs = vec_new();
+    vec_push(cj_docs, str_from("{}"));
+    vec_push(cj_docs, str_from("{\"a\":1}"));
+    vec_push(cj_docs, str_from("{\"b\":2,\"a\":1}"));
+    vec_push(cj_docs, str_from("{\"service\":\"sshd\",\"pid\":412}"));
+    vec_push(cj_docs, str_from("{\"a\":{\"b\":{\"c\":[1,2,{\"d\":null}]}}}"));
+    vec_push(cj_docs, str_from("{\"\\u0041\":1,\"A\":2}"));
+    vec_push(cj_docs, _t_obj_n(17, 1));
+    var cj_i = 0;
+    while (cj_i < vec_len(cj_docs)) {
+        var doc = vec_get(cj_docs, cj_i);
+        CJH_INLINE_KEYS = 16;
+        var d_inline = _t_cjh_s(doc);
+        CJH_INLINE_KEYS = 0;
+        var d_spill = _t_cjh_s(doc);
+        CJH_INLINE_KEYS = cj_saved;
+        assert(str_eq(d_inline, d_spill) == 1,
+          "canonical JSON: inline and spill paths agree on the digest");
+        cj_i += 1;
+    }
+
+    # ⚠ Sweep the boundary rather than spot-checking it. CJH_INLINE_KEYS is 16,
+    # so 16 is the last inline count and 17 the first spilled; nothing about the
+    # emission may change across that step. Walking 0..20 also covers the empty
+    # object and the promotion copy carrying exactly a full buffer.
+    var bn = 0;
+    while (bn <= 20) {
+        var bdoc = _t_obj_n(bn, 1);
+        CJH_INLINE_KEYS = 16;
+        var d_in = _t_cjh_s(bdoc);
+        CJH_INLINE_KEYS = 0;
+        var d_sp = _t_cjh_s(bdoc);
+        CJH_INLINE_KEYS = cj_saved;
+        assert(str_eq(d_in, d_sp) == 1,
+          "canonical JSON: inline and spill agree across the capacity boundary");
+        bn += 1;
+    }
+
+    # The allocation-free hash must equal the allocating one over the same
+    # entry — one body, but assert it rather than trust the refactor.
+    var he = entry_new(SEV_INFO, src0, act0, det0, str_from(""));
+    var dbuf = alloc(32);
+    var hbuf = alloc(72);
+    entry_compute_hash_into(he, dbuf, hbuf);
+    assert(str_eq(entry_compute_hash(he), str_new(hbuf, 64)) == 1,
+      "entry_compute_hash_into produces the SAME hex as entry_compute_hash");
+
+    # Same for the timestamp formatter.
+    var tbuf = alloc(24);
+    var tbox = alloc(16);
+    timestamp_rfc3339_into(1756300000, tbuf, tbox);
+    assert(str_eq(timestamp_rfc3339(1756300000), tbox) == 1,
+      "timestamp_rfc3339_into produces the SAME text as timestamp_rfc3339");
+
     # RETAINING: there is nothing to reuse, so it must behave exactly like
     # chain_append and the entries must still be kept and independent.
     var rt = chain_new();
@@ -943,6 +1047,43 @@ fn test_merkle_odd_leaf_count() {
 fn _t_cjh(cstr) {
     var h = hasher_new();
     canonical_json_hash_str(str_from(cstr), h);
+    return hasher_finalize_hex(h);
+}
+
+# Build an n-key object `{"a":1,"b":1,...}` for the capacity-boundary sweep.
+# Generated rather than written out: the 17- and 18-key literals ran past the
+# 120-column lint, and a generator lets the sweep walk every count around the
+# CJH_INLINE_KEYS boundary instead of spot-checking two of them.
+#
+# desc = 1 emits keys in DESCENDING order, so the sort actually has to move
+# them. An ascending literal is already sorted and would exercise nothing.
+fn _t_obj_n(n, desc) {
+    var alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    var buf = alloc(n * 8 + 4);
+    var o = 0;
+    store8(buf + o, 123); o += 1;
+    var i = 0;
+    while (i < n) {
+        if (i > 0) { store8(buf + o, 44); o += 1; }
+        var ki = i;
+        if (desc == 1) { ki = n - 1 - i; }
+        store8(buf + o, 34); o += 1;
+        store8(buf + o, load8(alpha + ki) & 0xFF); o += 1;
+        store8(buf + o, 34); o += 1;
+        store8(buf + o, 58); o += 1;
+        store8(buf + o, 49); o += 1;
+        i += 1;
+    }
+    store8(buf + o, 125); o += 1;
+    store8(buf + o, 0);
+    return str_new(buf, o);
+}
+
+# Same, over an already-built Str — for the inline/spill equivalence sweep,
+# which needs to hash one document twice under two different capacities.
+fn _t_cjh_s(sv) {
+    var h = hasher_new();
+    canonical_json_hash_str(sv, h);
     return hasher_finalize_hex(h);
 }
 

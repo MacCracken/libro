@@ -54,6 +54,35 @@ fn hasher_finalize_hex(h) {
     return hex_encode_str(digest, 32);
 }
 
+# ⚠ ALLOCATION-FREE FINALIZE. 2.10.0 — kybernet audit MEDIUM-10.
+#
+# `hasher_finalize_hex` costs 112 bytes of arena every call: a 32-byte digest,
+# a 65-byte hex cstr from `hex_encode`, and a 16-byte `Str` box. On a STREAMING
+# chain that is per audit record, in an arena kybernet's PID 1 never resets, and
+# it dominated what was left of MEDIUM-10 after the entry struct was dealt with.
+#
+# Writes 64 lowercase hex characters plus a NUL into `hex_out` (65 bytes) using
+# `digest_out` (32 bytes) as scratch, and returns nothing to allocate. The hex
+# encoding is duplicated from sigil's `hex_encode` rather than called, because
+# that function allocates its own output — the whole point here is not to.
+# Byte-for-byte identical: same lowercase alphabet, same nibble order.
+fn hasher_finalize_hex_into(h, digest_out, hex_out) {
+    sha256_finalize(load64(h), digest_out);
+    var i = 0;
+    while (i < 32) {
+        var b = load8(digest_out + i) & 0xFF;
+        var hi = (b >> 4) & 0xF;
+        var lo = b & 0xF;
+        if (hi < 10) { store8(hex_out + i * 2, 48 + hi); }
+        else { store8(hex_out + i * 2, 87 + hi); }
+        if (lo < 10) { store8(hex_out + i * 2 + 1, 48 + lo); }
+        else { store8(hex_out + i * 2 + 1, 87 + lo); }
+        i = i + 1;
+    }
+    store8(hex_out + 64, 0);
+    return 64;
+}
+
 # ================================================================
 # Str wrappers for sigil's hex functions
 # ================================================================

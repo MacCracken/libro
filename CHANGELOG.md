@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] — 2026-08-28
+
+**The canonical-JSON object emitter no longer allocates for ordinary documents,
+and neither does a streaming append.** Minor: `hasher_finalize_hex_into`,
+`entry_compute_hash_into`, `timestamp_rfc3339_into` and `entry_refill_into` are
+new public API. No existing behaviour changes and **no digest changes** — that
+last one is a hard requirement, not an aspiration, and is now asserted rather
+than argued. Suite 762 → 795 assertions.
+
+The continuation of 2.9.0's MEDIUM-10 work, raised by kybernet's P(-1) audit.
+2.9.0 removed the per-append *entry* allocation; this release removes what was
+actually the dominant cost, which the original analysis had missed.
+
+### Fixed — `_cjh_emit_object` allocated four vectors per object, per record
+
+⚠ **The `{}` row below is the finding.** Hashing an object with ZERO keys cost
+608 bytes, all of it four empty `vec_new()`s created before a single key had
+been parsed. Since the emitter recurses, a nested document paid it per level.
+
+argonaut records one audit entry per service start/stop/crash *and* per health
+probe, with details shaped `{"service":...}`, into a chain running under
+kybernet — which is PID 1 and never resets its arena (kybernet standing rule 8).
+At a 30 s probe interval that was ~2 MB/day/service of permanently unreclaimed
+growth in init's resident set, on a stack that targets multi-month uptimes.
+
+Small objects now collect into fixed stack arrays, promoting to the old vector
+path only past `CJH_INLINE_KEYS` (16). Measured on cyrius 6.5.35, arena bytes
+per streaming append:
+
+| `details`                       | 2.9.0 | 2.10.0 |
+|---------------------------------|-------|--------|
+| not-JSON `c` (raw fallback)     |     0 |      0 |
+| `{}`                            |   608 |      0 |
+| `{"a":1}`                       |   696 |     88 |
+| `{"b":2,"a":1}`                 |   936 |    176 |
+| `{"service":"sshd","pid":412}`  |   896 |    136 |
+| `{"a":{"b":{"c":1}}}`           |  1960 |    136 |
+| `[1,2,3]`                       |   192 |    192 |
+| 17 keys (spills)                |  3536 |   3536 |
+| 64 keys (spills)                |  4856 |   4856 |
+
+The spill rows are measured, not assumed: an early extrapolation predicted the
+promotion copy would make large objects ~25% worse, and it does not — the two
+paths cost exactly the same. The change is better everywhere and worse nowhere.
+
+The residual is named rather than hidden: roughly 64 bytes per NUMBER and 24 per
+key string, from `_cjn_parse`'s digit `Str` and `json_str_decode`. Both are
+bounded by document size rather than by call count, and closing them means a
+fourth edit to a tamper-evidence preimage for a small return — the wrong trade
+at this point, so it is documented and left.
+
+### The digest is unchanged, and that is asserted both ways
+
+Two code paths through a preimage is a real hazard: if they ever disagree by one
+byte, chains written on one side of a key-count boundary nobody watches stop
+verifying on the other. Both paths decode keys identically and sort them with a
+**stable** sort under the same comparator, so they are permutation-identical by
+construction — but `CJH_INLINE_KEYS` is writable so the suite can force the
+spill and hash the same documents *both* ways, including nested, empty,
+duplicate-after-decode (`{"\u0041":1,"A":2}`) and the 16/17-key boundary itself.
+
+Verified by injection: flipping the inline comparator from `<=` to `<` — which
+loses stability only for duplicate keys — fails **only** the new equivalence
+assertion. Every pre-existing golden-digest test stays green, so without this
+test that regression would have shipped silently.
+
+⚠ The inline sort is an insertion sort, which is the algorithm 2.8.11 deleted
+from `_cjh_sort_idx` because it was O(n²) over attacker-controlled keys. It is
+safe here because of the bound, not the algorithm: `n <= 16` always, so the
+worst case is 256 comparisons. **If the inline capacity is ever raised it must
+go back to a merge sort**, or 2.8.11 quietly regresses. `_cjh_emit_object`
+clamps the capacity from the global for the same reason a test may only ever
+lower it — raising it would also overrun four stack buffers.
+
+### Added — allocation-free variants
+
+- `hasher_finalize_hex_into(h, digest_out, hex_out)` — finalize into caller
+  buffers; 64 hex chars plus NUL, no allocation.
+- `entry_compute_hash_into(e, digest_out, hex_out)` and
+  `timestamp_rfc3339_into(epoch, out_buf, out_box)`.
+- `entry_refill_into(e, scratch, severity, source, action, details, prev_hash)`
+  — refill over a caller scratch block laid out
+  `{digest[32] | hex[72] | Str box[16] | ts[24] | ts box[16]}`.
+
+⚠ `entry_compute_hash` / `entry_compute_hash_into` share ONE body
+(`_entry_hash_x`), as do `timestamp_rfc3339` / `timestamp_rfc3339_into`. Two
+copies of a tamper-evidence preimage are two things that can drift; the suite
+also asserts the pair agree. (A first attempt did duplicate the body and
+produced a binary that ran to exit 0 printing nothing — bisected to the
+duplication itself, which is a second reason not to have written it twice.)
+
+### Fixed — the streaming head hash was a moving target
+
+`chain_new` now carries a lazily-allocated scratch block reused across appends.
+⚠ It holds **two** slots, alternating, not one. With a single slot
+`chain_head_hash` handed back a box whose bytes the very next append overwrote,
+so a caller comparing the head before and after an append saw them equal — this
+repo's own "the head advances" assertion caught it — and a prev-link could in
+principle be clobbered before it had been hashed into its successor.
+Alternating keeps the previous head intact through exactly the append that
+consumes it. A returned head hash is valid until the second subsequent append;
+a consumer needing one indefinitely should copy it.
+
 ## [2.9.0] — 2026-08-27
 
 **`chain_append_nokeep` — an append for a write-through consumer that does not

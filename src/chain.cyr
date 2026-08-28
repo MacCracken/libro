@@ -32,14 +32,51 @@ fn chain_new() {
     # 48, not 40: +40 holds the scratch entry `chain_append_nokeep` reuses on a
     # streaming chain. 0 until that path is first taken, so a chain nobody
     # appends to that way costs nothing extra. 2.9.0.
-    var c = fl_alloc(48);
+    var c = fl_alloc(56);
     store64(c, vec_new());
     store64(c + 8, 0);
     store64(c + 16, 0);
     store64(c + 24, vec_new());
     store64(c + 32, 0);
     store64(c + 40, 0);
+    store64(c + 48, 0);
     return c;
+}
+
+# Reusable hash storage for the streaming append: {digest[32] | hex[72] |
+# Str box[16] | ts[24] | ts box[16]} = 160 bytes, allocated once per chain. 2.10.0.
+#
+# Without it `entry_compute_hash` allocated 112 bytes per record — a digest, a
+# hex cstr and a Str box — which is what dominated MEDIUM-10 once the entry
+# struct turned out not to.
+# ⚠ TWO SLOTS, ALTERNATING — NOT ONE. 2.10.0.
+#
+# A single reused slot makes the head hash a moving target: `chain_head_hash`
+# would hand back a box whose bytes the very next append overwrites, so a caller
+# comparing "the head before" against "the head after" sees them equal, and
+# `_chain_prev_link`'s value could in principle be clobbered before it had been
+# hashed into the successor. Both are real: the first was caught by this repo's
+# own "the head advances" assertion going red.
+#
+# Alternating between two slots means the PREVIOUS head stays intact for exactly
+# as long as the chain needs it — through the append that consumes it as a
+# prev-link — and a caller's head hash stays valid until the second subsequent
+# append. That is the documented lifetime; a consumer that needs a head hash
+# indefinitely should copy it, which is true of any scratch-backed value.
+#
+# Each slot is {digest[32] | hex[72] | Str box[16] | ts[24] | ts box[16]} = 160.
+fn _chain_hash_scratch(c) {
+    var sc = load64(c + 48);
+    if (sc == 0) {
+        sc = alloc(320);
+        store64(c + 48, sc);
+    }
+    # Alternate on the low bit of the slot counter kept at +16 (the chain's
+    # existing append counter slot is unused for streaming chains).
+    var n = load64(c + 16);
+    store64(c + 16, n + 1);
+    if ((n & 1) == 0) { return sc; }
+    return sc + 160;
 }
 
 # A chain that links entries but RETAINS none of them (2.8.4).
@@ -175,7 +212,7 @@ fn chain_append_nokeep(c, severity, source, action, details) {
         scratch = entry_new(severity, source, action, details, prev);
         store64(c + 40, scratch);
     } else {
-        entry_refill(scratch, severity, source, action, details, prev);
+        entry_refill_into(scratch, _chain_hash_scratch(c), severity, source, action, details, prev);
     }
     _chain_retain(c, scratch);
     sakshi_debug("chain: append", 13);

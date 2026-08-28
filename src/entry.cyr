@@ -208,7 +208,21 @@ fn civil_from_days(days) {
     return 0;
 }
 
-fn timestamp_rfc3339(epoch_secs) {
+# ⚠ ONE FORMATTER, OPTIONAL CALLER STORAGE. 2.10.0 — kybernet audit MEDIUM-10.
+#
+# `timestamp_rfc3339` allocates its 21-byte buffer plus a `Str` box — measured 40
+# bytes — on every entry. That was the last per-record allocation left in the
+# streaming append after the hash scratch landed.
+#
+# `timestamp_rfc3339_into(epoch, buf, box)` writes into caller storage and
+# allocates nothing. Same body, so the two formats cannot drift.
+fn timestamp_rfc3339(epoch_secs) { return _ts_rfc3339_x(epoch_secs, 0, 0); }
+
+fn timestamp_rfc3339_into(epoch_secs, out_buf, out_box) {
+    return _ts_rfc3339_x(epoch_secs, out_buf, out_box);
+}
+
+fn _ts_rfc3339_x(epoch_secs, out_buf, out_box) {
     var secs_in_day = 86400;
     var days = epoch_secs / secs_in_day;
     var time_of_day = epoch_secs - days * secs_in_day;
@@ -224,7 +238,8 @@ fn timestamp_rfc3339(epoch_secs) {
     var second = time_of_day - hour * 3600 - minute * 60;
 
     # Format: "YYYY-MM-DDTHH:MM:SSZ" = 20 chars
-    var buf = alloc(21);
+    var buf = out_buf;
+    if (buf == 0) { buf = alloc(21); }
     _fmt_04d(buf, _cd_y);
     store8(buf + 4, 45);
     _fmt_02d(buf + 5, _cd_m);
@@ -238,7 +253,10 @@ fn timestamp_rfc3339(epoch_secs) {
     _fmt_02d(buf + 17, second);
     store8(buf + 19, 90);
     store8(buf + 20, 0);
-    return str_new(buf, 20);
+    if (out_box == 0) { return str_new(buf, 20); }
+    store64(out_box, buf);
+    store64(out_box + 8, 20);
+    return out_box;
 }
 
 # ================================================================
@@ -1077,12 +1095,105 @@ fn _cjh_sort_idx(idx, keys, n) {
 # Emit an object with keys sorted lexicographically. Parallel vecs hold
 # each pair's key and its value byte-range in `data` so we can recurse
 # into values after sort without materializing an AST.
-fn _cjh_emit_object(data, start, slen, hasher) {
-    var pos = start + 1;
-    var keys = vec_new();
-    var val_starts = vec_new();
-    var val_ends = vec_new();
+# ⚠ 2.10.0 — INLINE FOR SMALL OBJECTS, SPILLING TO VECS FOR LARGE ONES.
+#
+# Through 2.9.0 this allocated four vecs unconditionally, per object, per
+# record. Measured on 6.5.35 against a streaming chain, that was the DOMINANT
+# per-append cost by a wide margin and nothing else was close:
+#
+#     details            arena bytes/append (2.9.0)
+#     not-JSON  "c"          0   <- raw fallback: never enters this function
+#     {}                   608   <- four vec_new, ZERO keys
+#     {"a":1}              696
+#     {"b":2,"a":1}        936
+#
+# ⚠ The `{}` row is the whole point: 608 of a one-key object's 696 bytes bought
+# nothing but four empty vectors. argonaut records one audit entry per service
+# start/stop/crash AND per health probe, with details shaped `{"service":...}`;
+# at a 30 s probe interval that is ~2 MB/day/service in the one arena standing
+# rule 8 says PID 1 never resets.
+#
+# ⚠ THE DIGEST DOES NOT CHANGE, AND THAT IS A HARD REQUIREMENT, NOT A HOPE.
+# This function computes a tamper-evidence preimage: a byte of drift silently
+# invalidates every chain ever written. Both paths decode keys identically and
+# sort them with a STABLE sort under the same comparator, so they produce the
+# same permutation — including for duplicate keys, where stability is the only
+# thing that pins the order. `CJH_INLINE_KEYS` exists so the suite can force
+# the spill path and assert the two digests are equal for the SAME input rather
+# than assuming it; see test_canonical_json_inline_matches_spill.
+#
+# Capacity is a LOCAL fixed array, so it is per-recursion-level and needs no
+# sharing discipline — unlike a process-global scratch, which would be the
+# cross-thread hazard _cjh_raw_tag and _merkle_tag already call out. Nesting is
+# bounded at CJH_MAX_DEPTH by canonical_json_is_valid, which runs BEFORE any
+# emission, so worst-case stack here is bounded and small.
+var CJH_INLINE_KEYS = 16;
 
+# Read element i from whichever backing store is live: the vec if we spilled,
+# the inline array otherwise.
+fn _cjo_at(inl, v, i) {
+    if (v != 0) { return vec_get(v, i); }
+    return load64(inl + i * 8);
+}
+
+# Stable insertion sort of idx[0..n) by key, for the inline path. Stable and
+# same-comparator, therefore permutation-identical to _cjh_sort_idx's merge.
+#
+# ⚠ YES, THIS IS THE ALGORITHM 2.8.11 DELETED — AND THE REASON IT IS SAFE HERE
+# IS THE BOUND, NOT THE ALGORITHM. 2.8.11 replaced an insertion sort with a
+# merge because n was unbounded and the keys are ATTACKER-CONTROLLED: a 1 MiB
+# details of many short keys cost minutes of CPU per hash, re-paid on every
+# verify. Here n <= 16 always — the caller spills to _cjh_sort_idx before it
+# can exceed that — so the worst case is 256 string comparisons, a constant.
+# ⚠ If the inline capacity is ever raised, this must go back to the merge, or
+# 2.8.11 quietly regresses. That is why the cap is clamped at the call site
+# rather than trusted from the global.
+fn _cjo_sort_inline(ixbuf, kbuf, n) {
+    var i = 1;
+    while (i < n) {
+        var cur = load64(ixbuf + i * 8);
+        var ck = load64(kbuf + cur * 8);
+        var j = i - 1;
+        var placed = 0;
+        while (j >= 0 && placed == 0) {
+            var pv = load64(ixbuf + j * 8);
+            if (_str_cmp(load64(kbuf + pv * 8), ck) <= 0) {
+                placed = 1;
+            } else {
+                store64(ixbuf + (j + 1) * 8, pv);
+                j -= 1;
+            }
+        }
+        store64(ixbuf + (j + 1) * 8, cur);
+        i += 1;
+    }
+    return 0;
+}
+
+fn _cjh_emit_object(data, start, slen, hasher) {
+    # LOCAL scope: `var X[N]` is N BYTES (standing rule 2), so 16 i64 slots
+    # is 128 bytes — and the size must be a literal, so the arithmetic lives
+    # here rather than in the declaration. Keep all four, the 16 in this
+    # comment, and the clamp below in lockstep.
+    var kbuf[128];      # 16 slots * 8
+    var vsbuf[128];     # 16 slots * 8
+    var vebuf[128];     # 16 slots * 8
+    var ixbuf[128];     # 16 slots * 8
+
+    # Clamp defensively: CJH_INLINE_KEYS is writable so the suite can force the
+    # spill, and a test that raised it instead of lowering it would run off the
+    # end of four stack buffers. Lowering is always safe; raising cannot be.
+    var cap = CJH_INLINE_KEYS;
+    if (cap > 16) { cap = 16; }
+    if (cap < 0) { cap = 0; }
+
+    # Non-zero only after a spill. Until then everything lives inline.
+    var keys = 0;
+    var val_starts = 0;
+    var val_ends = 0;
+    var n = 0;
+
+    var pos = start + 1;
     var stop = 0;
     while (pos < slen && stop == 0) {
         pos = _cjh_skip_ws(data, pos, slen);
@@ -1102,30 +1213,57 @@ fn _cjh_emit_object(data, start, slen, hasher) {
             var vs = pos;
             pos = _cjh_skip_value(data, pos, slen);
             var ve = pos;
-            vec_push(keys, k);
-            vec_push(val_starts, vs);
-            vec_push(val_ends, ve);
+
+            # Promote to vecs on the key that would not fit, carrying over
+            # everything collected so far. One parse, one ordering.
+            if (keys == 0 && n >= cap) {
+                keys = vec_new();
+                val_starts = vec_new();
+                val_ends = vec_new();
+                var sp = 0;
+                while (sp < n) {
+                    vec_push(keys, load64(&kbuf + sp * 8));
+                    vec_push(val_starts, load64(&vsbuf + sp * 8));
+                    vec_push(val_ends, load64(&vebuf + sp * 8));
+                    sp += 1;
+                }
+            }
+            if (keys == 0) {
+                store64(&kbuf + n * 8, k);
+                store64(&vsbuf + n * 8, vs);
+                store64(&vebuf + n * 8, ve);
+            } else {
+                vec_push(keys, k);
+                vec_push(val_starts, vs);
+                vec_push(val_ends, ve);
+            }
+            n += 1;
         } else {
             pos += 1;
         }
     }
 
-    var n = vec_len(keys);
-    var idx = vec_new();
-    var i = 0;
-    while (i < n) { vec_push(idx, i); i += 1; }
-
-    _cjh_sort_idx(idx, keys, n);
+    var idx = 0;
+    if (keys == 0) {
+        var i0 = 0;
+        while (i0 < n) { store64(&ixbuf + i0 * 8, i0); i0 += 1; }
+        _cjo_sort_inline(&ixbuf, &kbuf, n);
+    } else {
+        idx = vec_new();
+        var i1 = 0;
+        while (i1 < n) { vec_push(idx, i1); i1 += 1; }
+        _cjh_sort_idx(idx, keys, n);
+    }
 
     hasher_update(hasher, "{", 1);
-    i = 0;
+    var i = 0;
     while (i < n) {
         if (i > 0) { hasher_update(hasher, ",", 1); }
-        var j2 = vec_get(idx, i);
-        var k2 = vec_get(keys, j2);
-        _cjh_emit_json_string(hasher, k2);
+        var j2 = _cjo_at(&ixbuf, idx, i);
+        _cjh_emit_json_string(hasher, _cjo_at(&kbuf, keys, j2));
         hasher_update(hasher, ":", 1);
-        _cjh_emit(data, vec_get(val_starts, j2), vec_get(val_ends, j2), hasher);
+        _cjh_emit(data, _cjo_at(&vsbuf, val_starts, j2),
+          _cjo_at(&vebuf, val_ends, j2), hasher);
         i += 1;
     }
     hasher_update(hasher, "}", 1);
@@ -1190,6 +1328,42 @@ fn entry_new(severity, source, action, details, prev_hash) {
 # allocating a fresh one. That is the property kybernet 1.6.12 relied on when it
 # made the chain stream at all, and it is what keeps `audit_persist`
 # deployments verifying across this change.
+# Refill using CALLER-OWNED hash storage: no allocation for the digest, the hex,
+# or the `Str` box. 2.10.0.
+#
+# `scratch` is {digest[32] | hex[72] | Str box}, owned by the chain and reused
+# every append — see `_chain_hash_scratch`. The entry's hash field ends up
+# pointing at that buffer, which is safe for exactly the reason the scratch
+# ENTRY is safe: a streaming chain retains nothing, so both are dead once
+# `_chain_retain` has taken the value.
+#
+# ⚠ The head hash the chain carries points here too, and the NEXT append
+# overwrites it. That is correct only because `_chain_prev_link`'s value is fully
+# consumed — hashed into the new entry — before this function finalizes the new
+# hash over the top of it. Order matters and is asserted: a chain built this way
+# must still verify, and an ordinary append after N scratch appends must record
+# the last scratch head as its predecessor.
+fn entry_refill_into(e, scratch, severity, source, action, details, prev_hash) {
+    uuid_v4(e);
+    # Timestamp into the tail of the same scratch block: {…| ts_buf[24] | ts box}
+    store64(e + 16, timestamp_rfc3339_into(get_epoch_secs(), scratch + 120, scratch + 144));
+    store64(e + 24, severity);
+    store64(e + 32, source);
+    store64(e + 40, action);
+    store64(e + 48, details);
+    store64(e + 56, 0);
+    store64(e + 64, prev_hash);
+
+    var digest = scratch;
+    var hex = scratch + 32;
+    var box = scratch + 104;
+    _entry_hash_x(e, digest, hex);
+    store64(box, hex);          # Str.data
+    store64(box + 8, 64);       # Str.len
+    store64(e + 72, box);
+    return e;
+}
+
 fn entry_refill(e, severity, source, action, details, prev_hash) {
     # Generate UUID v4 (writes 16 bytes at e+0)
     uuid_v4(e);
@@ -1239,7 +1413,29 @@ fn entry_new_validated(severity, source, action, details, prev_hash) {
 #         source → action → canonical_json(details) →
 #         agent_id → prev_hash (all length-prefixed)
 
-fn entry_compute_hash(e) {
+# ⚠ ONE PREIMAGE, TWO FINALIZERS. 2.10.0 — kybernet audit MEDIUM-10.
+#
+# `entry_compute_hash(e)` allocates its result: a 32-byte digest, a 65-byte hex
+# cstr and a 16-byte `Str` box, 112 bytes every call. On a STREAMING chain that
+# is per audit record, in an arena kybernet's PID 1 never resets, and it is what
+# dominated MEDIUM-10 once the entry struct turned out not to.
+#
+# `entry_compute_hash_into(e, digest_out, hex_out)` writes 64 hex characters plus
+# a NUL into caller storage and allocates nothing.
+#
+# ⚠ BOTH GO THROUGH THIS ONE BODY, DELIBERATELY. The obvious implementation is a
+# second copy of the nine hash_field calls, and it was written that way first —
+# two copies of a tamper-evidence preimage that must never drift, where a future
+# edit to one is a chain that verifies against itself and nothing else. The
+# 2.8.11 note below is exactly that class of bug found the hard way. One body
+# with an optional output buffer cannot drift.
+fn entry_compute_hash(e) { return _entry_hash_x(e, 0, 0); }
+
+fn entry_compute_hash_into(e, digest_out, hex_out) {
+    return _entry_hash_x(e, digest_out, hex_out);
+}
+
+fn _entry_hash_x(e, digest_out, hex_out) {
     var hasher = hasher_new();
 
     # 1. UUID (16 raw bytes, no prefix)
@@ -1293,7 +1489,8 @@ fn entry_compute_hash(e) {
         hash_field(hasher, str_data(alg), str_len(alg));
     }
 
-    return hasher_finalize_hex(hasher);
+    if (hex_out == 0) { return hasher_finalize_hex(hasher); }
+    return hasher_finalize_hex_into(hasher, digest_out, hex_out);
 }
 
 # ================================================================
