@@ -520,9 +520,7 @@ fn _ts_rfc3339_x(epoch_secs, out_buf, out_box) {
     store8(buf + 19, 90);
     store8(buf + 20, 0);
     if (out_box == 0) { return str_new(buf, 20); }
-    store64(out_box, buf);
-    store64(out_box + 8, 20);
-    return out_box;
+    return _str_box_into(out_box, buf, 20);
 }
 
 # ================================================================
@@ -1397,6 +1395,13 @@ var CJH_INLINE_KEYS = 16;
 
 # Read element i from whichever backing store is live: the vec if we spilled,
 # the inline array otherwise.
+#
+# ⚠ `inl` is a raw i64 array, not a struct, so there is no derived accessor to
+# reach for and it is registered in CI's raw-offset allowlist for this file.
+# Same for `kbuf` / `ixbuf` below. These are the "local-buffer cases" that
+# allowlist's own comment describes: pointers to fixed stack arrays owned by
+# _cjh_emit_object, indexed by an integer that is bounded by the clamp at its
+# only call site.
 fn _cjo_at(inl, v, i) {
     if (v != 0) { return vec_get(v, i); }
     return load64(inl + i * 8);
@@ -1567,6 +1572,20 @@ fn _entry_to_cstr(s) {
     return buf;
 }
 
+# ⚠ ONE PLACE THAT KNOWS A `Str` BOX IS {data, len}. 2.10.0.
+#
+# The allocation-free `*_into` entry points all hand back a caller-provided
+# 16-byte box rather than calling `str_new`, and each of them was writing the
+# two fields itself. Two copies of a struct layout are two things that can
+# drift, and `box` is a raw pointer the compiler will not check — so the writes
+# go through here, and CI's raw-offset allowlist has exactly one name to
+# register for them instead of one per call site.
+fn _str_box_into(box, data, len) {
+    store64(box, data);
+    store64(box + 8, len);
+    return box;
+}
+
 # ================================================================
 # Entry construction
 # ================================================================
@@ -1624,8 +1643,7 @@ fn entry_refill_into(e, scratch, severity, source, action, details, prev_hash) {
     var hex = scratch + 32;
     var box = scratch + 104;
     _entry_hash_x(e, digest, hex);
-    store64(box, hex);          # Str.data
-    store64(box + 8, 64);       # Str.len
+    _str_box_into(box, hex, 64);
     store64(e + 72, box);
     return e;
 }

@@ -106,7 +106,14 @@ jobs:
           declare -A ALLOW
           ALLOW[src/anchoring.cyr]="a r"
           ALLOW[src/chain.cyr]="a c"
-          ALLOW[src/entry.cyr]="e _ts_buf"
+          # 2.10.0 — `box` is the caller-provided 16-byte Str box the
+          # allocation-free `*_into` entry points fill; all writes funnel
+          # through `_str_box_into`, so this is one site, not five.
+          # `inl` / `kbuf` / `ixbuf` are the fixed stack arrays the canonical
+          # JSON object emitter uses instead of four vec_new per object; they
+          # are raw i64 arrays with no struct to derive an accessor from.
+          # Justified in src/entry.cyr at each declaration.
+          ALLOW[src/entry.cyr]="e _ts_buf box inl kbuf ixbuf"
           ALLOW[src/error.cyr]="e p"
           ALLOW[src/export.cyr]="sb"
           ALLOW[src/file_store.cyr]="e s"
