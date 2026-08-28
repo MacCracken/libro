@@ -1169,7 +1169,28 @@ fn _entry_to_cstr(s) {
 
 fn entry_new(severity, source, action, details, prev_hash) {
     var e = fl_alloc(88);
+    # The algorithm name is invariant for the life of the entry, so it is set
+    # once here and `entry_refill` below deliberately leaves it alone.
+    store64(e + 80, str_from(HASH_ALGORITHM));
+    return entry_refill(e, severity, source, action, details, prev_hash);
+}
 
+# Overwrite an EXISTING entry in place: everything `entry_new` does except the
+# 88-byte allocation and the algorithm Str, both of which are invariant across
+# appends. 2.9.0.
+#
+# ⚠ THIS IS NOT A GENERAL-PURPOSE ENTRY MUTATOR. It exists for
+# `chain_append_nokeep`, whose contract is that the entry is scratch — a
+# streaming chain retains nothing, so the struct is dead the moment
+# `_chain_retain` has taken its hash. Calling it on an entry anyone still holds
+# rewrites that entry underneath them.
+#
+# Linkage is byte-identical to `entry_new`'s: `entry_compute_hash` reads only
+# the struct's fields, so filling the same struct produces the same hash as
+# allocating a fresh one. That is the property kybernet 1.6.12 relied on when it
+# made the chain stream at all, and it is what keeps `audit_persist`
+# deployments verifying across this change.
+fn entry_refill(e, severity, source, action, details, prev_hash) {
     # Generate UUID v4 (writes 16 bytes at e+0)
     uuid_v4(e);
 
@@ -1183,7 +1204,6 @@ fn entry_new(severity, source, action, details, prev_hash) {
     store64(e + 48, details);
     store64(e + 56, 0);
     store64(e + 64, prev_hash);
-    store64(e + 80, str_from(HASH_ALGORITHM));
 
     # Compute and store hash
     var hash = entry_compute_hash(e);

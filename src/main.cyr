@@ -486,6 +486,46 @@ fn test_chain_append() {
     assert(err == 0, "chain append verify");
 }
 
+# ⚠ 2.9.0 — `chain_append_nokeep`, the append for a caller that does not want
+# the entry. Its whole reason for existing is that `chain_append` CANNOT reuse a
+# scratch struct: it hands the entry to the caller, and `test_chain_streaming`
+# below holds two at once and compares their linkage. That contract is real, so
+# this is an opt-in second entry point rather than a change to the first.
+fn test_chain_append_nokeep() {
+    var det = str_from("{}");
+
+    # STREAMING: nothing is retained, and the head hash advances on every call.
+    var st = chain_new_streaming();
+    var h1 = chain_append_nokeep(st, SEV_INFO, str_from("src"), str_from("a1"), det);
+    assert(h1 != 0, "nokeep: returns a head hash");
+    assert(str_len(h1) > 0, "nokeep: the head hash is not empty");
+    assert(str_eq(h1, chain_head_hash(st)) == 1, "nokeep: it IS the chain's head");
+    assert_eq(chain_len(st), 0, "nokeep: a streaming chain still retains nothing");
+
+    var h2 = chain_append_nokeep(st, SEV_INFO, str_from("src"), str_from("a2"), det);
+    assert(str_eq(h1, h2) == 0, "nokeep: the head advances between appends");
+    assert(str_eq(h2, chain_head_hash(st)) == 1, "nokeep: head tracks the last append");
+
+    # The linkage invariant, checked the way test_chain_streaming checks it: the
+    # NEXT entry must record the previous head as its predecessor. Appending one
+    # entry the ordinary way after two nokeep appends proves the carry slot the
+    # scratch path writes is the same one `_chain_prev_link` reads.
+    var after = chain_append(st, SEV_INFO, str_from("src"), str_from("a3"), det);
+    assert(str_eq(entry_prev_hash(after), h2) == 1,
+      "nokeep: the next entry links to the nokeep head — same carry slot");
+
+    # RETAINING: there is nothing to reuse, so it must behave exactly like
+    # chain_append and the entries must still be kept and independent.
+    var rt = chain_new();
+    var r1 = chain_append_nokeep(rt, SEV_INFO, str_from("src"), str_from("b1"), det);
+    var r2 = chain_append_nokeep(rt, SEV_INFO, str_from("src"), str_from("b2"), det);
+    assert_eq(chain_len(rt), 2, "nokeep: a retaining chain still retains");
+    assert(str_eq(r1, r2) == 0, "nokeep: retaining head advances too");
+    assert(str_eq(r2, chain_head_hash(rt)) == 1, "nokeep: retaining head is the last entry's");
+    assert(chain_verify(rt) == 0, "nokeep: a retaining chain built this way verifies");
+    return 0;
+}
+
 fn test_chain_streaming() {
     var det = str_from("{}");
 
@@ -4515,6 +4555,7 @@ fn main() {
     test_group("AuditChain");
     test_chain_append();
     test_chain_streaming();
+    test_chain_append_nokeep();
     test_chain_append_batch();
     test_chain_append_with_agent();
     test_chain_rotate();

@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] — 2026-08-27
+
+**`chain_append_nokeep` — an append for a write-through consumer that does not
+want the entry.** Minor rather than patch: this adds public API. Nothing existing
+changes. Suite 751 → 762 assertions.
+
+Raised by kybernet's 2026-08-26 P(-1) audit (MEDIUM-10). argonaut's audit log runs
+under kybernet, which is PID 1 and never resets its arena, so every append on a
+STREAMING chain was steady unreclaimed growth of init's resident set across the
+multi-month uptimes that stack targets.
+
+### Added — `chain_append_nokeep(c, severity, source, action, details)`
+
+Returns the chain's new **head hash**, not an entry — which is the entire point.
+
+On a streaming chain (`chain_new_streaming`) nothing is retained: `_chain_retain`
+takes the entry's hash as the next prev-link and drops the entry. Every append
+therefore allocated an 88-byte struct plus an algorithm Str that were unreachable
+before the call even returned. This reuses one scratch entry per chain, via a new
+`entry_refill` that does everything `entry_new` does except the allocation and
+the invariant algorithm Str.
+
+On a retaining chain it is `chain_append` plus a head-hash read: those entries are
+kept, so there is nothing to reuse and nothing to save. The saving is specific to
+streaming, and so is the reuse.
+
+⚠ **Why this is a NEW function and not a change to `chain_append`.** Making a
+streaming `chain_append` reuse a scratch struct was tried first and reverted:
+`chain_append` hands the entry to its caller and its contract says so, and this
+repo's own `test_chain_streaming` holds two returned entries at once to compare
+their linkage. Four tests went red. That is a real contract, not a test artifact,
+so the reuse had to be opt-in.
+
+### Measured, including what this does NOT fix
+
+Per streaming append, before: **224 bytes** of bump-arena plus an **88-byte
+`fl_alloc`** struct. After `chain_append_nokeep`: **208 bytes** of arena and **no
+`fl_alloc` at all** — so about 104 real bytes per record, roughly a third, and the
+freelist half goes to zero. `alloc_used()` does not count `fl_alloc`, which is why
+the arena figure alone understates it.
+
+The remaining 208 is dominated by Strs that are inherent to producing a new link
+with the current representation: the RFC3339 timestamp (measured 40 bytes), the
+superseded head-hash Str, and the hasher's output. Closing those means changing
+what a hash IS here — a fixed buffer on the chain rather than a fresh `Str` per
+record — which touches `entry_compute_hash` and therefore byte-identical linkage
+for every consumer. Deliberately not attempted in a release that is otherwise
+purely additive; recorded so the next attempt starts from the measurement rather
+than from the assumption that the entry struct was the cost.
+
+### Linkage is unchanged
+
+`entry_compute_hash` reads only the struct's fields, so filling the same struct
+produces the same hash as allocating a fresh one — the property kybernet 1.6.12
+relied on when it made the chain stream at all. `audit_persist` deployments
+verify across this change. Asserted directly: after two `nokeep` appends, an
+ordinary `chain_append` records the nokeep head as its predecessor, proving the
+scratch path writes the same carry slot `_chain_prev_link` reads.
+
 ## [2.8.12] - 2026-08-22 — round-2 sweep: 33 more defects, and the canonical form finally means what ADR 0007 always claimed
 
 **751** assertions green (**763** with `tpm`), up from 661. Binary 1,072,048 →
