@@ -122,13 +122,13 @@ fn tpm_anchor_new(inner_anchor, output_dir, pcr_indices) {
     # strlen()s it. str_data on a Str built by str_new(ptr, len) is not
     # necessarily terminated, so this over-read whatever followed the buffer.
     var out_c = _entry_to_cstr(output_dir);
-    var res = tpm_seal(TPM_SHA256, pcr_indices,
+    var res_t, res_v = tpm_seal(TPM_SHA256, pcr_indices,
       str_data(hash), hash_len, out_c);
-    if (is_err_result(res) == 1) {
+    if (is_err_result(res_t) == 1) {
         sakshi_warn("tpm_anchor: seal failed", 23);
         return 0;
     }
-    var sealed = result_unwrap(res);
+    var sealed = result_unwrap(res_t, res_v);
     if (sealed == 0) {
         sakshi_warn("tpm_anchor: seal returned no context", 35);
         return 0;
@@ -169,13 +169,13 @@ fn tpm_anchor_verify(ta) {
     var ctx = tpm_anchor_sealed_ctx(ta);
     if (ctx == 0) { return TPM_ANCHOR_UNSEAL_FAILED; }
     var buf = alloc(hash_len);
-    var res = tpm_unseal(ctx, buf, hash_len);
-    if (is_err_result(res) == 1) {
+    var res_t, res_v = tpm_unseal(ctx, buf, hash_len);
+    if (is_err_result(res_t) == 1) {
         # tpm_unseal failure: PCR state changed since seal, sealed.ctx
         # corrupted/missing, or tpm2_unseal subprocess failed.
         return TPM_ANCHOR_UNSEAL_FAILED;
     }
-    var got = result_unwrap(res);
+    var got = result_unwrap(res_t, res_v);
     if (got != hash_len) {
         return TPM_ANCHOR_HASH_MISMATCH;
     }

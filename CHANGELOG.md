@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1] - 2026-09-11
+
+### Fixed — the TPM arm could not compile at 6.6.2
+
+`src/tpm_anchor.cyr` is compiled only under `--features tpm -D LIBRO_TPM`, so a
+default `cyrius build` skips it entirely and reports zero errors. It called the
+one-argument `result_unwrap(res)` twice and bound two `tpm_seal` / `tpm_unseal`
+results with a single `var`. Since cyrius 6.6.0 a `Result` is a two-register
+`(tag, payload)` value and `result_unwrap` takes **both** halves, so the opt-in
+build was a hard error the default build could not see.
+
+All four sites now bind the pair. Verified both ways: `cyrius build --features tpm
+-D LIBRO_TPM src/main.cyr` links clean (1,190,488 bytes), and the opt-in suite
+reports **807 passed, 0 failed** against the default build's **795** — the twelve
+extra being the TPM tests that exercise exactly these paths.
+
+### Changed
+
+- **Toolchain `6.5.35` → `6.6.2`**, and the three dependency pins:
+
+  | dep | was | now |
+  |---|---|---|
+  | sigil | 3.12.9 | **3.12.16** |
+  | sigil_tpm | 3.12.9 | **3.12.16** |
+  | patra | 1.13.10 | **1.14.1** |
+
+  The default profile needed no change. Its 36 `callptr` sites were traced to
+  their full function-pointer target sets — none reaches a pair-returning
+  function — which is the only way to clear that class, since `callptr`
+  dispatches through a runtime pointer and the compiler cannot see the callee's
+  return form.
+
 ## [2.10.0] — 2026-08-28
 
 **The canonical-JSON object emitter no longer allocates for ordinary documents,
