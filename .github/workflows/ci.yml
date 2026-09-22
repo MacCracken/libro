@@ -278,6 +278,26 @@ jobs:
           if [ "$FAILED" -ne 0 ]; then exit 1; fi
           echo "Raw-offset bound check: all sites within their struct field range."
 
+      - name: No raw syscalls (stdlib wrappers only)
+        run: |
+          # libro reaches the kernel only through stdlib wrappers — sys_* from
+          # lib/syscalls*.cyr, the x* family in lib/io.cyr (xlseek, xflock),
+          # random_bytes, eprint, clock_epoch_secs. A raw `syscall(N, …)`
+          # hard-codes one target's ABI: 228 is clock_gettime on x86_64 Linux
+          # but returns ns in a register on arm64 macOS; 8 is lseek on Linux
+          # and dup on agnos; 60 is exit on x86_64 only. 2.10.2 removed the
+          # last 19 sites. Comments are stripped first, so prose that names a
+          # syscall number is fine.
+          HITS=$(for f in src/*.cyr benches/*.bcyr fuzz/*.fcyr tests/*.cyr; do
+            sed -E 's/#.*$//' "$f" | grep -nE '\bsyscall[[:space:]]*\(' | sed "s|^|$f:|"
+          done)
+          if [ -n "$HITS" ]; then
+            echo "FAIL: raw syscall(...) — call the stdlib wrapper instead:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "No raw syscalls: clean."
+
       - name: Format check
         # cyrfmt reads only argv[1] and silently ignores the rest, so the old
         # `cyrfmt --check src/*.cyr` only ever checked the first glob entry

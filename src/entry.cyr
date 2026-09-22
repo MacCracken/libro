@@ -66,34 +66,18 @@ struct entry {
 fn entry_id(e) { return e; }
 
 # ================================================================
-# UUID v4 generation via /dev/urandom
+# UUID v4 generation via the kernel CSPRNG
 # ================================================================
 
 fn uuid_v4(buf) {
-    # Fail-closed on /dev/urandom unavailability: a predictable UUID would
-    # make the libro audit chain forgeable. Upstream libro 1.0.3 silently
-    # ignored short reads; t-ron's vendored copy aborts instead.
-    #ifdef CYRIUS_TARGET_AGNOS
-    # agnos has no /dev/urandom — draw 16 bytes from getrandom #45
-    # (RDRAND-seeded CSPRNG). Same fail-closed contract as the Linux path.
-    var got = syscall(SYS_GETRANDOM, buf, 16, 0);
-    if (got != 16) {
-        syscall(SYS_WRITE, 2, "libro: getrandom failed (fail-closed)\n", 38);
-        syscall(SYS_EXIT, 74);
+    # Fail-closed: a predictable UUID would make the audit chain forgeable.
+    # random_bytes is stdlib getrandom, the same source signing.cyr and
+    # timestamping.cyr already draw from — one syscall, no /dev/urandom
+    # dependency (early boot, chroot, landlocked process), routed per target.
+    if (random_bytes(buf, 16) != 16) {
+        eprint("libro: getrandom failed (fail-closed)\n", 38);
+        sys_exit(74);   # EX_IOERR
     }
-    #else
-    var fd = file_open("/dev/urandom", 0, 0);
-    if (fd < 0) {
-        syscall(SYS_WRITE, 2, "libro: /dev/urandom unavailable (fail-closed)\n", 46);
-        syscall(SYS_EXIT, 74);   # EX_IOERR
-    }
-    var got = file_read(fd, buf, 16);
-    file_close(fd);
-    if (got != 16) {
-        syscall(SYS_WRITE, 2, "libro: short read from /dev/urandom (fail-closed)\n", 50);
-        syscall(SYS_EXIT, 74);
-    }
-    #endif
     # Version 4: byte 6 high nibble = 0100
     var b6 = load8(buf + 6) & 0xFF;
     store8(buf + 6, (b6 & 0x0F) | 0x40);

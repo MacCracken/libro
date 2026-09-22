@@ -287,4 +287,4 @@ fn main() {
 }
 
 var r = main();
-syscall(60, r);
+sys_exit(r);
