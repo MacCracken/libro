@@ -9,10 +9,10 @@ and what to watch when upgrading.
 
 | Dep | Pin field | Current | Resolved by | Purpose |
 |-----|-----------|---------|-------------|---------|
-| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.5.35** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
-| sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`     | **3.12.9** | `cyrius deps` → `lib/sigil-mldsa.cyr` + `lib/sigil_{sha_ni,sha256,hex}.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, hex. **Thin sub-surface, not the monolithic `dist/sigil.cyr`** (see below) |
-| sigil (tpm)      | `cyrius.cyml` `[deps.sigil_tpm] tag = "…"` | **3.12.9** | `cyrius deps --features tpm` → `lib/sigil_tpm_sigil-tpm.cyr` | TPM 2.0 primitives (`tpm_seal` / `tpm_unseal` / `tpm_detect`). **Optional** — activated only by the `tpm` feature for the `-D LIBRO_TPM` build |
-| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.13.10** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
+| Cyrius toolchain | `cyrius.cyml` `cyrius = "…"` | **6.6.6** | `~/.cyrius/bin/cyriusly install …` (canonical `scripts/install.sh`) | Compiler + bundled stdlib |
+| sigil            | `cyrius.cyml` `[deps.sigil] tag = "…"`     | **3.12.18** | `cyrius deps` → `lib/sigil-mldsa.cyr` + `lib/sigil_{sha_ni,sha256,hex}.cyr` | SHA-256, Ed25519, ML-DSA-65, hybrid verify, hex. **Thin sub-surface, not the monolithic `dist/sigil.cyr`** (see below) |
+| sigil (tpm)      | `cyrius.cyml` `[deps.sigil_tpm] tag = "…"` | **3.12.18** | `cyrius deps --features tpm` → `lib/sigil_tpm_sigil-tpm.cyr` | TPM 2.0 primitives (`tpm_seal` / `tpm_unseal` / `tpm_detect`). **Optional** — activated only by the `tpm` feature for the `-D LIBRO_TPM` build |
+| patra            | `cyrius.cyml` `[deps.patra] tag = "…"`     | **1.14.3** | `cyrius deps` → `lib/patra.cyr` | SQL storage + prepared statements + group commit + STR btree indexes |
 
 Zero third-party crates. No transitive graph to audit.
 
@@ -163,6 +163,14 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   link with `undefined function 'thread_local_alloc'`. patra ≥ 1.12.12
   imposes the identical floor. Bump the toolchain and these deps
   together.
+- The floor moved again at libro 2.10.2: sigil ≥ 3.12.18 and patra ≥
+  1.14.3 use the per-target `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols
+  (and sigil `sys_uname` from `lib/sys.cyr`) that first ship in **cyrius
+  6.6.4**. On 6.6.2 the build fails with `undefined variable 'O_NOFOLLOW'`
+  in `lib/patra.cyr`. Measured with the `path = "../patra"` sibling at
+  1.14.3 under the 6.6.2 pin — the sibling beats the tag locally, so a
+  dep checkout that is newer than the pin breaks the build without any
+  manifest edit.
 - sigil's SHA-256, Ed25519, and ML-DSA-65 are pure-Cyrius
   implementations; none is FIPS 140-3 validated (see
   `docs/compliance/standards-mapping.md` §FIPS 140-3).

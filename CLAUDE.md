@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.8.12 (2026-08-22)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.5.35 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.10.2 (2026-09-21)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.6.6 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -28,14 +28,14 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra (agnosys dropped at the agnosys → agnodrm decomposition — TPM now sourced from sigil ≥ 3.9.0)
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
-- **Tests**: 751 default / 763 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 1,100,728 B default (2.8.12, measured; 1,123,512 B with `tpm`). Capacity headroom: `fn_table 2744 / 32768`, `identifiers 73723 / 524288`, `var_table 1048 / 8192` (`CYRIUS_STATS=1`). The +28,680 B over 2.8.11 is entirely 2.8.12 source (shared JSON decoder, exact-decimal number normalizer, validator surrogate rules, new guards); the 2.8.11 jump before it was 83% toolchain. **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Tests**: 795 default / 807 with `-D LIBRO_TPM` (all pass)
+- **Binary**: 652,200 B default (2.10.2, measured; 670,912 B with `tpm`). Capacity headroom: `fn_table 2874 / 131072`, `identifiers 77209 / 8388608`, `var_table 1103 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, ML-DSA (+ hybrid), hex. Pulled as a THIN sub-surface, NOT the monolithic `dist/sigil.cyr` (2.8.0): `[deps.sigil]` = `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`; TPM (`tpm_seal`/`unseal`/`detect`) behind the optional `tpm` feature (`[deps.sigil_tpm]`). Constant-time compare (`ct_eq*`) comes from stdlib `lib/ct.cyr`, not sigil. See quirk #9.
-- **patra** — SQL-backed storage (pinned v1.13.9 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract)
+- **patra** — SQL-backed storage (pinned v1.14.3 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). sigil and patra pins move together: both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4, and 6.6.6 folds exactly these two versions.
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -46,7 +46,7 @@ No external deps beyond the Cyrius toolchain.
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "518 passed, 0 failed"
+# Run tests — expect "795 passed, 0 failed"
 ./build/libro
 
 # Benchmarks (three binaries — cc5 fixup table limit forced the core/io split
@@ -56,7 +56,7 @@ CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./
 CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
 CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
 
-# TPM opt-in build — expect "530 passed, 0 failed".
+# TPM opt-in build — expect "807 passed, 0 failed".
 # Needs the `tpm` feature on BOTH commands: `cyrius deps` to resolve the
 # optional [deps.sigil_tpm] fold, and `cyrius build` to compile it in.
 # Omit it from `deps` and the build fails with `undefined variable 'TPM_SHA256'`.
@@ -68,9 +68,8 @@ CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./
 # full re-sync restores the honest count. Read the "N deps locked" line to
 # confirm: the invariant is that a `--features tpm` resolve is exactly one MORE
 # than a clean full re-sync — do not memorise the literal, it moves with the
-# stdlib snapshot. At cyrius 6.5.31 the honest default is 112 and tpm is 113
-# (6.5.27 added lib/async_macos.cyr; under 6.5.20 the pair was 111/112, which is
-# why the old text called 112 the polluted number).
+# stdlib snapshot. At cyrius 6.6.6 the honest default is 115 and tpm is 116.
+# CI runs `cyrius deps` alone (no full sync) and sees 56 / 57.
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && ./build/libro_tpm
 rm -rf lib && cyrius lib sync --full && cyrius deps   # restores the thin, tpm-free default
@@ -141,7 +140,7 @@ benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_jso
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
-lib/                    Vendored Cyrius stdlib + patra v1.13.9 bundle
+lib/                    Vendored Cyrius stdlib + patra v1.14.3 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
 docs/                   Architecture, guides, compliance, ADRs, audit reports
@@ -171,7 +170,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.5.35"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.6.6"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -186,8 +185,9 @@ docs/ (when earned):
 - Do not skip benchmarks before claiming performance improvements
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
+- **Do not write history into `cyrius.cyml`.** It is a manifest, not a ledger or a changelog. Comments there state present rules only (why an order matters, why a dep is thin or optional); version narratives, incident write-ups, dated measurements and cross-references belong in CHANGELOG, this file or `docs/audit/`. Cleaned 234 → 139 lines at 2.10.2.
 
-## Known Cyrius Compiler Quirks (6.5.35)
+## Known Cyrius Compiler Quirks (6.6.6)
 
 > ## ⚠️ BIG NOTE — sigil needs `lib/thread_local.cyr` before it (or SIGILL)
 >

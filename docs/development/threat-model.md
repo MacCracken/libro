@@ -377,7 +377,7 @@ The equivalent discipline is enforced through:
 
 ## Supply chain
 
-- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.5.27"`.
+- **Cyrius toolchain pin** in `cyrius.cyml` `cyrius = "6.6.6"`.
   CI reads this field and installs the exact toolchain via the
   canonical `scripts/install.sh` flow. No wildcard ranges.
 - **sigil pin** in `cyrius.cyml` `[deps.sigil] tag = "3.12.9"`.

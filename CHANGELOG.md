@@ -5,6 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.2] - 2026-09-21
+
+Toolchain and dependency bump. No format change: every digest, proof and
+signature verifies exactly as under 2.10.1.
+
+### Changed
+
+- **Toolchain `6.6.2` → `6.6.6`**, and the three dependency pins:
+
+  | dep | was | now |
+  |---|---|---|
+  | sigil | 3.12.16 | **3.12.18** |
+  | sigil_tpm | 3.12.16 | **3.12.18** |
+  | patra | 1.14.1 | **1.14.3** |
+
+  6.6.6 folds sigil 3.12.18 and patra 1.14.3, so the pins and the stdlib fold
+  agree. Both bumps are the aarch64 / Darwin repair of raw x86_64 syscall
+  numbers and numeric open flags (patra's WAL `O_NOFOLLOW` followed symlinks
+  on aarch64 and truncated the target; sigil's `agnosys_uname` was dead
+  there), and both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols cyrius
+  6.6.4 introduced — **the pins move together or not at all.** Measured: the
+  2.10.1 manifest with a patra 1.14.3 sibling checkout fails to compile with
+  six `undefined variable 'O_NOFOLLOW'` / `'O_DIRECTORY'` errors in
+  `lib/patra.cyr`, because `path = "../patra"` beats the tag locally.
+
+- **`get_epoch_secs` delegates to stdlib `clock_epoch_secs()`** instead of a
+  raw `syscall(228, 0, buf)`. 228 is x86_64 `clock_gettime`; the aarch64 backend
+  translates it, but the arm64 macOS route returns nanoseconds in the register
+  and never fills the timespec, so every timestamp there read back as the
+  epoch. chrono spells the clock per target (Linux, agnos, Darwin, Windows).
+  The same defect class the two dependency bumps above fix. Also drops the
+  lazily allocated 16-byte `_ts_buf` global.
+
+- **`cyrius.cyml` rewritten as a manifest, 234 → 139 lines.** The comment
+  blocks had become a changelog — version-by-version narratives of past
+  pin moves, dated incident write-ups, size measurements at old toolchains,
+  cross-references into this file. Every one of those facts already lives in
+  CHANGELOG, CLAUDE.md or the audit reports. What remains states the present
+  rules only: why the [lib] order matters and why `tpm_anchor` is absent, the
+  no-comments-inside-the-array rule, why sigil is a thin surface and not the
+  fold, why `sigil_tpm` is optional and moves in lockstep, why patra stays a
+  git dep (bote), and the two comment hygiene rules for the deps section.
+
+- **`dist/libro.deps` gained a `sys` leaf (27 → 28).** Not a libro
+  requirement: `grep -w` over the bundle finds no `lib/sys.cyr` symbol. It is
+  an artifact of distlib's compile-verify loop, which sees the thin
+  `deps.sigil` symbols (`SIG_ALG_*`, `ed25519_*`) as undefined, attributes
+  them to the monolithic `lib/sigil.cyr` fold, splices that in, and then
+  records what the *monolith* needs — 3.12.18's `sys_uname` — as a leaf of
+  libro. Harmless for consumers (one more stdlib file copied), committed as
+  the tool's honest output. The verify loop does not put a named dep's own
+  resolved modules in scope, which is the upstream gap.
+
+### Verified
+
+- Default **652,200 B**, **795 passed, 0 failed**; `--features tpm -D LIBRO_TPM`
+  **670,912 B**, **807 passed, 0 failed** (one expected duplicate
+  `_sigil_random_fill` warning). Capacity `fn_table 2874 / 131072`,
+  `identifiers 77209 / 8388608`, `var_table 1103 / 1048576`.
+- Three benches + fuzz (12 targets) clean; `cyrfmt --check` and
+  `cyrius lint` per-file over `src/`: 0 warnings.
+- A/B against the 2.10.1 tree at its own 6.6.2 / 3.12.16 / 1.14.1 pins,
+  resolved from git tags in a sibling-free directory: 33 benches flat within
+  noise. `proof_build_unsigned_25` 74–80 µs → 66–70 µs across three runs;
+  `chain_review_100` 236 µs → 240–246 µs. The ML-DSA sign rows swing ±40% on
+  either binary and are not reported as a delta.
+- **Sibling-free reproduction** (no `../sigil`, no `../patra`; both resolved
+  from GitHub at the new tags, 2 commit pins in the lock): default and TPM
+  binaries byte-identical to the sibling build, same counts, same
+  `dist/libro.cyr` and sidecar.
+- **Simulated consumer**: a project declaring only `[deps.libro]` →
+  `dist/libro.cyr` resolved sigil (thin) and patra transitively from libro's
+  manifest, built, appended two entries and verified the chain. The module
+  lands at `lib/libro.cyr`.
+- Lock counts at 6.6.6 after `rm -rf lib && cyrius lib sync --full &&
+  cyrius deps`: **115** default, **116** with `--features tpm` (the invariant
+  is tpm = default + 1). CI, which runs `cyrius deps` alone: 56 / 57.
+
 ## [2.10.1] - 2026-09-11
 
 ### Fixed — the TPM arm could not compile at 6.6.2

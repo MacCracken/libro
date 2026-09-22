@@ -4,19 +4,22 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.2"
+cyrius = "6.6.6"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
 entry = "src/main.cyr"
 output = "libro"
 
-# Library distribution. Order mirrors the include order in src/main.cyr —
-# critical for Cyrius's single-pass forward-reference resolution.
-# `cyrius distlib` reads this section to produce dist/libro.cyr.
-# Kept under [lib] (not [build]) so benches and standalone repros under
-# tests/ don't pull all 20 modules into their compilation unit via the
-# manifest — they `include` explicitly.
+# Modules `cyrius distlib` bundles into dist/libro.cyr. Order matches the
+# include order in src/main.cyr (single-pass forward-reference resolution).
+# Kept under [lib], not [build], so benches and tests/ repros that `include`
+# explicitly do not pull every module through the manifest.
+#
+# src/tpm_anchor.cyr is deliberately absent: main.cyr includes it behind
+# `#ifdef LIBRO_TPM`, and distlib strips #ifdef markers, so bundling it would
+# force TPM symbols into the default bundle. TPM consumers build from source
+# with `-D LIBRO_TPM` or vendor the file directly.
 [lib]
 modules = [
     "src/error.cyr",
@@ -40,18 +43,12 @@ modules = [
     "src/patra_store.cyr",
     "src/streaming.cyr",
     "src/proof_json.cyr",
-    # NOTE — src/tpm_anchor.cyr is intentionally NOT bundled here.
-    # It's `include`d from main.cyr behind `#ifdef LIBRO_TPM` and
-    # depends on agnosys's tpm_seal/tpm_unseal. cyrius distlib strips
-    # #ifdef markers, so bundling it would force TPM symbols into the
-    # default dist bundle. Consumers wanting TPM build from source
-    # with `-D LIBRO_TPM` or vendor src/tpm_anchor.cyr directly.
 ]
 
-# ── Dependencies ─────────────────────────────────────────────────
-# Cyrius-stdlib modules copied into lib/ by `cyrius deps`. libro
-# includes them directly via `include "lib/<name>.cyr"`; the list here
-# mirrors the top of src/main.cyr so the manifest stays load-bearing.
+# Stdlib modules `cyrius deps` copies into lib/. Mirrors the includes at the
+# top of src/main.cyr plus what the benches, fuzz and tests/ harnesses include.
+# No comments inside the array: the manifest parser stops collecting entries
+# at one and silently truncates the list.
 [deps]
 stdlib = [
     "assert",
@@ -82,97 +79,37 @@ stdlib = [
     "random",
     "test",
 ]
-# ⚠ **No `#` comments INSIDE the array above.** The manifest parser stops
-# collecting entries at one and silently truncates the list — it does not error.
-# Hit while preparing 2.8.5: a comment placed after `"sakshi",` cut the sidecar
-# from 27 leaves to 21 (losing sakshi, atomic, sync, bench, fnptr and test), and
-# the only symptom surfaced much later, as `cyrius distlib` failing its own
-# bundle self-check on an unrelated symbol.
-#
-# ⚠ **`patra` is deliberately NOT in this list — it stays a `deps.patra` git
-# dep below**, unlike patra's and majra's own manifests, which moved their folded
-# deps INTO `[deps].stdlib`. The reason is **bote**: it consumes `dist/libro.cyr`
-# (which calls `patra_*` 54 times and defines none of them) and declares no patra
-# of its own, so it can only get patra by resolving libro's `deps.patra`
-# transitively. Delete this block and bote loses patra.
-#
-# ⚠ Never write a bracketed deps.NAME section header inside a comment — backtick
-# it as `deps.NAME`. `cyrius distlib` scans for that opening bracket sequence
-# unanchored (cbt/commands.cyr _distlib_named_deps) and matches it in comment
-# prose, dropping NAME from the sidecar. This file's own comments are what
-# deleted `sakshi` from dist/libro.deps at 2.8.5. Fixed 2.8.6 (26 -> 27 leaves);
-# filed upstream. NOT caused by patra's removed sakshi block — patra shipped the
-# same defect with no git deps at all. See CHANGELOG [2.8.6].
-#
-# ⚠ distlib's self-check cannot catch a missing leaf (undefined *functions* are
-# only warnings; only an undefined *variable* fails a bundle). Check the leaf
-# count on every release: it must equal the number of names in `[deps].stdlib`
-# above (27).
 
-# External first-party deps. `cyrius deps` resolves these into lib/
-# from the pinned tags. lib/ is gitignored — the contract is the tag
-# pin here, not the bytes on disk.
+# Two rules for the git deps below.
+#
+# 1. Never write a bracketed deps.NAME section header inside a comment; write
+#    `deps.NAME`. distlib scans for the bracket sequence unanchored and drops
+#    NAME from the dist/libro.deps sidecar when it matches comment prose.
+#
+# 2. `path` beats `tag` when the sibling checkout resolves, and it skips
+#    commit-pin verification. A sibling-free reproduction is the release gate:
+#    a tag that does not exist yet passes every local gate and fails CI.
 
-# libro pulls a THIN sigil surface, not the monolithic dist/sigil.cyr. The full
-# bundle inlines the x509/RSA/authenticode path, whose bignum tables carry a
-# ~13 MB static (.bss) footprint that libro never uses — it balloons build/libro
-# from ~1 MB to ~14 MB. libro's actual sigil surface is sha256 + ed25519 + ML-DSA
-# (+ hybrid) + hex, so we resolve only the capability sub-bundles that cover it:
-#   dist/sigil-mldsa.cyr — ed25519 + ML-DSA + hybrid + sha512 + crypto_scratch
-#   src/sha_ni.cyr + src/sha256.cyr — SHA-256 (mldsa carries sha512, not sha256;
-#       sha_ni precedes sha256 so sha256's #ifndef-guarded sha_ni include self-skips)
-#   src/hex.cyr — standalone hex encode/decode (no bignum/x509 deps)
-#   dist/sigil-tpm.cyr — only compiled into the -D LIBRO_TPM build (tpm_anchor.cyr)
-# Result: build/libro .bss drops ~13 MB → ~75 KB. See CHANGELOG [2.8.0].
-# Feature gating (cyrius ≥ 6.3.1 `optional` + `[features]`): the TPM trust
-# surface is default-OFF. cyrius auto-includes every active `deps.*` module into
-# the compilation unit, so sigil-tpm (only used by src/tpm_anchor.cyr behind
-# -D LIBRO_TPM) must NOT sit in the always-on `deps.sigil` — it would land its
-# code + tpm2 rodata in every default binary. Instead it's an OPTIONAL dep
-# activated by the `tpm` feature (see `deps.sigil_tpm` + [features] below).
+# The TPM trust surface is default-off. Every active `deps.*` module is
+# auto-included into every build, so sigil-tpm lives in an optional dep that
+# only the `tpm` feature activates.
 [features]
 default = []
 tpm = ["sigil_tpm"]
 
-# ⚠ **The thin selection STAYS — do not replace it with `"sigil"` in
-# `[deps].stdlib`.** The fold is the MONOLITH: `lib/sigil.cyr` in the 6.5.20
-# snapshot is 27,550 lines / 1,079,160 bytes and carries the x509 + RSA bignum
-# banks (`_bn_exp_prod[65536]`, five `_bn_mont_*[32768]`, `_bn_modrem[33280]`,
-# …). Measured, not assumed: **majra takes `dist/sigil.cyr` and builds with
-# `warning: large static data (10794336 bytes)`**, while libro's thin build is
-# **`.bss` 80,264 bytes**. Taking sigil from the stdlib fold would put ~10.7 MB
-# of unused static data into every libro binary. That is the whole reason this
-# block selects capability sub-bundles instead, and it is why libro is the one
-# consumer whose sigil pin does NOT collapse into the fold at the 6.5.20 bump.
-#
-# **3.12.1 -> 3.12.7 (2.8.5)**, and it is a security bump, not housekeeping:
-#   * **3.12.5** fixes a **PKCS#1 v1.5 signature-verification bypass**
-#   * **3.12.6** fixes an **RSA-PSS authentication bypass** (same class)
-#   * **3.12.7** is what cyrius 6.5.20 folds, so the two agree
-# It also closes a second sakshi downgrade path that sat alongside the patra one
-# retired above: **sigil 3.12.1's own manifest declared `deps.sakshi` at
-# 2.4.3**, and 3.12.7 declares **zero ``deps.*``**. libro therefore fed the
-# stale-sakshi overlay through BOTH pins, not just patra.
-#
-# **3.12.7 -> 3.12.9 (2.8.6).** 3.12.8/3.12.9 are also filed under Security
-# (Bellcore verify-after-sign, RSA/bignum de-banking). Inert for libro's call
-# surface — the only new symbols are `_crypto_banks_overflowed`,
-# `crypto_banks_exhausted()` and `crypto_banks_claimed()`, and `grep -rn
-# crypto_banks src/` returns zero hits — but `dist/sigil-tpm.cyr` moves 78
-# lines, so the TPM build is the one that must be re-verified, not the default.
-# Verified at 2.8.6 in a sibling-free tree: default 512/0, TPM 524/0.
-#
-# ⚠ `path = "../sigil"` means a sibling checkout **beats the tag locally** —
-# and not merely as a precedence tweak: cyrius `cbt/deps.cyr:1472-1483` makes
-# the `git`/`tag` fields fully INERT when `path` resolves, which ALSO skips
-# commit-pin verification. Measured: this repo's `cyrius.lock` has ZERO
-# `^commit` lines; a sibling-free tree has 2. That is why a sibling-free
-# reproduction is a MANDATORY release gate (see CLAUDE.md) — a tag that does
-# not exist yet passes every local gate and hard-fails CI.
+# Thin sigil surface, NOT the monolithic dist/sigil.cyr and NOT a `sigil`
+# entry in `[deps].stdlib`. Both are the monolith, which inlines the x509 /
+# RSA bignum banks: ~10 MB of static data libro never calls. Only the
+# capability sub-bundles libro uses are listed:
+#   dist/sigil-mldsa.cyr    ed25519 + ML-DSA + hybrid + sha512 + crypto_scratch
+#   src/sha_ni.cyr          hardware SHA-256 dispatch (must precede sha256 so
+#                           sha256's guarded sha_ni include self-skips)
+#   src/sha256.cyr          SHA-256 (mldsa carries sha512, not sha256)
+#   src/hex.cyr             standalone hex encode/decode
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-tag = "3.12.16"
+tag = "3.12.18"
 modules = [
     "dist/sigil-mldsa.cyr",
     "src/sha_ni.cyr",
@@ -180,55 +117,23 @@ modules = [
     "src/hex.cyr",
 ]
 
-# TPM trust API (tpm_seal / tpm_unseal / tpm_detect) — OPTIONAL, activated only
-# by the `tpm` feature for the -D LIBRO_TPM build (src/tpm_anchor.cyr). Same
-# sigil repo/tag; skipped entirely (no clone, no module copy, no auto-include)
-# when the feature is off, so default builds stay thin and tpm-free.
+# TPM trust API (tpm_seal / tpm_unseal / tpm_detect) for src/tpm_anchor.cyr.
+# Resolved and auto-included only under `--features tpm`. Same repo as
+# `deps.sigil`; the two tags move in lockstep, or two versions of one library
+# share a compilation unit and the last definition silently wins.
 [deps.sigil_tpm]
 git = "https://github.com/MacCracken/sigil.git"
 path = "../sigil"
-# Must move in lockstep with `deps.sigil` above — same repo, and two different
-# tags of the same library in one compilation unit is how you get a silent
-# last-definition-wins divergence.
-tag = "3.12.16"
+tag = "3.12.18"
 modules = ["dist/sigil-tpm.cyr"]
 optional = true
 
-# ── 1.12.12 -> 1.13.0 at 2.8.5: this pin was the root of a four-level defect ──
-#
-# patra 1.12.12's OWN manifest declared `deps.sakshi` at **2.4.2** while every
-# recent toolchain snapshot folds **2.4.10**. `cyrius deps` overlays a git dep's
-# resolution ON TOP of the `lib sync --full` snapshot, **recursing through
-# sibling manifests**, on **every `cyrius build`** — not only on `deps`. So this
-# one line silently downgraded `lib/sakshi.cyr` for libro and for everything
-# downstream of it:
-#
-#     agnosai -> bote -> libro -> `deps.patra` 1.12.12 -> `deps.sakshi` 2.4.2
-#
-# bote carried a defensive `deps.sakshi` 2.4.10 purely to absorb this. **patra
-# 1.13.0 has zero ``deps.*`` blocks** and takes sakshi from the fold, so the
-# chain now terminates here and that defensive pin is removable downstream.
-#
-# ⚠ The only signal was an unnamed "1 bundled lib(s) differ" shadow warning, and
-# **`deps --verify` cannot catch it** — the lock is written *from disk*, so it
-# records the downgraded file's hash. Check `lib/` AFTER a `cyrius build`, never
-# after the three-step; the three-step ends correct and the next build reverts it.
-#
-# ⚠ **The fix is the TAG, not the block.** Deleting `deps.patra` in favour of
-# `"patra"` in `[deps].stdlib` — what patra and majra each did for their own
-# folded deps — would strand **bote**, which consumes `dist/libro.cyr` and
-# declares no patra of its own. See the note in `[deps].stdlib` above for the
-# measurement, and for the sidecar hole this bump unmasks.
+# patra stays a git dep rather than a `[deps].stdlib` fold entry: bote
+# consumes dist/libro.cyr (which calls patra_* and defines none of it) and
+# declares no patra of its own, so it can only resolve patra transitively
+# through this block.
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
 path = "../patra"
-tag = "1.14.1"
+tag = "1.14.3"
 modules = ["dist/patra.cyr"]
-
-# `deps.agnosys` dropped at the agnosys → agnodrm decomposition (2026-06-19).
-# libro's only agnosys surface was the TPM primitives (tpm_seal / tpm_unseal /
-# tpm_detect) used by src/tpm_anchor.cyr; the agnosys → agnodrm decomposition
-# moved the trust stack into sigil, which promoted it to first-class in
-# dist/sigil.cyr at 3.9.0. So tpm now resolves from `deps.sigil` above (bumped
-# 3.7.14 → 3.9.0) and the separate agnosys pin is gone. libro's tpm_anchor.cyr
-# is unchanged — same symbol names, now sourced from sigil.

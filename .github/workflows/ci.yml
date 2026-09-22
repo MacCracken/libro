@@ -113,7 +113,7 @@ jobs:
           # JSON object emitter uses instead of four vec_new per object; they
           # are raw i64 arrays with no struct to derive an accessor from.
           # Justified in src/entry.cyr at each declaration.
-          ALLOW[src/entry.cyr]="e _ts_buf box inl kbuf ixbuf"
+          ALLOW[src/entry.cyr]="e box inl kbuf ixbuf"
           ALLOW[src/error.cyr]="e p"
           ALLOW[src/export.cyr]="sb"
           ALLOW[src/file_store.cyr]="e s"
