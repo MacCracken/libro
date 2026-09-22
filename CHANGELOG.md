@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.3] - 2026-09-21
+
+**No raw syscalls left.** 18 sites replaced by the stdlib wrapper (19 counting
+2.10.2's `get_epoch_secs`), a CI gate so none come back, and no format change:
+every digest, proof and signature verifies exactly as under 2.10.2.
+
+### Changed
+
+- **Every kernel touch goes through the stdlib wrapper.** libro had been
+  hard-coding kernel ABI in three shapes: the x86_64 *number* (`syscall(60, r)`
+  to exit every bench, fuzz and repro harness), the symbolic number still
+  issued raw (`syscall(SYS_LSEEK, fd, 0, 2)`, `syscall(SYS_EXIT, r)`), and a
+  hand-rolled `/dev/urandom` open/read/close in `uuid_v4` with a separate raw
+  `SYS_GETRANDOM` arm for agnos. Every one has had a stdlib wrapper for
+  releases — `signing.cyr` and `timestamping.cyr` were already drawing from
+  `random_bytes` while `uuid_v4` next to them still opened the device by hand.
+  Same defect class as 2.10.2's `syscall(228)` and the sigil / patra bumps
+  that release took.
+
+  | was | now |
+  |---|---|
+  | `syscall(SYS_LSEEK, fd, 0, whence)` ×3 (`file_store`, `chain_io`) | `xlseek(fd, 0, whence)` — io's portable spelling |
+  | `/dev/urandom` open/read/close; agnos `syscall(SYS_GETRANDOM, …)` | `random_bytes(buf, 16)`, one path on every target |
+  | `syscall(SYS_WRITE, 2, msg, n)` ×3 / `syscall(SYS_EXIT, 74)` ×3 | `eprint(msg, n)` / `sys_exit(74)` |
+  | `syscall(60, r)` ×6 / `syscall(SYS_EXIT, r)` ×2 harness exits | `sys_exit(r)` |
+
+  Why it matters beyond hygiene: a raw number is one target's ABI. 60 is
+  `exit` on x86_64 only; 8 is `lseek` on Linux and `dup` on agnos;
+  `/dev/urandom` is absent in early boot, a chroot or a landlocked process —
+  kybernet runs libro as PID 1 — and the agnos arm was a second code path to
+  keep correct. `uuid_v4` now has one path and the same CSPRNG source as the
+  rest of the file. The failure message for a short read is unchanged
+  (`libro: getrandom failed (fail-closed)`, exit 74).
+
+- **CI gate "No raw syscalls (stdlib wrappers only)"** strips comments from
+  `src/`, `benches/`, `fuzz/` and `tests/` and fails on any `syscall(`.
+  Mutation-checked: a planted `syscall(60, 0)` is reported with file:line.
+  The rule is in CLAUDE.md's DO-NOT list and the testing guide's gate table.
+
+### Verified
+
+- Default **652,128 B** (2.10.2: 652,200), **795 passed, 0 failed**;
+  `--features tpm -D LIBRO_TPM` **670,840 B**, **807 passed, 0 failed** (one
+  expected duplicate `_sigil_random_fill` warning).
+- Three benches + fuzz (12 targets) clean and exiting through `sys_exit`; the
+  three standalone repros under `tests/` build and exit 0; `cyrfmt --check`
+  and `cyrius lint` per-file over `src/`: 0 warnings. Toolchain and dependency
+  pins unchanged from 2.10.2 (cyrius 6.6.6, sigil 3.12.18, patra 1.14.3).
+- The simulated consumer from 2.10.2 (a project declaring only
+  `[deps.libro]`) rebuilt against the new bundle, appended and verified a
+  chain — `random` was already a sidecar leaf, so nothing changes downstream.
+
 ## [2.10.2] - 2026-09-21
 
 Toolchain and dependency bump. No format change: every digest, proof and
@@ -30,36 +82,13 @@ signature verifies exactly as under 2.10.1.
   six `undefined variable 'O_NOFOLLOW'` / `'O_DIRECTORY'` errors in
   `lib/patra.cyr`, because `path = "../patra"` beats the tag locally.
 
-- **No raw syscalls left — 19 sites replaced by the stdlib wrapper, and a CI
-  gate so none come back.** libro had been hard-coding kernel ABI in three
-  shapes: the x86_64 *number* (`syscall(228, …)` for clock_gettime,
-  `syscall(60, r)` to exit every bench, fuzz and repro harness), the symbolic
-  number still issued raw (`syscall(SYS_LSEEK, fd, 0, 2)`, `syscall(SYS_EXIT,
-  r)`), and a hand-rolled `/dev/urandom` open/read/close in `uuid_v4` with a
-  separate raw `SYS_GETRANDOM` arm for agnos. Every one has had a stdlib
-  wrapper for releases — libro was already calling `random_bytes` for signing
-  seeds and timestamping nonces while `uuid_v4` next to them still opened the
-  device by hand. The same defect class the two dependency bumps above fix.
-
-  | was | now |
-  |---|---|
-  | `syscall(228, 0, _ts_buf)` + `load64` | `clock_epoch_secs()` (chrono; per-target clock) |
-  | `syscall(SYS_LSEEK, fd, 0, whence)` ×3 | `xlseek(fd, 0, whence)` (io's portable spelling) |
-  | `/dev/urandom` open/read/close, agnos `SYS_GETRANDOM` | `random_bytes(buf, 16)` on every target |
-  | `syscall(SYS_WRITE, 2, msg, n)` / `syscall(SYS_EXIT, 74)` | `eprint(msg, n)` / `sys_exit(74)` |
-  | `syscall(60, r)` / `syscall(SYS_EXIT, r)` ×8 harness exits | `sys_exit(r)` |
-
-  Why it mattered beyond hygiene: 228 returns nanoseconds in the register on
-  arm64 macOS and never fills the timespec, so every timestamp there read as
-  the epoch; 60 is `exit` on x86_64 only; `/dev/urandom` is absent in early
-  boot, a chroot or a landlocked process — kybernet runs libro as PID 1 — and
-  the agnos arm was a second code path to keep correct. `uuid_v4` now has one
-  path and the same CSPRNG source as the rest of the file. Also drops the
+- **`get_epoch_secs` delegates to stdlib `clock_epoch_secs()`** instead of a
+  raw `syscall(228, 0, buf)`. 228 is x86_64 `clock_gettime`; the aarch64 backend
+  translates it, but the arm64 macOS route returns nanoseconds in the register
+  and never fills the timespec, so every timestamp there read back as the
+  epoch. chrono spells the clock per target (Linux, agnos, Darwin, Windows).
+  The same defect class the two dependency bumps above fix. Also drops the
   lazily allocated 16-byte `_ts_buf` global.
-
-  **CI: "No raw syscalls (stdlib wrappers only)"** strips comments from
-  `src/`, `benches/`, `fuzz/` and `tests/` and fails on any `syscall(`.
-  Mutation-checked: a planted `syscall(60, 0)` is reported with file:line.
 
 - **`cyrius.cyml` rewritten as a manifest, 234 → 139 lines.** The comment
   blocks had become a changelog — version-by-version narratives of past
@@ -83,13 +112,12 @@ signature verifies exactly as under 2.10.1.
 
 ### Verified
 
-- Default **652,128 B**, **795 passed, 0 failed**; `--features tpm -D LIBRO_TPM`
-  **670,840 B**, **807 passed, 0 failed** (one expected duplicate
+- Default **652,200 B**, **795 passed, 0 failed**; `--features tpm -D LIBRO_TPM`
+  **670,912 B**, **807 passed, 0 failed** (one expected duplicate
   `_sigil_random_fill` warning). Capacity `fn_table 2874 / 131072`,
   `identifiers 77209 / 8388608`, `var_table 1103 / 1048576`.
-- Three benches + fuzz (12 targets) clean; the three standalone repros under
-  `tests/` build and exit 0; `cyrfmt --check` and `cyrius lint` per-file over
-  `src/`: 0 warnings.
+- Three benches + fuzz (12 targets) clean; `cyrfmt --check` and
+  `cyrius lint` per-file over `src/`: 0 warnings.
 - A/B against the 2.10.1 tree at its own 6.6.2 / 3.12.16 / 1.14.1 pins,
   resolved from git tags in a sibling-free directory: 33 benches flat within
   noise. `proof_build_unsigned_25` 74–80 µs → 66–70 µs across three runs;

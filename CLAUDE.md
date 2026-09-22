@@ -12,7 +12,7 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.10.2 (2026-09-21)
+- **Version**: 2.10.3 (2026-09-21)
 - **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.6.6 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -29,7 +29,7 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 795 default / 807 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 652,128 B default (2.10.2, measured; 670,840 B with `tpm`). Capacity headroom: `fn_table 2874 / 131072`, `identifiers 77209 / 8388608`, `var_table 1103 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Binary**: 652,128 B default (2.10.3, measured; 670,840 B with `tpm`). Capacity headroom: `fn_table 2874 / 131072`, `identifiers 77209 / 8388608`, `var_table 1103 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -182,7 +182,7 @@ docs/ (when earned):
 - **Do not commit or push** — the user handles all git operations (commit, push, tag)
 - **NEVER use `gh` CLI** — use `curl` to GitHub API only
 - Do not add dependencies beyond the Cyrius toolchain
-- **No raw `syscall(N, …)` anywhere** — not the x86_64 number, not the symbolic `SYS_*` number issued raw. Call the stdlib wrapper: `sys_*` (`lib/syscalls*.cyr`), the `x*` family in `lib/io.cyr` (`xlseek`, `xflock`), `random_bytes`, `eprint`, `clock_epoch_secs`. A raw number hard-codes one target's ABI (228 returns ns in a register on arm64 macOS; 8 is `dup` on agnos; 60 exits only on x86_64). CI gate "No raw syscalls" fails the build on any hit in `src/`, `benches/`, `fuzz/`, `tests/`; 2.10.2 removed the last 19.
+- **No raw `syscall(N, …)` anywhere** — not the x86_64 number, not the symbolic `SYS_*` number issued raw. Call the stdlib wrapper: `sys_*` (`lib/syscalls*.cyr`), the `x*` family in `lib/io.cyr` (`xlseek`, `xflock`), `random_bytes`, `eprint`, `clock_epoch_secs`. A raw number hard-codes one target's ABI (228 returns ns in a register on arm64 macOS; 8 is `dup` on agnos; 60 exits only on x86_64). CI gate "No raw syscalls" fails the build on any hit in `src/`, `benches/`, `fuzz/`, `tests/`; 2.10.2 + 2.10.3 removed the last 19.
 - Do not skip benchmarks before claiming performance improvements
 - Do not commit `build/`
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`

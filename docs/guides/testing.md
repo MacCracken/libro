@@ -282,7 +282,7 @@ They exist to prevent regression of classes already caught in audits:
 | Specific-struct raw-offset guard | 2.0.1 + 2.0.2 | `load64(c+N)`, `load64(ip+N)`, etc. outside defining file |
 | Per-file allowlist | 2.0.4 (extended 2.5.0) | new raw-offset param names appearing in unregistered files; 2.5.0 registers `ta` for `src/tpm_anchor.cyr` |
 | TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (795 → 807 assertions) |
-| No raw syscalls | 2.10.2 | any `syscall(` outside a comment in `src/`, `benches/`, `fuzz/`, `tests/` — call the stdlib wrapper (`sys_*`, `xlseek`, `random_bytes`, `eprint`, `clock_epoch_secs`) |
+| No raw syscalls | 2.10.3 | any `syscall(` outside a comment in `src/`, `benches/`, `fuzz/`, `tests/` — call the stdlib wrapper (`sys_*`, `xlseek`, `random_bytes`, `eprint`, `clock_epoch_secs`) |
 | Dist freshness | 1.1.1 | `dist/libro.cyr` missing or stale vs `src/` |
 | Version parity (release only) | 1.1.1 | VERSION / cyrius.cyml / dist header / git tag disagreement |
 
