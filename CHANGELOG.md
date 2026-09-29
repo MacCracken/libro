@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.4] - 2026-09-29
+
+**sigil 3.13.4, in lockstep with the sigil cyrius 6.6.10 folds.** No libro source change;
+every digest, proof and signature verifies exactly as under 2.10.3.
+
+### Changed
+
+- **`[deps.sigil]` and `[deps.sigil_tpm]` 3.12.18 → 3.13.4, toolchain 6.6.6 → 6.6.10.**
+  bote declares the `sigil` stdlib fold AND consumes libro's thin sigil
+  (`lib/sigil-mldsa.cyr` + `lib/sigil_{sha_ni,sha256,hex}.cyr`) through `dist/libro.cyr`,
+  so both land in one unit. That is benign only while libro's sigil tag equals the
+  version the pinned cyrius folds. Every cyrius from 6.6.7 on folds sigil 3.13.x, and
+  3.13.x changed the arity of five ML-DSA sponge helpers (`_mldsa_shake_squeeze_blocks`
+  3 → 4, `_mldsa_sv_init` 0 → 1, `_mldsa_sv_absorb` 2 → 3, `_mldsa_sv_finalize` 0 → 1,
+  `_mldsa_sv_squeeze` 2 → 3). A bote build at cyrius 6.6.10 against libro 2.10.3 therefore
+  failed with those 5 arity errors. At 3.13.4 the thin set is a strict subset of the fold
+  with no arity mismatch. The two sigil tags still move together.
+- The vendored thin sigil files are byte-identical to sigil's `3.13.4` tag
+  (`dist/sigil-mldsa.cyr`, `src/{sha_ni,sha256,hex}.cyr`), resolved from the tag with
+  `path = "../sigil"` commented out.
+- `dist/libro.cyr` regenerated (header only). `dist/libro.deps` drops `sys` (27 leaves).
+- Binary: 657,152 B default, 671,824 B with `tpm` (DCE, measured).
+- patra stays at 1.14.3. cyrius 6.6.10 folds patra 1.15.1, so `cyrius deps` now prints
+  a shadow-lib notice for `lib/patra.cyr`; the pinned 1.14.3 is what libro builds against.
+
 ## [2.10.3] - 2026-09-21
 
 **No raw syscalls left.** 18 sites replaced by the stdlib wrapper (19 counting
