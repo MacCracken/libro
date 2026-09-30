@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.5] - 2026-09-30
+
+**patra 1.15.1, matching the cyrius 6.6.10 fold; no committed `path` deps; the raw-syscall
+CI step holds under pipefail.** No libro source change. Toolchain stays 6.6.10.
+
+### Changed
+
+- **`[deps.patra]` 1.14.3 → 1.15.1.** cyrius 6.6.10 (and 6.6.11) fold patra 1.15.1, so
+  libro's `./lib/patra.cyr` at 1.14.3 shadowed the fold (the `cyrius deps` shadow-lib
+  notice) and libro's suite tested a different patra from the one bote gets when it
+  consumes `dist/libro.cyr`. At 1.15.1 the vendored `lib/patra.cyr` is the fold byte for
+  byte. patra 1.15.0 moved its raw syscalls to stdlib wrappers and 1.15.1 fixed the CSPRNG
+  fallback; neither changes an API libro calls.
+- **Every `path` line is out of `cyrius.cyml`** (`path = "../sigil"` on `deps.sigil` and
+  `deps.sigil_tpm`, `path = "../patra"`). `path` beats `tag`, so on a machine with sibling
+  checkouts a local resolve vendored the working trees while CI vendored the tags: the
+  `../patra` checkout was at 1.15.1 beside the 1.14.3 pin, and `../sigil` is mid-release.
+  The manifest rule now says a `path` line is never committed.
+- `dist/libro.cyr` regenerated (header only); `dist/libro.deps` unchanged (27 leaves).
+- README, CLAUDE.md and `docs/development/dependency-watch.md` name patra 1.15.1.
+- Binary: 657,104 B default (−48 B), 671,776 B with `tpm` (DCE, measured). Capacity:
+  `fn_table 2936`, `identifiers 78586`, `var_table 1106`.
+
+### Fixed
+
+- **CI "No raw syscalls" failed under `pipefail`.** The per-file
+  `sed | grep | sed` pipeline in the `HITS=$(for f in …; done)` loop had no `|| true`. A
+  clean file makes grep exit 1; under `pipefail` that is the loop's status, so the
+  assignment fails and `set -e` ends the step silently with rc 1 before it can print
+  "clean". GitHub runs an unspecified `shell:` as `bash -e` without pipefail, which is the
+  only reason the step was green. With `|| true` per file the step, run verbatim, gives
+  rc 0 and "clean" under both `bash -e` and `bash -eo pipefail`, and a planted
+  `syscall(60, 0)` still gives rc 1 with the site named under both.
+
 ## [2.10.4] - 2026-09-29
 
 **sigil 3.13.4, in lockstep with the sigil cyrius 6.6.10 folds.** No libro source change;

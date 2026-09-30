@@ -288,8 +288,10 @@ jobs:
           # and dup on agnos; 60 is exit on x86_64 only. 2.10.3 removed the
           # last 18 sites. Comments are stripped first, so prose that names a
           # syscall number is fine.
+          # `|| true` per file: grep exits 1 on a clean file, and under
+          # pipefail that status would become the loop's and abort the step.
           HITS=$(for f in src/*.cyr benches/*.bcyr fuzz/*.fcyr tests/*.cyr; do
-            sed -E 's/#.*$//' "$f" | grep -nE '\bsyscall[[:space:]]*\(' | sed "s|^|$f:|"
+            sed -E 's/#.*$//' "$f" | grep -nE '\bsyscall[[:space:]]*\(' | sed "s|^|$f:|" || true
           done)
           if [ -n "$HITS" ]; then
             echo "FAIL: raw syscall(...) — call the stdlib wrapper instead:"

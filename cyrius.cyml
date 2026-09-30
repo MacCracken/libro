@@ -86,9 +86,13 @@ stdlib = [
 #    `deps.NAME`. distlib scans for the bracket sequence unanchored and drops
 #    NAME from the dist/libro.deps sidecar when it matches comment prose.
 #
-# 2. `path` beats `tag` when the sibling checkout resolves, and it skips
-#    commit-pin verification. A sibling-free reproduction is the release gate:
-#    a tag that does not exist yet passes every local gate and fails CI.
+# 2. No `path` line is ever committed. `path` beats `tag` when the sibling
+#    checkout resolves, and it skips commit-pin verification, so a local
+#    resolve reads the working tree while CI reads the tag: through 2.10.4 the
+#    live `path = "../patra"` vendored the 1.15.1 checkout locally beside a
+#    1.14.3 pin. To test against a sibling's working tree, add the line
+#    locally and do not commit it. A sibling-free reproduction is the release
+#    gate: a tag that does not exist yet passes every local gate and fails CI.
 
 # The TPM trust surface is default-off. Every active `deps.*` module is
 # auto-included into every build, so sigil-tpm lives in an optional dep that
@@ -108,7 +112,6 @@ tpm = ["sigil_tpm"]
 #   src/hex.cyr             standalone hex encode/decode
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-path = "../sigil"
 tag = "3.13.4"
 modules = [
     "dist/sigil-mldsa.cyr",
@@ -123,7 +126,6 @@ modules = [
 # share a compilation unit and the last definition silently wins.
 [deps.sigil_tpm]
 git = "https://github.com/MacCracken/sigil.git"
-path = "../sigil"
 tag = "3.13.4"
 modules = ["dist/sigil-tpm.cyr"]
 optional = true
@@ -134,6 +136,5 @@ optional = true
 # through this block.
 [deps.patra]
 git = "https://github.com/MacCracken/patra.git"
-path = "../patra"
-tag = "1.14.3"
+tag = "1.15.1"
 modules = ["dist/patra.cyr"]

@@ -12,7 +12,7 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.10.4 (2026-09-29)
+- **Version**: 2.10.5 (2026-09-30)
 - **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.6.10 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -29,13 +29,13 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 795 default / 807 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 657,152 B default (2.10.4, measured; 671,824 B with `tpm`). Capacity headroom: `fn_table 2874 / 131072`, `identifiers 77209 / 8388608`, `var_table 1103 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Binary**: 657,104 B default (2.10.5, measured; 671,776 B with `tpm`). Capacity headroom: `fn_table 2936 / 131072`, `identifiers 78586 / 8388608`, `var_table 1106 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, ML-DSA (+ hybrid), hex. Pulled as a THIN sub-surface, NOT the monolithic `dist/sigil.cyr` (2.8.0): `[deps.sigil]` = `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`; TPM (`tpm_seal`/`unseal`/`detect`) behind the optional `tpm` feature (`[deps.sigil_tpm]`). Constant-time compare (`ct_eq*`) comes from stdlib `lib/ct.cyr`, not sigil. See quirk #9.
-- **patra** — SQL-backed storage (pinned v1.14.3 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). Both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4. **The sigil tag must equal the sigil version the pinned cyrius folds** (6.6.10 folds 3.13.4): bote declares the `sigil` stdlib fold AND consumes this thin sigil through `dist/libro.cyr`, so both land in one unit, and 3.13.x changed the arity of the ML-DSA sponge helpers — libro 2.10.3's 3.12.18 thin set against the 3.13.4 fold was 5 arity errors in bote. patra stays at 1.14.3 (the 6.6.10 fold carries 1.15.1, so `cyrius deps` prints a shadow-lib notice for `lib/patra.cyr`).
+- **patra** — SQL-backed storage (pinned v1.15.1 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). Both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4. **The sigil tag must equal the sigil version the pinned cyrius folds** (6.6.10 folds 3.13.4): bote declares the `sigil` stdlib fold AND consumes this thin sigil through `dist/libro.cyr`, so both land in one unit, and 3.13.x changed the arity of the ML-DSA sponge helpers — libro 2.10.3's 3.12.18 thin set against the 3.13.4 fold was 5 arity errors in bote. The patra tag equals the patra version the pinned cyrius folds (6.6.10 and 6.6.11 fold 1.15.1), so the vendored `lib/patra.cyr` is the fold byte for byte and libro tests the same patra bote gets through `dist/libro.cyr`. No `path` line is committed in `cyrius.cyml`: `path` beats `tag`, so a live one makes a local resolve differ from CI.
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -140,7 +140,7 @@ benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_jso
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
-lib/                    Vendored Cyrius stdlib + patra v1.14.3 bundle
+lib/                    Vendored Cyrius stdlib + patra v1.15.1 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
 docs/                   Architecture, guides, compliance, ADRs, audit reports
