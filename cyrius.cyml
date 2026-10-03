@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "libro — cryptographic audit chain (tamper-proof SHA-256 hash-linked event logging and verification)"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.10"
+cyrius = "6.6.14"
 repository = "https://github.com/MacCracken/libro"
 
 [build]
@@ -112,7 +112,7 @@ tpm = ["sigil_tpm"]
 #   src/hex.cyr             standalone hex encode/decode
 [deps.sigil]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "3.13.4"
+tag = "3.13.7"
 modules = [
     "dist/sigil-mldsa.cyr",
     "src/sha_ni.cyr",
@@ -126,7 +126,7 @@ modules = [
 # share a compilation unit and the last definition silently wins.
 [deps.sigil_tpm]
 git = "https://github.com/MacCracken/sigil.git"
-tag = "3.13.4"
+tag = "3.13.7"
 modules = ["dist/sigil-tpm.cyr"]
 optional = true
 

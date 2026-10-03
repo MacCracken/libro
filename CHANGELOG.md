@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.6] - 2026-10-03
+
+**sigil 3.13.7 and cyrius 6.6.14, in lockstep with the sigil 6.6.14 folds.** No libro
+source change; every digest, proof and signature verifies exactly as under 2.10.5.
+
+### Changed
+
+- **`[deps.sigil]` and `[deps.sigil_tpm]` 3.13.4 → 3.13.7, toolchain 6.6.10 → 6.6.14.**
+  The sigil tag equals the sigil the pinned cyrius folds: 6.6.13 folds 3.13.6 and 6.6.14
+  folds 3.13.7. libro's own build vendors this thin set, so its suite now runs sigil
+  3.13.6's thread-safe first-use init. 3.13.4's thin set differs from the 6.6.14 fold in 3
+  of the 213 functions they share: `cbank`, `crypto_tls_main_init` and
+  `sha256_global_init`. Those used a check-then-set init, which can hand a second thread a
+  half-built SHA-256 table or leave the main thread without its crypto block. At 3.13.7 all
+  220 shared functions and all 66 shared globals are identical to the fold, and so are the
+  59 functions the `tpm` bundle shares with it. bote lists the `sigil` fold as a stdlib
+  leaf and declares no sigil of its own. Since cyrius 6.6.11 the resolver keeps the fold
+  over a thin profile of a stdlib leaf, so none of this thin set reaches bote's `lib/`, and
+  bote's lock pin for sigil now names the 3.13.7 it compiles instead of 3.13.4. The two
+  sigil tags still move together.
+- The vendored thin sigil files are byte-identical to sigil's `3.13.7` tag
+  (`dist/sigil-mldsa.cyr`, `src/{sha_ni,sha256,hex}.cyr`). `lib/patra.cyr` (1.15.1) is
+  byte-identical to the 6.6.14 fold.
+- `dist/libro.cyr` regenerated (header only). `dist/libro.deps` is unchanged (27 leaves).
+- Binary: 657,504 B default (+400 B) and 672,168 B with `tpm` (+392 B), DCE, measured. The
+  growth is the 6.6.14 stdlib, since libro's source is unchanged. The default build prints no
+  warning on 6.6.14. The `tpm` build prints only the documented `_sigil_random_fill`
+  duplicate.
+
 ## [2.10.5] - 2026-09-30
 
 **patra 1.15.1, matching the cyrius 6.6.10 fold; no committed `path` deps; the raw-syscall
