@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.10.6 (2026-10-03)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.6.14 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.10.7 (2026-10-14)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.6.20 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -29,13 +29,13 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 795 default / 807 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 657,504 B default (2.10.6, measured; 672,168 B with `tpm`). Capacity headroom: `fn_table 3000 / 131072`, `identifiers 80143 / 8388608`, `var_table 1135 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
-- **Distribution artifact**: committed `dist/libro.cyr` — produced by `cyrius distlib`, ~5.5k lines. See `DEPS-PATTERN.md` for the contract.
+- **Binary**: 674,904 B default (2.10.7, measured; 689,792 B with `tpm`). Capacity headroom: `fn_table 3078 / 131072`, `identifiers 81837 / 8388608`, `var_table 1159 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Distribution artifact**: committed `dist/libro.cyr` + `dist/libro.deps` sidecar — produced by `cyrius distlib`, ~7.7k lines. Since cyrius 6.6.18 the bundle opens with a compile-verified `# Requires` block and the sidecar lists only the stdlib leaves the bundle needs beyond what sigil's and patra's own `# Requires` blocks bring (`hashmap` alone at 2.10.7). CI diffs both files. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, ML-DSA (+ hybrid), hex. Pulled as a THIN sub-surface, NOT the monolithic `dist/sigil.cyr` (2.8.0): `[deps.sigil]` = `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`; TPM (`tpm_seal`/`unseal`/`detect`) behind the optional `tpm` feature (`[deps.sigil_tpm]`). Constant-time compare (`ct_eq*`) comes from stdlib `lib/ct.cyr`, not sigil. See quirk #9.
-- **patra** — SQL-backed storage (pinned v1.15.1 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). Both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4. **The sigil tag must equal the sigil version the pinned cyrius folds** (6.6.14 folds 3.13.7). libro's own build vendors this thin set, so its suite tests the sigil the fold ships. Through cyrius 6.6.10 a consumer that also listed the `sigil` fold (bote) compiled both in one unit, and 3.13.x changed the arity of the ML-DSA sponge helpers — libro 2.10.3's 3.12.18 thin set against the 3.13.4 fold was 5 arity errors in bote. From 6.6.11 the resolver keeps the fold over a thin profile of a stdlib leaf, so such a consumer compiles only the fold, and libro's tag decides only the sigil commit its lock pins. The patra tag equals the patra version the pinned cyrius folds (6.6.14 folds 1.15.1), so the vendored `lib/patra.cyr` is the fold byte for byte and libro tests the same patra bote gets through `dist/libro.cyr`. No `path` line is committed in `cyrius.cyml`: `path` beats `tag`, so a live one makes a local resolve differ from CI.
+- **patra** — SQL-backed storage (pinned v1.15.2 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). Both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4. **The sigil tag must equal the sigil version the pinned cyrius folds** (6.6.20 folds 3.13.10). libro's own build vendors this thin set, so its suite tests the sigil the fold ships. Through cyrius 6.6.10 a consumer that also listed the `sigil` fold (bote) compiled both in one unit, and 3.13.x changed the arity of the ML-DSA sponge helpers — libro 2.10.3's 3.12.18 thin set against the 3.13.4 fold was 5 arity errors in bote. From 6.6.11 the resolver keeps the fold over a thin profile of a stdlib leaf, so such a consumer compiles only the fold, and libro's tag decides only the sigil commit its lock pins. The patra tag equals the patra version the pinned cyrius folds (6.6.20 folds 1.15.2), so the vendored `lib/patra.cyr` is the fold byte for byte and libro tests the same patra bote gets through `dist/libro.cyr`. No `path` line is committed in `cyrius.cyml`: `path` beats `tag`, so a live one makes a local resolve differ from CI.
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -68,8 +68,10 @@ CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./
 # full re-sync restores the honest count. Read the "N deps locked" line to
 # confirm: the invariant is that a `--features tpm` resolve is exactly one MORE
 # than a clean full re-sync — do not memorise the literal, it moves with the
-# stdlib snapshot. At cyrius 6.6.14 the honest default is 116 and tpm is 117.
-# CI runs `cyrius deps` alone (no full sync) and sees 56 / 57.
+# stdlib snapshot. At cyrius 6.6.20 the honest default is 117 and tpm is 118.
+# CI runs `cyrius deps` alone (no full sync) and sees 58 / 59. Since 6.6.20 the
+# lock also keeps the sigil_tpm commit pin once recorded (3 commit-pinned, not
+# 2); `rm cyrius.lock && cyrius deps` gives the clean default lock.
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && ./build/libro_tpm
 rm -rf lib && cyrius lib sync --full && cyrius deps   # restores the thin, tpm-free default
@@ -140,7 +142,7 @@ benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_jso
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.)
-lib/                    Vendored Cyrius stdlib + patra v1.15.1 bundle
+lib/                    Vendored Cyrius stdlib + patra v1.15.2 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
 docs/                   Architecture, guides, compliance, ADRs, audit reports
@@ -170,7 +172,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.6.14"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.6.20"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -296,9 +298,10 @@ docs/ (when earned):
 > comment matches**. Writing `load64(p + 72)` or `store64(_hf_lebuf, len)` in an
 > explanatory comment fails the gate on an unregistered param name. Hit twice
 > while writing 2.8.11's comments. Describe the operation in words, or use a
-> name already in that file's allowlist. This is the same class as the
-> `cyrius.cyml` note about never writing a bracketed `deps.NAME` header inside a
-> comment.
+> name already in that file's allowlist. `distlib`'s scan of `cyrius.cyml` for
+> bracketed `deps.NAME` headers had the same unanchored shape through cyrius
+> 6.6.19; 6.6.20 anchored it, and the matching manifest rule was dropped in
+> 2.10.7.
 >
 > Stack buffers are exempt: `store64(&lebuf, len)` starts with `&`, which the
 > gate's `[a-zA-Z_]` character class does not match, so it is skipped entirely.

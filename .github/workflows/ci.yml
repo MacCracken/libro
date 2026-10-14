@@ -395,12 +395,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      - name: dist/libro.cyr is up-to-date
+      - name: dist/libro.cyr + dist/libro.deps are up-to-date
+        # distlib compile-verifies the bundle and exits non-zero when it does
+        # not build, so it runs bare. The .deps sidecar is part of the
+        # consumer contract (the stdlib leaves `cyrius deps` vendors for a
+        # downstream build), so it is diffed with the bundle.
         run: |
-          cyrius distlib || true  # self-compile check fails on external-dep refs (sigil); bundle still emitted
+          cyrius distlib
           test -s dist/libro.cyr || { echo "FAIL: dist/libro.cyr not produced"; exit 1; }
-          if ! git diff --exit-code dist/libro.cyr; then
-            echo "FAIL: dist/libro.cyr is stale. Run 'cyrius distlib' locally and commit."
+          if ! git diff --exit-code dist/libro.cyr dist/libro.deps; then
+            echo "FAIL: dist/ is stale. Run 'cyrius distlib' locally and commit."
             exit 1
           fi
 

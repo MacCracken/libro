@@ -21,9 +21,9 @@ tag = "<libro version>"
 modules = ["dist/libro.cyr"]
 ```
 
-`cyrius deps` clones libro at the tag and copies `dist/libro.cyr`
-into the consumer's `lib/libro_libro.cyr`. That's the entry
-point they `include` from.
+`cyrius deps` clones libro at the tag, copies `dist/libro.cyr`
+into the consumer's `lib/libro.cyr`, and vendors the stdlib leaves
+named in `dist/libro.deps`. `cyrius build` auto-includes it.
 
 **libro is NOT currently a dep of the cyrius compiler itself.**
 It does not need to appear in `cyrius/cyrius.cyml` to be
@@ -121,12 +121,14 @@ concern, not a libro-local decision.
 - [ ] `dist/libro.cyr` is committed at the tagged commit
       (`git log --oneline dist/libro.cyr | head` shows a commit
       at or before the tag).
-- [ ] `dist/libro.cyr` is up-to-date with `src/*.cyr` — regenerate
-      with `cyrius distlib` and `git diff dist/libro.cyr` shows
-      no delta.
-- [ ] A simulated-consumer test: a tiny `.cyr` program that
-      `include`s only `lib/libro_libro.cyr` (after copying
-      `dist/libro.cyr` there) compiles clean.
+- [ ] `dist/libro.cyr` and its `dist/libro.deps` sidecar are
+      up-to-date with `src/*.cyr` — regenerate with
+      `cyrius distlib` and `git diff dist/libro.cyr dist/libro.deps`
+      shows no delta.
+- [ ] A simulated-consumer test: a tiny `.cyr` program in a
+      project that declares `[deps.libro]` and only the stdlib
+      leaves its own code calls resolves, compiles and runs
+      clean.
 - [ ] The release workflow (`.github/workflows/release.yml`)
       runs `cyrius distlib` before any asset-upload step, and
       uploads `dist/libro.cyr` as a release asset (match patra's

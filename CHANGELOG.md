@@ -5,6 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.7] - 2026-10-14
+
+**cyrius 6.6.20, with sigil 3.13.10 and patra 1.15.2 matching its folds; `dist/` regenerated
+by the 6.6.18+ `distlib`.** No libro source change; every digest, proof and signature
+verifies exactly as under 2.10.6.
+
+### Changed
+
+- **Toolchain 6.6.14 → 6.6.20; `[deps.sigil]` and `[deps.sigil_tpm]` 3.13.7 → 3.13.10;
+  `[deps.patra]` 1.15.1 → 1.15.2.** 6.6.20 folds sigil 3.13.10 and patra 1.15.2, so both
+  tags again equal the folds. The vendored thin sigil files are byte-identical to sigil's
+  `3.13.10` tag, and `lib/patra.cyr` is byte-identical to the 6.6.20 fold. Over 3.13.7 the
+  thin set gains the SHA-NI path's scrub of the xmm registers and packed state after the
+  final block (3.13.8), the `_sigil_wipe64` helper, a branch-free portable high-half
+  multiply (compiled only off x86-64) and a `# Requires` include block. patra 1.15.2 changes
+  no source. Built under 6.6.20 with 2.10.6's pins, `cyrius build` warns that `./lib/`
+  shadows the pinned snapshot (patra 1.15.1 against the 1.15.2 fold); this release clears it.
+- **`dist/libro.cyr` opens with a `# Requires` block, and `dist/libro.deps` drops from 27
+  leaves to 1 (`hashmap`).** From cyrius 6.6.18, `distlib` writes the sidecar as exactly the
+  stdlib leaves its compile-verify proves the bundle needs. It is no longer a copy of
+  libro's `[deps] stdlib`. sigil-mldsa and patra now carry their own `# Requires` blocks,
+  and those supply everything else. Dropped leaves: `assert alloc freelist str string vec
+  syscalls io fs fmt bayan sakshi chrono tagged process ct keccak thread thread_local slice
+  random atomic sync bench fnptr test`. **Consumer impact:** a consumer that calls one of
+  these from its own code, and got it only through libro's sidecar, now has to list it in
+  its own `[deps] stdlib` (cyrius `docs/development/ecosystem-migration-6.6.18.md`).
+  Verified two ways:
+  - A scratch consumer that declares only `alloc freelist str fmt` builds against the
+    bundle. It runs chain append and verify, a Merkle inclusion proof, and a PatraStore
+    write and read.
+  - bote at its current manifest, moved to 6.6.20 and pointed at this tree, builds and
+    passes `bote.tcyr` 441/0, `bote_libro_tools` 38/0 and `bote_fs_tools` 26/0.
+- **Binary:** 674,904 B default (+17,400 B) and 689,792 B with `tpm` (+17,624 B), DCE,
+  measured. The growth comes from the 6.6.20 toolchain: 2.10.6's exact pins built under
+  6.6.20 also measure 674,904 B. Capacity: `fn_table 3078`, `identifiers 81837`,
+  `var_table 1159`. The default build prints no warning. The `tpm` build prints only the
+  documented `_sigil_random_fill` duplicate.
+- **Lock counts:** a clean full re-sync locks 117 entries (was 116) and `--features tpm`
+  locks 118. CI's `cyrius deps`-only resolve locks 58 / 59 (was 56 / 57). The three new
+  entries are `poison` (6.6.18's `freelist` includes it), and `sys` and `result` (reached
+  through sigil-mldsa's `# Requires` block). Since 6.6.20 the lock also keeps a commit pin
+  after it is recorded. So after a `--features tpm` resolve, a bare `cyrius deps` reports 3
+  commit-pinned entries until `cyrius.lock` is deleted.
+
+### Fixed
+
+- **CI's dist-freshness gate now checks `dist/libro.deps`, and `distlib` runs without
+  `|| true`.** Before this, `ci.yml` and `release.yml` ran `cyrius distlib || true`, with the
+  comment "self-compile check fails on external-dep refs (sigil)", and diffed only
+  `dist/libro.cyr`. Under 6.6.20, `distlib` compile-verifies the bundle and exits 0, both on
+  this tree and on a CI-shaped `cyrius deps`-only tree after the TPM step's resolve. So the
+  `|| true` could only hide a real failure. The sidecar is now a compile-verified consumer
+  contract, and the gate never compared it. Run verbatim under `bash -eo pipefail`, the new
+  step returns rc 0 on this tree. It returns rc 1 when `assert` is planted in a committed
+  `dist/libro.deps`; the old gate passed that plant.
+
+### Removed
+
+- **Two `cyrius.cyml` rules that no longer hold at the 6.6.20 pin.**
+  - "No comments inside the array" is gone: 6.6.17's single manifest reader skips them.
+    Verified: a comment containing `]`, placed mid-`stdlib`, still resolves every entry
+    after it.
+  - "Never write a bracketed `deps.NAME` header in a comment" is gone: 6.6.20 anchors
+    `distlib`'s header match. Verified: `[deps.hashmap]` and `[deps.patra]` in comment prose
+    leave the bundle and sidecar byte-identical.
+
+  The `path` rule stays. Its 2.10.4 incident narrative is dropped from the manifest; it is
+  recorded under [2.10.5].
+
+### Docs
+
+- README, CLAUDE.md, quickstart, `dependency-watch` and `standards-mapping` name 6.6.20 /
+  3.13.10 / 1.15.2.
+- `DEPS-PATTERN.md` and quickstart: `cyrius deps` vendors the bundle as `lib/libro.cyr`, not
+  `lib/libro_libro.cyr` (bote's `lib/` shows `libro.cyr` under 6.6.14 as well). The contract
+  checklist now names the sidecar. quickstart's usage example now calls `patra_init()`. It
+  was missing, and the scratch consumer above died with SIGSEGV in its first
+  `patrastore_open` until the call was added.
+- Roadmap: completed items removed.
+
+### Verification
+
+Default suite 795/0 and `-D LIBRO_TPM` 807/0, both locally and on a sibling-free tree
+resolved by `cyrius deps` alone. Fuzz is clean, all 33 benches run, and the four `tests/`
+repros build and exit 0. `cyrfmt --check` is clean per file. `cyrius lint` output is byte-identical
+to 6.6.14's, run in a 6.6.14-pinned copy of the tree. That output is no warnings plus the
+six existing untracked-deferral notes: five `XXX` matches on `\uXXXX` and junk-suffix test
+data, and one `not yet` in `src/timestamping.cyr`.
+
 ## [2.10.6] - 2026-10-03
 
 **sigil 3.13.7 and cyrius 6.6.14, in lockstep with the sigil 6.6.14 folds.** No libro

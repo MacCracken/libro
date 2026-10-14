@@ -64,14 +64,14 @@ jobs:
 
       - name: Regenerate dist/libro.cyr (consumer distribution artifact)
         run: |
-          cyrius distlib || true  # self-compile check fails on external-dep refs (sigil); bundle still emitted
+          cyrius distlib
           test -s dist/libro.cyr || { echo "FAIL: dist/libro.cyr not produced"; exit 1; }
           echo "dist/libro.cyr: $(wc -l < dist/libro.cyr) lines, $(wc -c < dist/libro.cyr) bytes"
 
-      - name: Verify dist/libro.cyr matches committed copy
+      - name: Verify dist/libro.cyr + dist/libro.deps match committed copies
         run: |
-          if ! git diff --exit-code dist/libro.cyr; then
-            echo "FAIL: committed dist/libro.cyr is stale. Run 'cyrius distlib' and commit."
+          if ! git diff --exit-code dist/libro.cyr dist/libro.deps; then
+            echo "FAIL: committed dist/ is stale. Run 'cyrius distlib' and commit."
             exit 1
           fi
 

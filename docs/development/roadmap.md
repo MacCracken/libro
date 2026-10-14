@@ -8,28 +8,6 @@ Forward work only. Release detail lives in
 
 Open items, sequenced fastest-to-land first, reactive items last.
 
-- [x] **✅ FIXED in 2.8.9 — `PatraStore`'s cached prepared statements killed a
-  caller on another thread.** Reported by Agnostic 2026-08-21, fixed the same
-  day. `patrastore_open` cached its `SELECT`/`COUNT` handles; patra's SQL parse
-  scratch is per-thread, so executing one from another thread dereferenced TLS
-  that was not there and killed the process — no diagnostic, no error return.
-
-  The cache is gone; both read paths take the `patra_query` fallback they already
-  had, which parses on the calling thread. Struct layout unchanged. Guarded by
-  `test_patrastore_read_from_another_thread`, mutation-verified: restoring the
-  cache makes the suite dump core.
-
-  ✅ **The open item filed with it is RESOLVED in 2.8.11.**
-  `patrastore_load_and_verify` returned the entries vec on success and an error
-  object on failure — both non-zero pointers — so `if (r != 0)` read an
-  integrity violation as a successful load. The 2.8.11 audit found the same
-  shape in three more APIs (`filestore_load_and_verify`, `entry_new_validated`,
-  `memstore_verify_streamed`), so the fix is a discriminator rather than a
-  per-site signature change: every error constructor stamps a magic at offset 0
-  and `libro_is_error(p)` / `libro_is_ok(p)` answer the question. Agnostic's
-  `patrastore_load_all` + `verify_chain` workaround still works and is still
-  unambiguous; it is no longer necessary.
-
 - [ ] **RFC 3161 token verification (carried from the 2.8.11 audit, unchanged
   by 2.8.12).**
   2.8.11 tightened the syntactic half — DER tags are checked, a length that
@@ -131,12 +109,6 @@ unblocker.
   FileStore's `flock` and PatraStore's patra-level locking handle
   single-node multi-process.
 
-*(Re-source the TPM primitives from sigil — **shipped in 2.8.0**,
-removed from this list. `[deps.agnosys]` is gone; `tpm_seal` /
-`tpm_unseal` / `tpm_detect` now resolve from the optional
-`[deps.sigil_tpm]` fold behind the `tpm` feature, with
-`src/tpm_anchor.cyr` unchanged. See CHANGELOG [2.8.0].)*
-
 ## Tracked in other repos
 
 - **MCP tools (`libro_query`, `libro_verify`, `libro_export`) via
@@ -157,3 +129,14 @@ visibility; no implicit scope decision either way.
   indexes are the building block.
 - Explicit compaction tool driving `chain_apply_retention` +
   `chain_export` together for offline archival.
+- A ranged, allocator-aware read from the patra store. Its reads
+  (`patrastore_load_all`, `patrastore_query`, which filters after a full
+  load, and `patrastore_by_source`) take no offset or limit and copy every
+  matching row into the global allocator, which has no `free()`;
+  `memstore_load_page` and `chain_page` page in memory only. agnostic needs
+  the newest entries of the trail, paged, and works around the gap by
+  keeping its newest 1024 entries in fixed slots (agnostic ADR 0011), so its
+  audit view cannot reach older ones. A
+  `patrastore_load_page_a(a, s, offset, limit)` (`LIMIT`/`OFFSET`, or by
+  index, into the caller's arena) would let that copy go. Not slotted until
+  a deployment needs more than the newest 1024 entries.

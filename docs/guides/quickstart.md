@@ -10,7 +10,7 @@ install is:
 cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
 ```
 
-As of this release the pin is **6.6.14**. If you've just cloned libro fresh,
+As of this release the pin is **6.6.20**. If you've just cloned libro fresh,
 you may also need `cyrius deps` once to populate the `lib/` symlinks. Libro
 resolves a **thin** sigil surface (`lib/sigil-mldsa.cyr` plus
 `lib/sigil_{sha_ni,sha256,hex}.cyr`) rather than the monolithic
@@ -80,11 +80,13 @@ include "src/streaming.cyr"
 include "src/proof_json.cyr"
 ```
 
-For downstream consumers, the above collapses to one line once
-`cyrius deps` has pulled the dist:
+For downstream consumers, `cyrius deps` vendors the bundle as `lib/libro.cyr`
+(with the sigil and patra folds libro's own pins bring), and `cyrius build`
+auto-includes every `[deps.*]` module, so no `include` line is needed. An
+explicit one is:
 
 ```cyrius
-include "lib/libro_libro.cyr"    # after stdlib + sigil + patra
+include "lib/libro.cyr"
 ```
 
 ### Create a Chain and Append Entries
@@ -93,6 +95,7 @@ include "lib/libro_libro.cyr"    # after stdlib + sigil + patra
 alloc_init();
 fl_init();
 ed25519_init();    # only if you will use signing
+patra_init();      # only if you will use PatraStore — before the first patrastore_open
 
 var c = chain_new();
 
