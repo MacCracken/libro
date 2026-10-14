@@ -10,7 +10,7 @@ install is:
 cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
 ```
 
-As of this release the pin is **6.6.20**. If you've just cloned libro fresh,
+As of this release the pin is **6.7.9**. If you've just cloned libro fresh,
 you may also need `cyrius deps` once to populate the `lib/` symlinks. Libro
 resolves a **thin** sigil surface (`lib/sigil-mldsa.cyr` plus
 `lib/sigil_{sha_ni,sha256,hex}.cyr`) rather than the monolithic

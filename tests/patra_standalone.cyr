@@ -87,7 +87,7 @@ fn main() {
     sys_unlink("/tmp/ps_standalone3.patra");
     ps = patrastore_open(str_from(
         "/tmp/ps_standalone3.patra"));
-    var prev = str_from("");
+    var prev = libro_empty_str();   # untyped on purpose — see src/hasher.cyr
     var i = 0;
     while (i < 3) {
         var e = entry_new(SEV_INFO, str_from("s"),

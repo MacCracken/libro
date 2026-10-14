@@ -12,8 +12,8 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.10.8 (2026-10-14)
-- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.6.20 (pin in `cyrius.cyml` `cyrius = "..."` field)
+- **Version**: 2.11.0 (2026-10-14)
+- **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.7.9 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -29,13 +29,13 @@ Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aeg
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 817 default / 829 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 675,928 B default (2.10.8, measured; 694,920 B with `tpm`). Capacity headroom: `fn_table 3084 / 131072`, `identifiers 82054 / 8388608`, `var_table 1159 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Binary**: 679,496 B default (2.11.0, measured; 698,488 B with `tpm`). Capacity headroom: `fn_table 3093 / 131072`, `identifiers 82404 / 8388608`, `var_table 1169 / 1048576` (`CYRIUS_STATS=1`). **libro uses exactly two bayan functions** (`json_parse`, `json_get`) and pulls the 641 KB monolith; thinning `[deps.bayan]` to `dist/bayan-json.cyr` is filed on the roadmap — it changes the dep graph, so it is not a patch-release edit. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` + `dist/libro.deps` sidecar — produced by `cyrius distlib`, ~7.7k lines. Since cyrius 6.6.18 the bundle opens with a compile-verified `# Requires` block and the sidecar lists only the stdlib leaves the bundle needs beyond what sigil's and patra's own `# Requires` blocks bring (`hashmap` alone since 2.10.7). CI diffs both files. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
 
 - **sigil** — SHA-256, Ed25519, ML-DSA (+ hybrid), hex. Pulled as a THIN sub-surface, NOT the monolithic `dist/sigil.cyr` (2.8.0): `[deps.sigil]` = `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`; TPM (`tpm_seal`/`unseal`/`detect`) behind the optional `tpm` feature (`[deps.sigil_tpm]`). Constant-time compare (`ct_eq*`) comes from stdlib `lib/ct.cyr`, not sigil. See quirk #9.
-- **patra** — SQL-backed storage (pinned v1.15.2 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). Both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4. **The sigil tag must equal the sigil version the pinned cyrius folds** (6.6.20 folds 3.13.10). libro's own build vendors this thin set, so its suite tests the sigil the fold ships. Through cyrius 6.6.10 a consumer that also listed the `sigil` fold (bote) compiled both in one unit, and 3.13.x changed the arity of the ML-DSA sponge helpers — libro 2.10.3's 3.12.18 thin set against the 3.13.4 fold was 5 arity errors in bote. From 6.6.11 the resolver keeps the fold over a thin profile of a stdlib leaf, so such a consumer compiles only the fold, and libro's tag decides only the sigil commit its lock pins. The patra tag equals the patra version the pinned cyrius folds (6.6.20 folds 1.15.2), so the vendored `lib/patra.cyr` is the fold byte for byte and libro tests the same patra bote gets through `dist/libro.cyr`. No `path` line is committed in `cyrius.cyml`: `path` beats `tag`, so a live one makes a local resolve differ from CI. **`patrastore_open` reads patra's private `_patra_mtx`** (2.10.8, `_ps_patra_ready`) to refuse before `patra_init()` has run, because `patra_open` SIGSEGVs without it and patra has no public query. If a patra bump renames that global, the build fails. The patra side is filed, open: patra `docs/development/issues/2026-10-14-patra-open-faults-without-patra-init.md`.
+- **patra** — SQL-backed storage (pinned v1.16.0 via `[deps.patra]` tag; resolved into `lib/patra.cyr` by `cyrius deps` from upstream `dist/patra.cyr` — `lib/` is gitignored, the tag pin is the contract). Both need the `O_NOFOLLOW` / `O_DIRECTORY` stdlib symbols of cyrius ≥ 6.6.4. **The sigil tag must equal the sigil version the pinned cyrius folds** — except at 2.11.0, where it is 3.13.12 (the latest, by the user's call) against the 6.7.9 fold's 3.13.11. libro's four thin files differ between those two only in their `# Version:` header (3.13.12's one change, `hash_file_into`, is outside the thin set), so the suite still tests the code the fold ships. Through cyrius 6.6.10 a consumer that also listed the `sigil` fold (bote) compiled both in one unit, and 3.13.x changed the arity of the ML-DSA sponge helpers — libro 2.10.3's 3.12.18 thin set against the 3.13.4 fold was 5 arity errors in bote. From 6.6.11 the resolver keeps the fold over a thin profile of a stdlib leaf, so such a consumer compiles only the fold, and libro's tag decides only the sigil commit its lock pins. The patra tag equals the patra version the pinned cyrius folds (6.7.9 folds 1.16.0), so the vendored `lib/patra.cyr` is the fold byte for byte and libro tests the same patra bote gets through `dist/libro.cyr`. No `path` line is committed in `cyrius.cyml`. Since cyrius 6.7.6 a default resolve ignores one and builds the tag (with a hint); `CYRIUS_LOCAL=<dep>` builds the sibling checkout into `build/local-deps/lib/`, leaving `lib/` and the lock untouched. **`patrastore_open` reads patra's private `_patra_mtx`** (2.10.8, `_ps_patra_ready`) to refuse before `patra_init()` has run, because `patra_open` SIGSEGVs without it and patra has no public query. If a patra bump renames that global, the build fails. The patra side is filed, open: patra `docs/development/issues/2026-10-14-patra-open-faults-without-patra-init.md`.
 - **sakshi** — structured tracing (Cyrius stdlib)
 
 No external deps beyond the Cyrius toolchain.
@@ -68,7 +68,7 @@ CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./
 # full re-sync restores the honest count. Read the "N deps locked" line to
 # confirm: the invariant is that a `--features tpm` resolve is exactly one MORE
 # than a clean full re-sync — do not memorise the literal, it moves with the
-# stdlib snapshot. At cyrius 6.6.20 the honest default is 117 and tpm is 118.
+# stdlib snapshot. At cyrius 6.7.9 the honest default is 117 and tpm is 118.
 # CI runs `cyrius deps` alone (no full sync) and sees 58 / 59. Since 6.6.20 the
 # lock also keeps the sigil_tpm commit pin once recorded (3 commit-pinned, not
 # 2); `rm cyrius.lock && cyrius deps` gives the clean default lock.
@@ -142,7 +142,7 @@ benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_jso
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
 tests/                  Standalone repros (patra_standalone.cyr, etc.); patra_uninit.cyr runs in CI
-lib/                    Vendored Cyrius stdlib + patra v1.15.2 bundle
+lib/                    Vendored Cyrius stdlib + patra v1.16.0 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
 docs/                   Architecture, guides, compliance, ADRs, audit reports
@@ -172,7 +172,7 @@ docs/ (when earned):
 
 ## CI / Release
 
-- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.6.20"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
+- **Toolchain pin**: `cyrius` field inside `cyrius.cyml` (currently `cyrius = "6.7.9"`). CI and release workflows extract it via `grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed ...` — no separate toolchain file, no hardcoded version strings in YAML.
 - **Manifest**: `cyrius.cyml` (was `cyrius.toml` through v1.0.4; renamed in 1.1.0 to match first-party convention).
 - **DCE**: every `cyrius build` in CI and release runs with `CYRIUS_DCE=1`. Binary size is a release metric.
 - **Tag filter**: release workflow triggers on `tags: ['[0-9]*']` — semver-only.
@@ -331,3 +331,4 @@ Quirks still worth knowing:
 - Per-file `#derive` cap — **raised to 512** in 6.0.53 (was 64). This *was* the real `-D LIBRO_TPM` blocker; the 2.6.5 `tpm_anchor` hand-written-accessor workaround was removed in 2.7.1. See quirk 4.
 - **Constant-fold arithmetic (`_cfo` rewind class) — fixed across 6.4.74 / 6.4.80 / 6.4.81.** Through 6.4.79 a constant expression in the PEXPR tier (`+ - & | ^`) **silently discarded its left operand** whenever a literal subtraction produced a *negative* intermediate: `1 - 2 + 3` evaluated to `5`, `1 - 2 | 3` to `3`. Non-negative intermediates were always right, so it hid — 40 of 400 systematic 3-term expressions were wrong at 6.4.79, with every upstream gate green. 6.4.74 fixed the same mechanism one tier down (`PARSE_TERM`, 17 sites), 6.4.80 the PEXPR tier (16 sites), 6.4.81 a fourth occurrence under struct operator overloading. **libro was never affected** — a comment/string-stripped scan of `src/`, `benches/` and `fuzz/` at the 2.8.3 bump found zero expressions of the failing shape, and the suite reported an identical 502/514 either side. Worth remembering as a *method* note: the bug was found by running the compiler, not reading it, and a passing suite was not evidence — if you ever suspect miscompiled arithmetic, grep for the expression **shape**, don't trust the tests.
 - **`fn_table` > 8192 side-table corruption + the 1/4-cleared DCE `live[]` bitmap** — P0, fixed in 6.4.75; the fn_table ceiling now reports against 32768. libro sits at `fn_table 2167 / 32768` (`CYRIUS_STATS=1`), so it was never in range, but any harness that grows past 8192 fns on a pre-6.4.75 toolchain had non-deterministic DCE and six corrupt fn-indexed tables.
+- **Silent-semantics fixes in the 6.7.x line — libro never affected.** Three compile-clean changes that alter what existing code computes: (a) before 6.7.3 the lexer **dropped a lone `!`**, so `if (!ok)` ran as `if (ok)`; (b) 6.6.10–6.7.8 the run-time constant fold **dropped a unary `-` on a named constant** (enum or `const`) **or any unary `~`** when an operator and an integer literal followed — `-K + 10` was 15, `~5 * 2` was 10 (fixed 6.7.9; a unary minus on a literal, `-1 + x`, was always right); (c) 6.7.9 stopped a typed `*T` pointer's element step leaking through operators (`(p & ~7) + 1`). A comment- and string-stripped scan of `src/`, `benches/`, `fuzz/` and `tests/` at the 2.11.0 bump found no lone `!`, no unary `-` on a named constant before an operator, no unary `~` before one, and no typed `*T` at all. Same method as the `_cfo` entry above: grep the shape, because the suite passes either way.
