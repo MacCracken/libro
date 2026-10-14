@@ -4009,6 +4009,114 @@ fn test_patrastore_open_close() {
     sys_unlink("/tmp/libro_test_ps.patra.wal");
 }
 
+# 2.10.8 — open before patra_init() returns 0 instead of killing the process.
+# main() runs patra_init() first, so this clears the one global the guard reads
+# for the call and puts it back. tests/patra_uninit.cyr runs the real case, a
+# process that never calls patra_init, which dies with SIGSEGV without the guard.
+fn test_patrastore_open_refuses_without_patra_init() {
+    var p = "/tmp/libro_ps_uninit.patra";
+    sys_unlink(p);
+    var saved = _patra_mtx;
+    _patra_mtx = 0;
+    var ps = patrastore_open(str_from(p));
+    _patra_mtx = saved;
+    assert(ps == 0, "open before patra_init returns 0");
+    assert(file_exists(p) == 0, "and refuses before patra_open creates the file");
+    if (ps != 0) { patrastore_close(ps); }
+    sys_unlink(p);
+    sys_unlink("/tmp/libro_ps_uninit.patra.wal");
+}
+
+# 2.10.8 — a failed open frees what it allocated. The freelist hands back the
+# most recently freed block of a size class, so a 32-byte block freed just
+# before the call comes straight back after it unless the open kept it.
+fn test_patrastore_failed_open_does_not_leak() {
+    var probe = fl_alloc(32);
+    fl_free(probe);
+    var ps = patrastore_open(str_from("/tmp/libro_ps_no_such_dir/x.patra"));
+    var again = fl_alloc(32);
+    assert(ps == 0, "open in a missing directory fails");
+    assert(again == probe, "failed open keeps no handle block");
+    fl_free(again);
+}
+
+# Create up to `n` one-column tables t00, t01, ... in the patra file at `path`;
+# returns how many patra accepted.
+fn _t_ps_create_tables(path, n) {
+    var db = patra_open(path);
+    var sql = alloc(32);
+    var made = 0;
+    var i = 0;
+    while (i < n) {
+        memcpy(sql, "CREATE TABLE t", 14);
+        store8(sql + 14, 48 + i / 10);
+        store8(sql + 15, 48 + i % 10);
+        memcpy(sql + 16, " (a INT)", 8);
+        store8(sql + 24, 0);
+        if (patra_exec(db, sql) == PATRA_OK) { made += 1; }
+        i += 1;
+    }
+    patra_close(db);
+    return made;
+}
+
+# 2.10.8 — patra caps a file at 63 tables. Through 2.10.7 a full file with no
+# audit_entries still "opened", and every append and load on it failed. patra
+# also checks that cap before the table name, so a full file that DOES hold
+# audit_entries answers the CREATE with PATRA_ERR_FULL too; that one must open.
+fn test_patrastore_open_full_database() {
+    var p = "/tmp/libro_ps_full.patra";
+    sys_unlink(p);
+    sys_unlink("/tmp/libro_ps_full.patra.wal");
+    assert(_t_ps_create_tables(p, 64) == 63,
+      "fixture: the file holds 63 tables and refuses a 64th");
+    var ps = patrastore_open(str_from(p));
+    assert(ps == 0, "full file without audit_entries is refused at open");
+    if (ps != 0) { patrastore_close(ps); }
+    sys_unlink(p);
+    sys_unlink("/tmp/libro_ps_full.patra.wal");
+
+    var p2 = "/tmp/libro_ps_full2.patra";
+    sys_unlink(p2);
+    sys_unlink("/tmp/libro_ps_full2.patra.wal");
+    var ps2 = patrastore_open(str_from(p2));
+    assert(ps2 != 0, "fixture: store created");
+    patrastore_close(ps2);
+    assert(_t_ps_create_tables(p2, 63) == 62,
+      "fixture: 62 more tables fill the file");
+    var ps3 = patrastore_open(str_from(p2));
+    assert(ps3 != 0, "full file that holds audit_entries still opens");
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), str_from("{}"),
+      libro_empty_str());
+    assert(patrastore_append(ps3, e) == PATRA_OK, "and takes an append");
+    assert(patrastore_len(ps3) == 1, "and reads it back");
+    patrastore_close(ps3);
+    sys_unlink(p2);
+    sys_unlink("/tmp/libro_ps_full2.patra.wal");
+}
+
+# 2.10.8 — every public function takes the 0 a failed open returns. Seven
+# unguarded reads reached eleven of them, so a caller that missed one failed
+# open died with SIGSEGV at its next store call.
+fn test_patrastore_null_store_is_safe() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), str_from("{}"),
+      libro_empty_str());
+    assert(patrastore_append(0, e) == PATRA_ERR_IO, "append on 0 is an IO error");
+    assert(libro_is_error(patrastore_load_all_or_err(0)) == 1,
+      "load_all_or_err on 0 is a libro error");
+    assert(vec_len(patrastore_load_all(0)) == 0, "load_all on 0 is empty");
+    assert(libro_is_error(patrastore_load_and_verify(0)) == 1,
+      "load_and_verify on 0 is a libro error, not a verified load");
+    assert(vec_len(patrastore_query(0, query_new())) == 0, "query on 0 is empty");
+    assert(patrastore_len(0) == 0, "len on 0 is 0");
+    assert(patrastore_is_empty(0) == 1, "is_empty on 0 is 1");
+    assert(vec_len(patrastore_by_source(0, str_from("s"))) == 0,
+      "by_source on 0 is empty");
+    assert(patrastore_begin(0) == PATRA_ERR_IO, "begin on 0 is an IO error");
+    assert(patrastore_commit(0) == PATRA_ERR_IO, "commit on 0 is an IO error");
+    assert(patrastore_rollback(0) == PATRA_ERR_IO, "rollback on 0 is an IO error");
+}
+
 # 2.8.9 REGRESSION GUARD — a store read from another thread must not crash.
 #
 # Until 2.8.9 `patrastore_open` prepared its SELECT and COUNT statements once and
@@ -4891,6 +4999,10 @@ fn main() {
 
     test_group("PatraStore");
     test_patrastore_open_close();
+    test_patrastore_open_refuses_without_patra_init();
+    test_patrastore_failed_open_does_not_leak();
+    test_patrastore_open_full_database();
+    test_patrastore_null_store_is_safe();
     test_merkle_tag_buffer_is_not_shared();
     test_concurrent_hashing_is_consistent();
     test_patrastore_read_from_another_thread();

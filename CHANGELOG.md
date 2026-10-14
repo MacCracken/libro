@@ -5,6 +5,130 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.8] - 2026-10-14
+
+**PatraStore fails cleanly instead of killing the process: before `patra_init()`, on a full
+patra file, and on every call handed a failed open's 0.** Every successful path is
+unchanged: the hash preimage, the on-disk schema and the API. Chains written by 2.10.7 open
+and verify exactly as before.
+
+### Fixed
+
+- **`patrastore_open` before `patra_init()` died with SIGSEGV and no diagnostic.** Found by
+  2.10.7's scratch consumer, which followed the quickstart (it omitted the call until
+  2.10.7). Both faults are inside `patra_open`:
+  - The page slab reads a thread-local slot on a thread with no TLS block, and
+    `patra_init` is what installs that block.
+  - With a block installed by hand, `pc_register` locks `_pc_mtx`, a mutex only
+    `patra_init` creates.
+
+  `patrastore_open` now logs `patrastore: patra_init() has not run` and returns 0 before it
+  calls `patra_open`, so no file is created. patra has no public "initialized?" query, so the
+  check reads patra's private `_patra_mtx`, which only `patra_init` assigns; a rename in
+  patra fails libro's build rather than the check. It does not call `patra_init()` lazily.
+  That would install a TLS block on whichever thread opens first, which patra forbids on a
+  `thread_create` worker, and it would replace mutexes another thread may hold. Tests:
+  - `test_patrastore_open_refuses_without_patra_init` (2 assertions) runs in the suite. The
+    suite's `main` calls `patra_init()` first, so the test clears that one global for the
+    call and then restores it.
+  - New `tests/patra_uninit.cyr` is the real case, a process that never calls
+    `patra_init`. CI now builds and runs it.
+
+  With the guard removed, the in-suite test fails 2 assertions and the repro exits 139.
+- **Seven unguarded handle reads reached eleven public functions.** `patrastore_append`,
+  `_load_all_or_err` (and through it `_load_all`, `_load_and_verify`, `_query`), `_len` (and
+  `_is_empty`), `_by_source` (whose guard tested `source` after reading `s`), `_begin`,
+  `_commit` and `_rollback` read the handle with no `s == 0` check. Since a failed open
+  returns 0, a caller that missed one failed open died at its next store call. Each now
+  follows its siblings' existing convention:
+
+  | Functions | On a 0 handle |
+  |---|---|
+  | `append`, `begin`, `commit`, `rollback` | `PATRA_ERR_IO` |
+  | `load_all_or_err`, `load_and_verify` | a `LIBRO_ERR_STORE` error object |
+  | `load_all`, `query`, `by_source` | an empty vec |
+  | `len` | 0 |
+  | `is_empty` | 1 |
+
+  `test_patrastore_null_store_is_safe` has 11 assertions. Removing any one of the seven
+  guards makes the suite dump core in the PatraStore group; all seven were checked.
+- **A full patra file with no `audit_entries` "opened".** patra caps a file at 63 tables, so
+  `CREATE TABLE audit_entries` there fails with `PATRA_ERR_FULL`. Until now
+  `patrastore_open` returned the handle anyway, and every append and load on it then
+  failed. It now closes the database and returns 0. patra also checks that cap *before* the
+  table name, so a full file that does hold `audit_entries` gets `PATRA_ERR_FULL` too.
+  Measured: below the cap the same statement returns `PATRA_ERR_EXISTS`. So after any other
+  error, `patrastore_open` runs `SELECT COUNT(*)` on the table before concluding it is
+  missing, and that store still opens.
+
+  `test_patrastore_open_full_database` (7 assertions) builds both files and checks the cap:
+  the fixture accepts 63 tables and refuses a 64th. Removing the refusal fails 1 assertion.
+  Removing the existence probe fails 3: the valid store is refused, and its append and read
+  fail with it.
+- **A failed `patrastore_open` leaked its 32-byte handle.** The handle was allocated before
+  `patra_open` and never freed when the open failed. It is now allocated after the database
+  opens. `test_patrastore_failed_open_does_not_leak` (2 assertions) relies on the freelist
+  returning the most recently freed block of a size class. It frees a 32-byte block, makes
+  the open fail, and expects that same block from the next allocation. Restoring the old
+  order fails it.
+
+### Filed upstream (patra), to be repaired later
+
+- `patra/docs/development/issues/2026-10-14-patra-open-faults-without-patra-init.md`: both
+  faults, with a patra-only repro (exit 139, and still 139 with only `thread_local_init()`
+  added). It also records that the comments calling a skipped `patra_init` a supported
+  "no-op contract" are stale, and suggests failing closed in `patra_open` plus a public
+  `patra_initialized()`.
+- `patra/docs/development/issues/2026-10-14-create-table-full-masks-exists.md`: the
+  cap-before-name order in `tbl_create`, with the measured return codes.
+- patra's `roadmap.md` "Consumer-filed bugs" line points at both. Both are present in
+  patra's 1.16.0 source as well as the 1.15.2 fold libro tests.
+
+### Changed
+
+- The `src/patra_store.cyr` header states the `patra_init()` precondition and the 0-handle
+  contract. Its claim that the SELECT and COUNT statements are "parsed once at open" is
+  gone; it has been untrue since 2.8.9.
+- CI: new step "Uninitialized-patra repro" builds and runs `tests/patra_uninit.cyr`.
+- Binary: 675,928 B default (+1,024 B) and 694,920 B with `tpm` (+5,128 B), DCE, measured.
+  Capacity: `fn_table 3084`, `identifiers 82054`, `var_table 1159`.
+- `dist/libro.cyr` regenerated. `dist/libro.deps` is unchanged (`hashmap`).
+
+### Performance
+
+The guards cost nothing measurable. Interleaved A/B, five runs each, against the 2.10.7
+`patra_store.cyr`, medians:
+
+| Bench | Change |
+|---|---|
+| `patra_append_50_full` | +0.9% |
+| `patra_append_50_batch` | −0.6% |
+| `patra_load_all_50` | −1.0% |
+| `patra_by_source_50` | +0.5% |
+
+Every pair's per-run ranges overlap. Absolute values ran about 10% above this morning's
+2.10.7 run for both builds alike, as did the untouched `filestore_load_10`.
+
+### Docs
+
+- `testing.md`:
+  - New CI-gate row for the uninitialized-patra repro.
+  - The dist-freshness row now names the `.deps` sidecar and the bare `distlib` (missed in
+    2.10.7).
+  - The PatraStore group lists the new coverage.
+- Test counts 795 / 807 → 817 / 829 in README, CONTRIBUTING, CLAUDE.md, quickstart,
+  `testing.md` and `tpm-anchors.md`.
+- CLAUDE.md records that `patrastore_open` reads patra's private `_patra_mtx`.
+
+### Verification
+
+- Tests: default suite 817/0 and `-D LIBRO_TPM` 829/0. Fuzz is clean and all 33 benches run.
+- Format and lint: `cyrfmt --check` is clean per file, and `cyrius lint` output is
+  byte-identical to 2.10.7's.
+- CI gates: the source gates (manifest completeness, raw-offset allowlist / guard / bound,
+  no raw syscalls, security scan) return rc 0 under `bash -eo pipefail`, run from
+  `ci.yml` verbatim. `cyrius distlib --check` returns 0.
+
 ## [2.10.7] - 2026-10-14
 
 **cyrius 6.6.20, with sigil 3.13.10 and patra 1.15.2 matching its folds; `dist/` regenerated
