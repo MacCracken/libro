@@ -4010,16 +4010,23 @@ fn test_patrastore_open_close() {
 }
 
 # 2.10.8 — open before patra_init() returns 0 instead of killing the process.
-# main() runs patra_init() first, so this clears the one global the guard reads
-# for the call and puts it back. tests/patra_uninit.cyr runs the real case, a
-# process that never calls patra_init, which dies with SIGSEGV without the guard.
+# main() runs patra_init() first, so this clears the flag behind
+# patra_initialized() for the call and puts it back. tests/patra_uninit.cyr runs
+# the real case, a process that never calls patra_init.
+#
+# Since patra 1.16.1 patra_open refuses in that state as well, so the two open
+# assertions hold without libro's guard. The `_ps_patra_ready` pair is what
+# pins the guard itself.
 fn test_patrastore_open_refuses_without_patra_init() {
     var p = "/tmp/libro_ps_uninit.patra";
     sys_unlink(p);
-    var saved = _patra_mtx;
-    _patra_mtx = 0;
+    var saved = _patra_inited;
+    _patra_inited = 0;
+    var ready_uninit = _ps_patra_ready();
     var ps = patrastore_open(str_from(p));
-    _patra_mtx = saved;
+    _patra_inited = saved;
+    assert(ready_uninit == 0, "guard reads patra as uninitialized");
+    assert(_ps_patra_ready() == 1, "guard reads patra as initialized once restored");
     assert(ps == 0, "open before patra_init returns 0");
     assert(file_exists(p) == 0, "and refuses before patra_open creates the file");
     if (ps != 0) { patrastore_close(ps); }
@@ -4061,9 +4068,9 @@ fn _t_ps_create_tables(path, n) {
 }
 
 # 2.10.8 — patra caps a file at 63 tables. Through 2.10.7 a full file with no
-# audit_entries still "opened", and every append and load on it failed. patra
-# also checks that cap before the table name, so a full file that DOES hold
-# audit_entries answers the CREATE with PATRA_ERR_FULL too; that one must open.
+# audit_entries still "opened", and every append and load on it failed. A full
+# file that DOES hold audit_entries must open: through patra 1.16.0 its CREATE
+# answered PATRA_ERR_FULL as well, and since 1.16.1 it answers PATRA_ERR_EXISTS.
 fn test_patrastore_open_full_database() {
     var p = "/tmp/libro_ps_full.patra";
     sys_unlink(p);

@@ -4,7 +4,7 @@ Forward work only. Release detail lives in
 [CHANGELOG.md](../../CHANGELOG.md); doc currency lives in
 [`doc-health.md`](../doc-health.md).
 
-**Current release: 2.11.0** (cyrius 6.7.9, sigil 3.13.12, patra 1.16.0).
+**Current release: 2.11.1** (cyrius 6.7.18, sigil 3.13.15, patra 1.16.6).
 
 Every open item has a target version:
 
@@ -18,7 +18,7 @@ since 2.8.0, the guides and `dependency-watch.md`, and each was re-checked again
 
 ---
 
-## 2.11.1 — Documentation and housekeeping
+## 2.11.2 — Documentation and housekeeping
 
 No behaviour change.
 
@@ -30,7 +30,6 @@ No behaviour change.
     asset (:86), although the token is not verified (see 2.12.0). None of the 2.8.11 /
     2.8.12 defect classes appear.
   - `compliance/standards-mapping.md` still shows:
-    - sigil 3.12.9 / patra 1.13.8 rows (:218-229);
     - the TPM via agnosys (:69);
     - "scalars emit verbatim" (:57), false since 2.8.12;
     - stdlib `json`/`bigint` instead of `bayan` (:230-234);
@@ -59,19 +58,27 @@ No behaviour change.
   - DCE now removes dead code rather than NOP-filling it: 1,252,936 B with `CYRIUS_DCE=0`,
     679,496 B with `=1`. The 2.8.11 audit's "~200 KB" for thinning predates both facts.
 
+  Measured at 2.11.1 (cyrius 6.7.18, bayan 1.11.1): what bayan contributes after DCE is
+  data, not code. Since bayan 1.9.0 the monolith's `# Requires` pulls all seven
+  `lib/unicode/` files for its markdown parser, and their tables are top-level string
+  `var`s that DCE keeps. `string_data` went 58,232 → 400,629 B and the binary
+  679,496 → 988,864 B, with code size flat; old pins under 6.7.18 measure the same. About
+  307 KB of it is `lib/unicode/`.
+
   What is left:
   - Correct `src/main.cyr`'s include comment, which still says libro's surface is
     `json_parse`/`json_get`.
-  - Measure what bayan still contributes after DCE.
-  - Any thinning is now a sigil change (sigil-mldsa requiring a bayan sub-bundle for
-    `u256`), not a libro manifest edit.
+  - Any thinning is upstream, not a libro manifest edit. sigil-mldsa calls bayan's legacy
+    `u256_*` compat names, which only the monolith defines, so moving it to `bayan-bigint`
+    means calling `bayan_u256_*`. The other route is DCE dropping global initializers that
+    no live code reads.
 
   CLAUDE.md was corrected when this roadmap was reorganized.
 - [ ] **The cc3-era repros in `tests/`.** `fixup_limit_repro.cyr`, `patra.cyr`,
   `patra_crash_repro.cyr` and `patra_standalone.cyr` document cc3 crashes resolved long
   ago, and their headers still give `cc3` run instructions. `patra.cyr` says "full suite
   pending codegen investigation", though PatraStore has run in the main suite since
-  1.1.0. All four still build and exit 0 on 6.7.9; only `patra_uninit.cyr` runs in CI.
+  1.1.0. All four still build and exit 0 on 6.7.18; only `patra_uninit.cyr` runs in CI.
   Each needs a retire-or-relabel call.
 - [ ] **`cyrius lint` untracked deferrals.** Six notes:
   - five are `XXX` false positives, on `\uXXXX` and on the junk-suffix test data in
@@ -88,21 +95,18 @@ No behaviour change.
 
 Patch releases as upstream lands.
 
-- [ ] **Back in lockstep at the next cyrius pin.** sigil is 3.13.12 against 6.7.9's
-  3.13.11 fold, by the user's call at 2.11.0. libro's thin files differ between the two
-  only in their version header. cyrius 6.7.10 folds 3.13.12, so moving the pin there
-  restores the tag-equals-fold invariant with no tag change.
-- [ ] **Adopt patra's fixes for the two issues filed from 2.10.8** (patra
-  `docs/development/issues/2026-10-14-*`):
-  - When patra ships a public `patra_initialized()`, `_ps_patra_ready`
-    (`src/patra_store.cyr`) can read it instead of patra's private `_patra_mtx`.
-  - When `tbl_create` checks the table name before the 63-table cap,
-    `_patrastore_ensure_table`'s `SELECT COUNT(*)` existence probe becomes redundant.
-
-  Keep `tests/patra_uninit.cyr` and `test_patrastore_open_full_database` either way.
+- [ ] **`_patrastore_ensure_table`'s existence probe after patra 1.16.1.** patra 1.16.1
+  checks the table name before the 63-table cap, so a full database that holds
+  `audit_entries` now answers `PATRA_ERR_EXISTS`, and the `SELECT COUNT(*)` probe runs only
+  when `CREATE TABLE` fails some other way. It is not redundant: per patra 1.16.2 an
+  autocommit statement whose sync fails answers `PATRA_ERR_IO` and has still been applied,
+  and the probe then finds the table and opens the store. Whether a store should open in
+  that state is open. (The other half of the 2.10.8 filing, `patra_initialized()`, was
+  adopted in 2.11.1.)
 - [ ] **Re-measure appends when patra makes its WAL probe free.** patra 1.16.0's
   per-statement recovery probe costs libro +5–7% on `patra_append_50_*` (2.11.0
-  CHANGELOG). The fix is on patra's roadmap.
+  CHANGELOG). 1.16.1–1.16.6 do not change it (2.11.1's A/B: −1.2% / −2.0%, ranges
+  overlapping). The fix is on patra's roadmap.
 
 ## 2.12.0 — Timestamp binding
 

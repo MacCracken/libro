@@ -5,6 +5,151 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.1] - 2026-10-28
+
+**cyrius 6.7.18, sigil 3.13.15 and patra 1.16.6: the latest published tags, and each one
+what 6.7.18 folds.** One source change, `patrastore_open` asking patra's new public
+`patra_initialized()`. No preimage, proof or signature format changes, so everything 2.11.0
+wrote verifies unchanged. ⚠ **The default binary grows 679,496 → 988,864 B (+45%).** Nearly
+all of it is read-only Unicode data that bayan, which reaches every build through
+sigil-mldsa, now carries and DCE cannot remove. See *Binary* below.
+
+### Changed
+
+- **Toolchain 6.7.9 → 6.7.18.** It builds with no new warning or error. `cyrius lint`
+  output over `src/*.cyr` is byte-identical to 2.11.0's under 6.7.9, and `cyrfmt --check` is
+  clean with 6.7.18's own `cyrfmt`.
+- **`[deps.sigil]` and `[deps.sigil_tpm]` 3.13.12 → 3.13.15; `[deps.patra]` 1.16.0 → 1.16.6.**
+  6.7.18 folds exactly these, so 2.11.0's one-patch-past-the-fold exception for sigil is gone.
+  `lib/patra.cyr` is byte-identical to the 6.7.18 fold.
+  - **What sigil 3.13.13–3.13.15 changes in libro's thin set:**
+    - `crypto_scratch`'s lanes become a pool (CYRIUS-2026-0040). A thread holds a lane only
+      while it uses one. `cbank()` takes nothing and answers the lane held, or 0.
+    - Ed25519, ML-DSA and SHA-256 index function-scope arrays, for which any lane is
+      correct. libro calls none of the lane-scoped entry points (ECDSA, the handle-less
+      Poly1305 stream) and never called `crypto_bank_set`, now a no-op.
+    - `sigil-tpm`'s child-process helper no longer dup2s or closes an fd onto itself. That
+      used to start the child with stdout or stderr closed whenever the caller had one closed.
+    - The rest is outside the thin set: X.509 nameConstraints (CYRIUS-2026-0042), the DER
+      over-reads and slice-bounded parsers, and the ChaCha20-Poly1305 forgery.
+  - **What patra 1.16.1–1.16.6 changes for libro:**
+    - Both issues libro filed at 2.10.8 are fixed (1.16.1). `patra_open` refuses before
+      `patra_init` (logs, returns 0, creates nothing) and there is a public
+      `patra_initialized()`. `CREATE TABLE` checks the name before the 63-table cap, so a
+      full database holding the table answers `PATRA_ERR_EXISTS`.
+    - Failed `fdatasync`s, refused writes and refused allocations are reported, not taken
+      for success (1.16.2). An autocommit statement that fails this way has still been
+      applied.
+    - Malformed BYTES / TEXT chains and refs read as `PATRA_ERR_PAGE` (1.16.5).
+    - A negative `patra_bind_text` or insert length is `PATRA_ERR_PARAM` (1.16.6). libro
+      binds `str_len` / `strlen` values only, so it never passes one.
+- **`_ps_patra_ready` asks `patra_initialized()`** instead of reading patra's private
+  `_patra_mtx`, so `src/` no longer depends on a patra internal.
+  - `test_patrastore_open_refuses_without_patra_init` now clears the flag behind it
+    (`_patra_inited`).
+  - Since patra itself now refuses, the test's two open assertions would pass without libro's
+    guard. Two new assertions on `_ps_patra_ready` pin the guard. Mutation-checked: with the
+    guard forced to report "ready", exactly one assertion fails.
+- **Two comments corrected for patra 1.16.1:** `_patrastore_ensure_table` and
+  `test_patrastore_open_full_database` said a full database answers `PATRA_ERR_FULL`. The
+  `SELECT COUNT(*)` probe stays, because it is not redundant. An autocommit `CREATE TABLE`
+  whose sync fails answers `PATRA_ERR_IO` with the table created, and the probe then finds it.
+  The roadmap records the open question of whether a store should open in that state.
+- **Tests:** 817 → 819 default and 829 → 831 with `-D LIBRO_TPM` (the two assertions above).
+- **Lock counts:** a full re-sync gives 117 (118 with `tpm`), unchanged. CI's
+  `cyrius deps`-only resolve goes 58 / 59 → 66 / 67: `lib/math.cyr` and the seven
+  `lib/unicode/` files.
+  - New at 6.7.18: a bare `cyrius deps` after a `--features tpm` resolve warns about it
+    itself. It names `lib/sigil_tpm_sigil-tpm.cyr` as outside the declared footprint.
+  - `rm cyrius.lock && cyrius deps` still gives the clean default lock (2 commit-pinned).
+    The tool's suggested `rm <file> && cyrius deps --lock` keeps the tpm commit pin.
+  - The first resolve after the tag bump keeps the old commit pins and says so (fail-closed).
+    Delete the gitignored `cyrius.lock` to re-pin.
+- `dist/libro.cyr` regenerated (the version line and `_ps_patra_ready`). `dist/libro.deps` is
+  unchanged (`hashmap`).
+
+### Binary
+
+**988,864 B default (+309,368) and 1,007,848 B with `tpm`.** DCE-off: 1,791,680 B. Capacity:
+`fn_table 3498`, `identifiers 94961`, `var_table 1503`. The growth splits as follows, measured
+by moving one pin at a time under the same toolchain:
+
+| Step | Binary | Code | `string_data` |
+|---|---|---|---|
+| 2.11.0 pins, cyrius 6.7.9 | 679,496 | 535,248 | 58,232 |
+| 2.11.0 pins, cyrius 6.7.18 | 963,120 | 535,048 | 400,287 |
+| + sigil 3.13.15 | 963,816 | 534,872 | 400,440 |
+| + patra 1.16.6 (= 2.11.1) | 988,864 | 558,568 | 400,629 |
+
+- **+283,624 B comes from the 6.7.18 stdlib, and it is data, not code.** bayan 1.9.0 (folded
+  from 6.7.13) added a markdown parser. Its `# Requires` block pulls all seven
+  `lib/unicode/` files, and their tables are top-level string `var`s (about 307 KB). DCE
+  removes unreachable functions, not global initializers, so the tables stay whether or not
+  anything reads them.
+- **bayan reaches every libro build through `sigil-mldsa`'s `# Requires`.** libro's own
+  modules call no bayan function. sigil-mldsa calls bayan's legacy `u256_*` compat names,
+  which only the monolith defines.
+- **The fix is upstream.** Either sigil-mldsa requires `bayan-bigint` and calls
+  `bayan_u256_*`, or DCE drops unread global initializers. Every consumer of sigil-mldsa
+  carries the same tables. A minimal `[deps.libro]` consumer measures 653,520 B.
+- **+25,048 B is patra 1.16.1–1.16.6's code** (the failure-path and allocation checks).
+  sigil accounts for +696 B.
+
+### Audited — the 6.7.10–6.7.18 silent-semantics changes do not reach libro
+
+A comment- and string-stripped scan of `src/`, `benches/`, `fuzz/` and `tests/` (32 files)
+checked each shape that compiles cleanly but now computes something else:
+
+| Change | Shape | What libro has |
+|---|---|---|
+| Narrow struct fields packed at their width (6.7.10); narrow args, globals and derefs narrowed (6.7.16) | `u8` / `u16` / `u32` / `f32` / typed `*T` annotations | None anywhere |
+| `Str` methods on a literal read garbage before 6.7.14 | `x.eq("lit")`, `.contains` / `.cat` / `.starts_with` / `.ends_with` | No method-call syntax; `str_eq()` is unchanged |
+| A constant-initialized global no longer re-stores at startup (6.7.14 FE-15) | `var r = f();` followed by `var G = C;` that `f` writes | Each harness's `var r = main();` is its last declaration |
+| Constant redeclaration folds (6.7.16 ZN-1); duplicate `var` now warns (6.7.12) | A top-level `var` declared twice in a file | None |
+| A value builtin as a statement is an error (6.7.17) | `load8(p);`, `sizeof(x);` | None |
+
+The DCE fixes (6.7.14 compaction, 6.7.18's reachability past 512 rounds) and the tail-call fix
+(6.7.17) change code layout only. The suite, the TPM build, fuzz and every repro pass either
+side.
+
+### Performance
+
+There is no change outside noise. Interleaved A/B with 2.11.0 (its pins under 6.7.9), five
+runs each, all 33 benches; every per-run range overlaps:
+
+| Bench | Median change | Note |
+|---|---|---|
+| `patra_append_50_full` / `_batch` | −2.0% / −1.2% | patra 1.16.0's WAL probe cost is unchanged |
+| `patra_by_source_50`, `patra_load_all_50` | +1.2%, +1.5% | — |
+| `sha256_64b`, `entry_hash`, `chain_*`, `merkle_*` | −2.5 to +0.2% | sigil's lane pool does not show |
+| `sign_entry`, `verify_sig`, `mldsa65_verify_sig`, `hybrid_verify_sig` | −3.7 to −0.2% | — |
+| `proof_build_unsigned_25` | +11.8%, then **+0.4%** over ten more rounds | The first was noise |
+| `mldsa65_sign_entry`, `hybrid_sign_entry` | +58%, −4.4% | Ranges 2.6–16.0 ms and 5.3–12.0 ms: the known noise row (roadmap) |
+
+### Docs
+
+README, CLAUDE.md, quickstart, `dependency-watch` and `standards-mapping` name 6.7.18 /
+3.13.15 / 1.16.6. `standards-mapping` had still named sigil 3.12.9 and patra 1.13.8. The
+roadmap:
+- moves 2.11.1's planned documentation pass to 2.11.2;
+- closes the lockstep and `patra_initialized()` items;
+- records the bayan measurement and the open probe question.
+
+### Verification
+
+- **Tests:** default 819/0 and `-D LIBRO_TPM` 831/0, locally and on a sibling-free copy
+  resolved by `cyrius deps` alone. The TPM build prints only the documented
+  `_sigil_random_fill` duplicate.
+- **Other harnesses:** `tests/patra_uninit.cyr` exits 0, fuzz is clean, all 33 benches run,
+  and all five `tests/` repros build with no warning and exit 0.
+- **Gates:** manifest completeness, the three raw-offset gates and the raw-syscall gate are
+  clean, run from `ci.yml`'s own step scripts.
+- **dist:** `cyrius distlib` on the fresh copy reproduces `dist/libro.cyr` and
+  `dist/libro.deps` byte for byte.
+- **Consumer:** a minimal project declaring `[deps.libro]` (built through `CYRIUS_LOCAL=libro`)
+  resolves libro's sigil and patra pins with it. It builds, opens a PatraStore and verifies a
+  chain.
+
 ## [2.11.0] - 2026-10-14
 
 **cyrius 6.7.9, sigil 3.13.12 and patra 1.16.0, the latest published tags.** No libro source
