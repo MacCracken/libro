@@ -72,7 +72,20 @@ fn _fs_file_size(fd) {
 # deleted, renamed, or permission-stripped audit log therefore "verified
 # clean", which is precisely the outcome an attacker deleting the log wants.
 # Use libro_is_error() on the result.
+#
+# A record that does not parse is skipped, with a warning, so a damaged log
+# can still be read. That makes this a reader, not a verifier: a malformed
+# LAST record reads as a log one entry shorter, and nothing downstream can
+# tell. To check a log, use filestore_load_and_verify or
+# filestore_verify_streamed, which refuse it (2.11.3).
 fn filestore_load_all_or_err(s) {
+    return _filestore_load(s, 0);
+}
+
+# The loader behind both. `strict` 1 turns a record that does not parse into a
+# LIBRO_ERR_JSON error whose index is the record's position (blank lines do not
+# count); `strict` 0 skips it and warns.
+fn _filestore_load(s, strict) {
     sakshi_info("filestore: load all", 19);
     var cpath = filestore_cpath(s);
     var fd = file_open(cpath, O_RDONLY, 0);
@@ -113,6 +126,7 @@ fn filestore_load_all_or_err(s) {
 
     # Parse JSON Lines
     var pos = 0;
+    var rec = 0;
     while (pos < total_read) {
         # Find end of line
         var eol = pos;
@@ -133,7 +147,13 @@ fn filestore_load_all_or_err(s) {
             var e = _filestore_parse_entry(line_str);
             if (e != 0) {
                 vec_push(entries, e);
+            } elif (strict == 1) {
+                sakshi_error("filestore: record does not parse", 32);
+                return _filestore_err_record(rec);
+            } else {
+                sakshi_warn("filestore: skipped a record that does not parse", 47);
             }
+            rec += 1;
         }
 
         pos = eol + 1;
@@ -141,6 +161,20 @@ fn filestore_load_all_or_err(s) {
 
     store64(s + 8, vec_len(entries));
     return entries;
+}
+
+# The error a verifier returns for a record that does not parse. `rec` is the
+# record's 0-based position in the log, blank lines not counted.
+#
+# 2.11.3 — the readers used to skip such a record and carry on. Mid-log that is
+# caught anyway (the next entry's prev_hash no longer links), but a malformed
+# LAST record left a log one entry shorter that verified clean, so breaking the
+# newest record's JSON hid any edit to it. A record torn by a crash mid-append
+# fails here too, by design: the log holds bytes that are not an entry.
+fn _filestore_err_record(rec) {
+    var err = error_new(LIBRO_ERR_JSON, "filestore: record does not parse");
+    error_set_index(err, rec);
+    return err;
 }
 
 # Legacy shape: always a vec, empty when the log could not be read.
@@ -200,9 +234,10 @@ fn filestore_is_empty(s) {
 # ================================================================
 
 fn filestore_load_and_verify(s) {
-    var entries = filestore_load_all_or_err(s);
+    var entries = _filestore_load(s, 1);
     # 2.8.11 — propagate an unreadable log instead of verifying an empty vec
-    # and reporting success. See filestore_load_all_or_err.
+    # and reporting success. See filestore_load_all_or_err. 2.11.3 — a record
+    # that does not parse is an error here too, not a skipped line.
     if (libro_is_error(entries) == 1) { return entries; }
     var err = verify_chain(entries, 0);
     if (err != 0) {
@@ -272,21 +307,26 @@ fn filestore_verify_streamed(s, chunk_size) {
                 if (line_len > 0) {
                     var line_str = str_clone(str_new(_fsvs_buf + consumed, line_len));
                     var e = _filestore_parse_entry(line_str);
-                    if (e != 0) {
-                        vec_push(chunk, e);
-                        if (vec_len(chunk) >= chunk_size) {
-                            var err = _fsvs_verify_chunk(chunk, offset, prev_tail_hash);
-                            if (err != 0) {
-                                file_unlock(fd);
-                                file_close(fd);
-                                return err;
-                            }
-                            var last = vec_get(chunk, vec_len(chunk) - 1);
-                            prev_tail_hash = entry_hash(last);
-                            verified = verified + vec_len(chunk);
-                            offset = offset + vec_len(chunk);
-                            chunk = vec_new();
+                    if (e == 0) {
+                        # 2.11.3 — was skipped; see _filestore_err_record.
+                        sakshi_error("filestore: verify streamed — record does not parse", 52);
+                        file_unlock(fd);
+                        file_close(fd);
+                        return _filestore_err_record(offset + vec_len(chunk));
+                    }
+                    vec_push(chunk, e);
+                    if (vec_len(chunk) >= chunk_size) {
+                        var err = _fsvs_verify_chunk(chunk, offset, prev_tail_hash);
+                        if (err != 0) {
+                            file_unlock(fd);
+                            file_close(fd);
+                            return err;
                         }
+                        var last = vec_get(chunk, vec_len(chunk) - 1);
+                        prev_tail_hash = entry_hash(last);
+                        verified = verified + vec_len(chunk);
+                        offset = offset + vec_len(chunk);
+                        chunk = vec_new();
                     }
                 }
                 consumed = nl + 1;
@@ -313,7 +353,7 @@ fn filestore_verify_streamed(s, chunk_size) {
         }
 
         if (buf_fill >= _fsvs_buf_size) {
-            sakshi_error("filestore: verify streamed — line exceeds 64KB", 47);
+            sakshi_error("filestore: verify streamed — line exceeds 64KB", 48);
             file_unlock(fd);
             file_close(fd);
             # 2.8.11 — was `return 0`, i.e. "verified successfully, zero

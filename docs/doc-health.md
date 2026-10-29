@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — libro
 
-> **Last refresh**: 2026-10-28 (libro 2.11.2 documentation pass, at cyrius 6.7.18 / sigil 3.13.15 / patra 1.16.6). Every doc with version-tied claims was re-checked against the tree; the per-doc changes are in the CHANGELOG `[2.11.2]` *Docs* section.
+> **Last refresh**: 2026-10-28 (libro 2.11.3, at cyrius 6.7.18 / sigil 3.13.15 / patra 1.16.6). The full re-check was 2.11.2's documentation pass (CHANGELOG `[2.11.2]` *Docs*); 2.11.3 updated the docs that state test counts, sizes or what the JSONL readers return.
 > **Scope**: This repo only (`libro`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo dep pin drift lives in [`development/dependency-watch.md`](development/dependency-watch.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Libro is a cryptographic audit-chain library that ten Cyrius repos pin (agnostic, argonaut, bote, cyrius-yeomans-descent, daimon, kybernet, nein, phylax, stiva, t-ron; checked 2026-10-28) — stale API / trust-model / verification docs propagate downstream, so doc currency carries weight. Most of the ~28 files are load-bearing.
@@ -34,14 +34,14 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-10-28 | ✅ Fresh | Test counts 819 / 831; ADR list marks 0003 and 0004 superseded. |
-| `CHANGELOG.md` | 2026-10-28 | ✅ Fresh | Source of truth for shipped work, through **2.11.2**. |
-| `CLAUDE.md` | 2026-10-28 | ✅ Fresh | Version 2.11.2; consumer list re-checked 2026-10-28 (agnostic in, aegis out); Project Structure block corrected to 21 modules + `chain_io`; fixup-table cap noted as growable since cyrius 6.2.0; quirks header (6.7.18). |
-| `CONTRIBUTING.md` | 2026-10-28 | ✅ Fresh | Toolchain pin 6.7.18, expected 819 passed. |
-| `SECURITY.md` | 2026-10-28 | ✅ Fresh, one gap | Attack-surface table covers ML-DSA-65 / hybrid, the 2.8.11 / 2.8.12 canonical-form and Merkle classes, `lib/ct.cyr`, `getrandom` UUIDs and the unverified RFC 3161 token; fuzz 12 targets; all four audits listed. The *Supported Versions* table still reads 2.0.x — see *Known gaps*. |
+| `README.md` | 2026-10-28 | ✅ Fresh | Test counts 848 / 860; ADR list marks 0003 and 0004 superseded. |
+| `CHANGELOG.md` | 2026-10-28 | ✅ Fresh | Source of truth for shipped work, through **2.11.3**. |
+| `CLAUDE.md` | 2026-10-28 | ✅ Fresh | Version 2.11.3, tests 848 / 860, binary 994,328 B; consumer list re-checked 2026-10-28 (agnostic in, aegis out); Project Structure block corrected to 21 modules + `chain_io`; fixup-table cap noted as growable since cyrius 6.2.0; quirks header (6.7.18). |
+| `CONTRIBUTING.md` | 2026-10-28 | ✅ Fresh | Toolchain pin 6.7.18, expected 848 passed. |
+| `SECURITY.md` | 2026-10-28 | ✅ Fresh, one gap | Attack-surface table covers ML-DSA-65 / hybrid, the 2.8.11 / 2.8.12 canonical-form and Merkle classes, `lib/ct.cyr`, `getrandom` UUIDs and the unverified RFC 3161 token; the 2.11.3 malformed-record refusal; fuzz 12 targets; all four audits listed. The *Supported Versions* table still reads 2.0.x — see *Known gaps*. |
 | `CODE_OF_CONDUCT.md` | 2026-03-21 | 🔵 No version-tied claims | Standard. |
 | `DEPS-PATTERN.md` | 2026-10-14 | 🔵 No version-tied claims | The `dist/libro.cyr` distribution contract. Patra is the reference. |
-| `VERSION` | 2026-10-28 | ✅ Fresh | `2.11.2` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-10-28 | ✅ Fresh | `2.11.3` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | 2026-04-09 | 🔵 No version-tied claims | GPL-3.0-only. |
 
 ---
@@ -50,9 +50,9 @@ Pattern lifted from the agnosys ledger ([`agnosys/docs/doc-health.md`](https://g
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `roadmap.md` | 2026-10-28 | ✅ Fresh | Forward-facing only. The 2.11.2 section is done and removed; the bayan Unicode-table item moved to *2.x.x — Blocked upstream*; the closed patra-issues line dropped; a 2.11.x item added for the JSONL readers' malformed-last-record gap; line references re-pointed after this pass. |
-| `threat-model.md` | 2026-10-28 | ✅ Fresh, one gap | TPM boundary is sigil-tpm; supply chain at 6.7.18 / 3.13.15 / 1.16.6; new T15 (canonical form), T16 (Merkle and proof binding), T17 (unverified RFC 3161 token); T1 residual records the JSONL readers' malformed-last-record gap. The residual table and T6 disagree on pre-zeroize reads — see *Known gaps*. |
-| `dependency-watch.md` | 2026-10-28 | ✅ Fresh, one gap | Counts 819 / 831 and capacity at 2.11.2; bayan Unicode-table section; `sv_verify_batch` "inherits" claim corrected; agnosys retirement dated 2.7.5. Its *Crypto primitives history* stops at 2.8.3 — see *Known gaps*. |
+| `roadmap.md` | 2026-10-28 | ✅ Fresh | Forward-facing only. The 2.11.2 section is done and removed; the bayan Unicode-table item moved to *2.x.x — Blocked upstream*; the closed patra-issues line dropped; the 2.11.x JSONL-readers item added, then closed by 2.11.3; line references re-pointed after this pass. |
+| `threat-model.md` | 2026-10-28 | ✅ Fresh, one gap | TPM boundary is sigil-tpm; supply chain at 6.7.18 / 3.13.15 / 1.16.6; new T15 (canonical form), T16 (Merkle and proof binding), T17 (unverified RFC 3161 token); T1 residual records the JSONL readers' malformed-last-record gap and its 2.11.3 fix (verifiers and import refuse; loaders still skip). The residual table and T6 disagree on pre-zeroize reads — see *Known gaps*. |
+| `dependency-watch.md` | 2026-10-28 | ✅ Fresh, one gap | Counts 848 / 860 and capacity at 2.11.3; bayan Unicode-table section; `sv_verify_batch` "inherits" claim corrected; agnosys retirement dated 2.7.5. Its *Crypto primitives history* stops at 2.8.3 — see *Known gaps*. |
 
 ---
 
@@ -97,10 +97,10 @@ Date-stamped point-in-time reports; existing reports are not edited (the date is
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `quickstart.md` | 2026-10-28 | ✅ Fresh | In-repo include list mirrors `src/main.cyr` (thin sigil auto-included, `thread_local` before it, no `lib/sigil.cyr`); every snippet compiled and run at 2.11.2. |
-| `testing.md` | 2026-10-28 | ✅ Fresh | Counts 819 / 831; the pinned ML-DSA bench input documented beside the bench table. |
-| `integration.md` | 2026-10-28 | ✅ Fresh, one gap | Perf tables re-measured at 2.11.2; ML-DSA per-(key, message) cost explained; hybrid shipped 2.3.0; the "prepared SELECT / COUNT" section rewritten to what `patra_store.cyr` does since 2.8.9. The Landlock example does not compile — see *Known gaps*. |
-| `tpm-anchors.md` | 2026-10-28 | ✅ Fresh | Full re-sync to restore the default lib; tpm2-tools by absolute path; PCR index bounds; fixed sealed-file names; its *Roadmap* section replaced by a pointer to roadmap 2.16.0. |
+| `quickstart.md` | 2026-10-28 | ✅ Fresh | Expected 848 passed; `filestore_verify_streamed` comment names the malformed-record error; in-repo include list mirrors `src/main.cyr` (thin sigil auto-included, `thread_local` before it, no `lib/sigil.cyr`); every snippet compiled and run at 2.11.2. |
+| `testing.md` | 2026-10-28 | ✅ Fresh | Counts 848 / 860; the pinned ML-DSA bench input documented beside the bench table. |
+| `integration.md` | 2026-10-28 | ✅ Fresh, one gap | `filestore_load_and_verify` example names the malformed-record error (2.11.3); perf tables re-measured at 2.11.2; ML-DSA per-(key, message) cost explained; hybrid shipped 2.3.0; the "prepared SELECT / COUNT" section rewritten to what `patra_store.cyr` does since 2.8.9. The Landlock example does not compile — see *Known gaps*. |
+| `tpm-anchors.md` | 2026-10-28 | ✅ Fresh | Counts 848 / 860; full re-sync to restore the default lib; tpm2-tools by absolute path; PCR index bounds; fixed sealed-file names; its *Roadmap* section replaced by a pointer to roadmap 2.16.0. |
 
 ---
 
@@ -153,4 +153,4 @@ When the bucket counts at the top drift, refresh the at-a-glance table. Record w
 
 ---
 
-*Last refresh: 2026-10-28 (libro 2.11.2 documentation pass). Refresh in place when docs are touched.*
+*Last refresh: 2026-10-28 (libro 2.11.3). Refresh in place when docs are touched.*

@@ -87,7 +87,7 @@ CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_t
 rm -rf lib && cyrius lib sync --full && cyrius deps
 ```
 
-Expect `831 passed, 0 failed` from `./build/libro_tpm` (819 from the
+Expect `860 passed, 0 failed` from `./build/libro_tpm` (848 from the
 default build).
 
 Runtime requirements for the TPM-opt-in build to actually *seal*:
@@ -210,8 +210,8 @@ policy and discarding the old sealed files.
 
 libro's CI runs both builds:
 
-- **Default build**: 819 assertions pass, no TPM surface resolved or linked.
-- **`-D LIBRO_TPM` build**: 831 assertions pass, exercises the API
+- **Default build**: 848 assertions pass, no TPM surface resolved or linked.
+- **`-D LIBRO_TPM` build**: 860 assertions pass, exercises the API
   surface on hosts without tpm2-tools. The hardware-roundtrip test
   is best-effort: it logs a skip if the host can't actually seal,
   otherwise it pins the full success path.

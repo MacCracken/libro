@@ -1,6 +1,6 @@
 # Libro Threat Model
 
-**Last updated:** 2026-10-28 (libro 2.11.2)
+**Last updated:** 2026-10-28 (libro 2.11.3)
 **Status:** Living document — updated on material change to trust
 boundaries or defended classes.
 
@@ -131,13 +131,19 @@ rewrite every downstream entry's `prev_hash` could produce a
 self-consistent tampered chain. Defense against this requires an
 external anchor (T8).
 
-The JSONL readers (`filestore_load_all`, `filestore_verify_streamed`,
-`chain_import`) skip a line they cannot parse. Mid-file that is still
-caught, since the successor's `prev_hash` no longer links, but a
-malformed *last* line reads as a log one entry shorter and verifies
-clean: tampering with the newest entry by breaking its JSON is
-indistinguishable from truncating it, and only a signed tree head or
-an anchor (T8) reveals either. Tracked as a roadmap 2.11.x item.
+Through 2.11.2 the JSONL readers skipped a line they could not
+parse. Mid-file that was caught anyway, since the successor's
+`prev_hash` no longer links, but a malformed *last* line read as a
+log one entry shorter that verified clean, so breaking the newest
+record's JSON hid any edit to it. Since 2.11.3 the verifiers
+(`filestore_verify_streamed`, `filestore_load_and_verify`) return a
+`LIBRO_ERR_JSON` error naming the record, and `chain_import` fails.
+The plain loaders (`filestore_load_all`, `filestore_load_all_or_err`,
+`filestore_query`) still skip it, with a warning, so a damaged log
+stays readable; a consumer that loads and then runs `verify_chain`
+itself keeps the old exposure. Truncation proper (records removed,
+not broken) is still detectable only against a signed tree head or an
+anchor (T8).
 
 ### T2 — Entry forgery (MITIGATED)
 
@@ -213,8 +219,9 @@ file, or truncated input to crash or hang the parser / verifier.
 - `filestore_verify_streamed` uses a bounded 64KB buffer per chunk
   — unbounded-memory DoS is not possible.
 - Lines > 64KB return an explicit error rather than continuing.
-- Malformed entries are skipped, not abort-the-verify (parse
-  returns 0, line is not included in chunk).
+- A record that does not parse ends the verify with a
+  `LIBRO_ERR_JSON` error naming it (2.11.3); it used to be skipped,
+  which is the T1 gap below.
 - The canonical-JSON validator caps nesting at `CJH_MAX_DEPTH`
   (128) before any emit runs, and object keys sort with a merge
   sort (2.8.11). Before that, ~130 KB of nested array opens crashed

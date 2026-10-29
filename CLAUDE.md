@@ -12,7 +12,7 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.11.2 (2026-10-28)
+- **Version**: 2.11.3 (2026-10-28)
 - **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.7.18 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -28,8 +28,8 @@ Ten repos pin `[deps.libro]` directly (verified 2026-10-28 against the sibling c
 - **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra (agnosys dropped at the agnosys → agnodrm decomposition — TPM now sourced from sigil ≥ 3.9.0)
 - **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split under cc5 5.4.2's then-16384 fixup-table cap, which cyrius 6.2.0 made growable; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
-- **Tests**: 819 default / 831 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 988,864 B default (2.11.2, measured; 1,007,848 B with `tpm`). Capacity headroom: `fn_table 3498 / 131072`, `identifiers 94961 / 8388608`, `var_table 1503 / 1048576` (`CYRIUS_STATS=1`). **libro's library modules call no bayan function** (measured at 2.11.0: the canonical-JSON hasher has its own decoder, `json_str_decode` in `src/entry.cyr`); only `fuzz/fuzz_libro.fcyr` calls `json_parse`. The bayan monolith reaches every build anyway through sigil-mldsa's `# Requires` block (it calls bayan's legacy `u256_*` compat names, which only the monolith defines), and DCE removes what nothing calls: 1,791,680 B with `CYRIUS_DCE=0`, 988,864 B with `=1`. **What DCE cannot remove is ~340 KB of `.rodata`** (`string_data` 400,629 vs 58,232 at 6.7.9): since bayan 1.9.0 (folded at cyrius 6.7.13) the monolith's `# Requires` pulls all seven `lib/unicode/` files for its markdown parser, and their tables are top-level string `var`s (~307 KB), which are kept whether or not anything reads them. Code size did not move (558,568 B). The fix is upstream, not a libro manifest edit: sigil-mldsa requiring `bayan-bigint` (it would need the `bayan_u256_*` names), or DCE dropping unreferenced global initializers. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Tests**: 848 default / 860 with `-D LIBRO_TPM` (all pass)
+- **Binary**: 994,328 B default (2.11.3, measured; 1,013,312 B with `tpm`). Capacity headroom: `fn_table 3508 / 131072`, `identifiers 95296 / 8388608`, `var_table 1503 / 1048576` (`CYRIUS_STATS=1`). **libro's library modules call no bayan function** (measured at 2.11.0: the canonical-JSON hasher has its own decoder, `json_str_decode` in `src/entry.cyr`); only `fuzz/fuzz_libro.fcyr` calls `json_parse`. The bayan monolith reaches every build anyway through sigil-mldsa's `# Requires` block (it calls bayan's legacy `u256_*` compat names, which only the monolith defines), and DCE removes what nothing calls: 1,791,680 B with `CYRIUS_DCE=0`, 988,864 B with `=1`. **What DCE cannot remove is ~340 KB of `.rodata`** (`string_data` 400,629 vs 58,232 at 6.7.9): since bayan 1.9.0 (folded at cyrius 6.7.13) the monolith's `# Requires` pulls all seven `lib/unicode/` files for its markdown parser, and their tables are top-level string `var`s (~307 KB), which are kept whether or not anything reads them. Code size did not move (558,568 B). The fix is upstream, not a libro manifest edit: sigil-mldsa requiring `bayan-bigint` (it would need the `bayan_u256_*` names), or DCE dropping unreferenced global initializers. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` + `dist/libro.deps` sidecar — produced by `cyrius distlib`, ~7.7k lines. Since cyrius 6.6.18 the bundle opens with a compile-verified `# Requires` block and the sidecar lists only the stdlib leaves the bundle needs beyond what sigil's and patra's own `# Requires` blocks bring (`hashmap` alone since 2.10.7). CI diffs both files. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -46,7 +46,7 @@ No external deps beyond the Cyrius toolchain.
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "819 passed, 0 failed"
+# Run tests — expect "848 passed, 0 failed"
 ./build/libro
 
 # Benchmarks (three binaries — cc5 fixup table limit forced the core/io split
@@ -56,7 +56,7 @@ CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr  build/libro_bench_core  && ./
 CYRIUS_DCE=1 cyrius build benches/libro_io.bcyr    build/libro_bench_io    && ./build/libro_bench_io
 CYRIUS_DCE=1 cyrius build benches/libro_proof.bcyr build/libro_bench_proof && ./build/libro_bench_proof
 
-# TPM opt-in build — expect "831 passed, 0 failed".
+# TPM opt-in build — expect "860 passed, 0 failed".
 # Needs the `tpm` feature on BOTH commands: `cyrius deps` to resolve the
 # optional [deps.sigil_tpm] fold, and `cyrius build` to compile it in.
 # Omit it from `deps` and the build fails with `undefined variable 'TPM_SHA256'`.
@@ -133,7 +133,7 @@ from findings → post-review benchmarks → docs audit → repeat if heavy.
 ## Project Structure
 
 ```
-src/main.cyr            Entry point — 226 test functions (819 / 831 assertions) +
+src/main.cyr            Entry point — 231 test functions (848 / 860 assertions) +
                         21 module includes (+ tpm_anchor behind -D LIBRO_TPM)
 src/*.cyr               Library modules (21 files: error, hasher, entry, verify,
                         query, retention, chain, store, export, review, merkle,

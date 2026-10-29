@@ -3712,12 +3712,167 @@ fn test_filestore_verify_streamed_unterminated_tail() {
 
     var fs = filestore_open(path);
     var verified = filestore_verify_streamed(fs, 4);
-    # verified == 0 because the "line" doesn't parse to a valid entry.
     # The assertion we care about is reachability — if the function hangs,
-    # this line is never reached and the test suite times out.
-    assert(verified == 0, "unterminated malformed tail: verify returns 0, does not hang");
+    # this line is never reached and the test suite times out. Since 2.11.3
+    # the "line" is a record that does not parse, so the result is an error
+    # naming record 0 (it was the count 0, which read as an empty clean log).
+    assert(libro_is_error(verified) == 1,
+      "unterminated malformed tail: verify returns, with an error");
+    assert(_t_err_code(verified) == LIBRO_ERR_JSON, "unterminated tail: code is JSON");
+    assert(_t_err_index(verified) == 0, "unterminated tail: record 0");
 
     sys_unlink("/tmp/libro_test_fs_stream_unterm.jsonl");
+}
+
+# ── 2.11.3: a record that does not parse ─────────────────────────────
+#
+# The JSONL readers skipped such a record. Mid-log that was caught anyway,
+# since the next entry's prev_hash no longer links, but a malformed LAST
+# record left a log one entry shorter that verified clean: breaking the newest
+# record's JSON hid any edit to it. The verifiers and chain_import now refuse;
+# the plain loaders still skip, so a damaged log stays readable.
+
+# error_code / error_index, or -1 when `r` is not an error object. A regression
+# that hands back a count instead must fail the assertion, not segfault the
+# suite by dereferencing the count.
+fn _t_err_code(r) {
+    if (libro_is_error(r) == 0) { return -1; }
+    return error_code(r);
+}
+
+fn _t_err_index(r) {
+    if (libro_is_error(r) == 0) { return -1; }
+    return error_index(r);
+}
+
+# Write `n` linked entries to `cpath` as JSONL. Record `bad` (-1 for none) gets
+# junk before its opening brace; a blank line follows record `blank_after` (-1
+# for none). `header` 1 writes a chain_export header first.
+fn _t_jsonl_write(cpath, n, bad, blank_after, header) {
+    var fd = file_open(cpath, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    if (header == 1) {
+        var h = "{\"_libro_chain\":1,\"prev_chain_hash\":\"\",\"max_capacity\":1000}\n";
+        file_write(fd, h, strlen(h));
+    }
+    var prev = libro_empty_str();
+    var i = 0;
+    while (i < n) {
+        var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), str_from("{}"), prev);
+        var sb = str_builder_new();
+        if (i == bad) { str_builder_add_cstr(sb, "ZZZ"); }
+        _filestore_entry_json(sb, e);
+        str_builder_add_cstr(sb, "\n");
+        if (i == blank_after) { str_builder_add_cstr(sb, "\n"); }
+        var line = str_builder_build(sb);
+        file_write(fd, str_data(line), str_len(line));
+        prev = entry_hash(e);
+        i += 1;
+    }
+    file_close(fd);
+    return 0;
+}
+
+# The broken record really is unparseable; without this every test below
+# could pass by testing nothing.
+fn test_jsonl_broken_record_does_not_parse() {
+    var e = entry_new(SEV_INFO, str_from("s"), str_from("a"), str_from("{}"),
+      libro_empty_str());
+    var sb = str_builder_new();
+    _filestore_entry_json(sb, e);
+    var good = str_builder_build(sb);
+    assert(_filestore_parse_entry(good) != 0, "control: the record parses");
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "ZZZ");
+    _filestore_entry_json(sb2, e);
+    assert(_filestore_parse_entry(str_builder_build(sb2)) == 0,
+      "junk before the brace does not parse");
+}
+
+fn test_filestore_verify_streamed_rejects_malformed_record() {
+    var path = str_from("/tmp/libro_test_2113_vs.jsonl");
+    var cpath = _entry_to_cstr(path);
+    var fs = filestore_open(path);
+
+    _t_jsonl_write(cpath, 3, -1, -1, 0);
+    assert(filestore_verify_streamed(fs, 8) == 3, "control: intact log verifies 3");
+
+    _t_jsonl_write(cpath, 3, 2, -1, 0);
+    var r = filestore_verify_streamed(fs, 8);
+    assert(libro_is_error(r) == 1, "malformed last record is an error, not the count 2");
+    assert(_t_err_code(r) == LIBRO_ERR_JSON, "malformed last record: code is JSON");
+    assert(_t_err_index(r) == 2, "malformed last record: index 2");
+
+    # chunk_size 1 flushes every record, so the index comes from `offset`.
+    var r1 = filestore_verify_streamed(fs, 1);
+    assert(libro_is_error(r1) == 1, "chunk 1: malformed last record is an error");
+    assert(_t_err_index(r1) == 2, "chunk 1: index 2");
+
+    _t_jsonl_write(cpath, 3, 1, -1, 0);
+    var rm = filestore_verify_streamed(fs, 8);
+    assert(libro_is_error(rm) == 1, "malformed middle record is an error");
+    assert(_t_err_code(rm) == LIBRO_ERR_JSON, "malformed middle record: code is JSON");
+    assert(_t_err_index(rm) == 1, "malformed middle record: index 1");
+
+    _t_jsonl_write(cpath, 3, -1, 0, 0);
+    assert(filestore_verify_streamed(fs, 8) == 3, "a blank line is not a record");
+
+    sys_unlink("/tmp/libro_test_2113_vs.jsonl");
+}
+
+fn test_filestore_load_and_verify_rejects_malformed_record() {
+    var path = str_from("/tmp/libro_test_2113_lv.jsonl");
+    var cpath = _entry_to_cstr(path);
+    var fs = filestore_open(path);
+
+    _t_jsonl_write(cpath, 3, 2, -1, 0);
+    var r = filestore_load_and_verify(fs);
+    assert(libro_is_error(r) == 1, "load_and_verify: malformed last record is an error");
+    assert(_t_err_code(r) == LIBRO_ERR_JSON, "load_and_verify: code is JSON");
+    assert(_t_err_index(r) == 2, "load_and_verify: index 2");
+
+    _t_jsonl_write(cpath, 3, -1, 0, 0);
+    var ok = filestore_load_and_verify(fs);
+    assert(libro_is_error(ok) == 0, "load_and_verify: a blank line is not a record");
+    assert(vec_len(ok) == 3, "load_and_verify: blank line, 3 entries");
+
+    sys_unlink("/tmp/libro_test_2113_lv.jsonl");
+}
+
+# The plain loaders are readers: they skip the record, so a damaged log can
+# still be read. That they do NOT refuse is the contract, so it is pinned.
+fn test_filestore_load_all_skips_malformed_record() {
+    var path = str_from("/tmp/libro_test_2113_la.jsonl");
+    var cpath = _entry_to_cstr(path);
+    var fs = filestore_open(path);
+
+    _t_jsonl_write(cpath, 3, 2, -1, 0);
+    var r = filestore_load_all_or_err(fs);
+    assert(libro_is_error(r) == 0, "load_all_or_err: a malformed record is not an error");
+    assert(vec_len(r) == 2, "load_all_or_err: the parseable records load");
+    assert(vec_len(filestore_load_all(fs)) == 2, "load_all: the parseable records load");
+
+    sys_unlink("/tmp/libro_test_2113_la.jsonl");
+}
+
+fn test_chain_import_rejects_malformed_record() {
+    var path = str_from("/tmp/libro_test_2113_ci.jsonl");
+    var cpath = _entry_to_cstr(path);
+
+    _t_jsonl_write(cpath, 3, -1, -1, 1);
+    var c = chain_import(path);
+    assert(c != 0, "control: intact snapshot imports");
+    assert(chain_import_count() == 3, "control: 3 entries");
+    assert(chain_verify(c) == 0, "control: imported chain verifies");
+
+    _t_jsonl_write(cpath, 3, 2, -1, 1);
+    assert(chain_import(path) == 0, "malformed last record fails the import");
+    assert(chain_import_count() == 0, "failed import reports 0 entries");
+
+    _t_jsonl_write(cpath, 3, -1, 1, 1);
+    assert(chain_import(path) != 0, "a blank line does not fail the import");
+    assert(chain_import_count() == 3, "blank line: 3 entries");
+
+    sys_unlink("/tmp/libro_test_2113_ci.jsonl");
 }
 
 fn test_chain_import_count_reports() {
@@ -4712,7 +4867,7 @@ fn test_tpm_anchor_inner_invalid_on_bad_inner() {
 # the test pins the success-path contract.
 fn test_tpm_anchor_hardware_roundtrip_best_effort() {
     if (tpm_detect() == 0) {
-        sakshi_info("tpm_anchor: skipping hardware roundtrip (no TPM)", 50);
+        sakshi_info("tpm_anchor: skipping hardware roundtrip (no TPM)", 48);
         assert(1 == 1, "tpm_anchor hardware roundtrip: no TPM, skip");
         return 0;
     }
@@ -4729,7 +4884,7 @@ fn test_tpm_anchor_hardware_roundtrip_best_effort() {
         # /dev/tpmrm0 ACL forbids the test user. Both are valid
         # runtime environments; the API surface didn't crash and
         # returned a sentinel 0 that the consumer can null-check.
-        sakshi_info("tpm_anchor: skipping verify (seal failed; tpm2-tools?)", 56);
+        sakshi_info("tpm_anchor: skipping verify (seal failed; tpm2-tools?)", 54);
         assert(1 == 1, "tpm_anchor hardware roundtrip: seal failed, skip");
         return 0;
     }
@@ -5004,6 +5159,11 @@ fn main() {
     test_filestore_verify_streamed_empty();
     test_filestore_verify_streamed_chunk_sizes();
     test_filestore_verify_streamed_unterminated_tail();
+    test_jsonl_broken_record_does_not_parse();
+    test_filestore_verify_streamed_rejects_malformed_record();
+    test_filestore_load_and_verify_rejects_malformed_record();
+    test_filestore_load_all_skips_malformed_record();
+    test_chain_import_rejects_malformed_record();
 
     test_group("PatraStore");
     test_patrastore_open_close();

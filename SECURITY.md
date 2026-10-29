@@ -28,7 +28,7 @@ Condensed from the threat model. Full rationale lives there.
 | UUID generation | Entropy | 122 random bits from `getrandom` (stdlib `random_bytes`), RFC 4122 version/variant bits; fail-closed on entropy failure |
 | DER encoding (RFC 3161) | Malformed input; unverified token | Bounds-checked TLV parsing with tag checks (2.8.11). The token is **not** verified: no TSA CMS-signature check, no TSTInfo `messageImprint` / nonce binding (roadmap 2.12.0, 2.x.x) |
 | FileStore | Concurrent write corruption | Advisory `flock` on append/load |
-| FileStore streaming verify | DoS via malformed input | Bounded 64KB buffer; unterminated-tail hang fixed in 2.0.3 (Finding 4) |
+| FileStore streaming verify | DoS via malformed input; a broken last record hiding an edit | Bounded 64KB buffer; unterminated-tail hang fixed in 2.0.3 (Finding 4); a record that does not parse is a `LIBRO_ERR_JSON` error, not a skipped line, in `filestore_verify_streamed`, `filestore_load_and_verify` and `chain_import` (2.11.3) |
 | `chain_import` / PatraStore | Parser crash on malformed input | Fuzz-covered (12 targets); parse-failure returns gracefully |
 | Streaming pub/sub | Subscriber backlog | In-process vec queue; consumers drain via `stream_recv` |
 | Kernel audit | Privilege escalation | Read-only access to `/proc/agnos/audit`; kernel is trusted |

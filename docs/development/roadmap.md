@@ -4,12 +4,11 @@ Forward work only. Release detail lives in
 [CHANGELOG.md](../../CHANGELOG.md); doc currency lives in
 [`doc-health.md`](../doc-health.md).
 
-**Current release: 2.11.2** (cyrius 6.7.18, sigil 3.13.15, patra 1.16.6).
+**Current release: 2.11.3** (cyrius 6.7.18, sigil 3.13.15, patra 1.16.6).
 
 Every open item has a target version:
 
-- **2.11.x patches**: documentation, test hygiene, dependency tracking and the JSONL readers'
-  malformed-record gap. No API change.
+- **2.11.x patches**: documentation, test hygiene and dependency tracking. No API change.
 - **2.12.0 – 2.17.0**: one theme per minor.
 - **2.x.x**: items blocked upstream. Each names its unblocker.
 
@@ -18,27 +17,6 @@ since 2.8.0, the guides and `dependency-watch.md`, and each was re-checked again
 2.11.0 tree.
 
 ---
-
-## 2.11.x — JSONL readers
-
-- [ ] **A malformed record must not read as a missing one.** All three JSONL readers drop a
-  line that `_filestore_parse_entry` rejects and carry on with the rest:
-  - `filestore_load_all` / `filestore_load_all_or_err` (`src/file_store.cyr` :133);
-  - `filestore_verify_streamed` (`src/file_store.cyr` :274);
-  - `chain_import` (`src/chain_io.cyr` :109).
-
-  A malformed line mid-file is still caught, because the next entry's `prev_hash` no longer
-  links. A malformed *last* line is not. Measured at 2.11.2 with a probe: three entries
-  written, the last line's opening `{` rewritten as `{ZZZ`, and `filestore_verify_streamed`
-  returned 2, success with one entry fewer. Editing that line so it still parses returns an
-  integrity violation. So breaking a record's JSON hides tampering with the newest entry,
-  the same exposure as truncating it, which only a signed tree head or an anchor reveals
-  (threat model T1).
-
-  Reporting a malformed record as an error changes what these functions return, so each of
-  the three needs its own test (a fix applied to some instances of a class is the shape
-  2.8.11's round-2 audit kept finding). Blank lines are skipped before parsing and are not
-  part of this. Whether the loaders refuse the whole log, or only the verifiers do, is open.
 
 ## 2.11.x — Dependency tracking
 
@@ -131,7 +109,7 @@ All of these are from `guides/tpm-anchors.md` and the threat model. They need
   which do not serialize, so sealed anchors cannot ship across hosts that share a TPM.
 - [ ] **Key rotation and sealed-file cleanup.** There is no key-rotation API, and old
   sealed files are not removed (`tpm-anchors.md` :194-207). Per-key TPM sealing is listed
-  in `threat-model.md` :261-267.
+  in `threat-model.md` :268-274.
 - [ ] **A real-TPM CI runner.** CI covers the API contract under "no TPM device" only; a
   `LIBRO_TPM` build on a TPM-equipped runner would cover the seal/unseal round trip.
 

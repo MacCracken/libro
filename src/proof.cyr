@@ -283,11 +283,11 @@ fn _proof_verify_common(ip, tree_head_valid) {
             a_ok = 1;
             if (constant_time_eq_str(anchor_merkle_root(anchor),
                 sth_root_expected) == 0) {
-                sakshi_error("proof: anchor is for a different tree", 36);
+                sakshi_error("proof: anchor is for a different tree", 37);
                 a_ok = 0;
             }
             if (anchor_entry_count(anchor) != sth_tree_size(sth)) {
-                sakshi_error("proof: anchor entry count disagrees with the head", 47);
+                sakshi_error("proof: anchor entry count disagrees with the head", 49);
                 a_ok = 0;
             }
         }

@@ -97,7 +97,7 @@ fn tpm_anchor_new(inner_anchor, output_dir, pcr_indices) {
     if (pcr_indices == 0) { return 0; }
     var pcr_n = vec_len(pcr_indices);
     if (pcr_n == 0 || pcr_n > 24) {
-        sakshi_warn("tpm_anchor: pcr index count out of range", 39);
+        sakshi_warn("tpm_anchor: pcr index count out of range", 40);
         return 0;
     }
     var pi = 0;
@@ -130,7 +130,7 @@ fn tpm_anchor_new(inner_anchor, output_dir, pcr_indices) {
     }
     var sealed = result_unwrap(res_t, res_v);
     if (sealed == 0) {
-        sakshi_warn("tpm_anchor: seal returned no context", 35);
+        sakshi_warn("tpm_anchor: seal returned no context", 36);
         return 0;
     }
     var ta = fl_alloc(32);

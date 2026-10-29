@@ -291,7 +291,7 @@ fn patrastore_append(s, e) {
     if (_ps_field_too_long("hash", 4, str_len(hash)) == 1) { over = 1; }
     if (_ps_field_too_long("hash_algorithm", 14, str_len(halg)) == 1) { over = 1; }
     if (over == 1) {
-        sakshi_error("patrastore: append rejected, entry not stored", 44);
+        sakshi_error("patrastore: append rejected, entry not stored", 45);
         return PATRA_ERR_ROWSZ;
     }
 

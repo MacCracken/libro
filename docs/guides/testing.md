@@ -3,7 +3,7 @@
 ## Running the Full Suite
 
 ```bash
-# Build and run all tests (819 assertions expected, 0 failures)
+# Build and run all tests (848 assertions expected, 0 failures)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro && ./build/libro
 
 # Fuzz harness (12 targets, no-crash asserts, ~10 s)
@@ -17,7 +17,7 @@ CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && \
 # A benign `duplicate fn '_sigil_random_fill'` warning is expected here.
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && \
-    ./build/libro_tpm   # 831 assertions: 819 default + 12 TPM-gated
+    ./build/libro_tpm   # 860 assertions: 848 default + 12 TPM-gated
 
 # Restore the thin, tpm-free default afterwards — a bare `cyrius deps` does
 # NOT undo the above (it leaves one extra lock entry: 113 vs the honest 112).
@@ -84,7 +84,7 @@ The group list, in declaration order:
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 819 assertions default / 831 with `-D LIBRO_TPM`** across
+**Total: 848 assertions default / 860 with `-D LIBRO_TPM`** across
 these groups. Count moves with every sprint; the source of truth is
 the output of `./build/libro`, not this document.
 
@@ -297,7 +297,7 @@ They exist to prevent regression of classes already caught in audits:
 | Manifest completeness | 2.0.1 (refined 2.5.0) | `[lib] modules` drifting from `src/main.cyr` includes; 2.5.0 skip `#ifdef`-gated includes for opt-in modules |
 | Specific-struct raw-offset guard | 2.0.1 + 2.0.2 | `load64(c+N)`, `load64(ip+N)`, etc. outside defining file |
 | Per-file allowlist | 2.0.4 (extended 2.5.0) | new raw-offset param names appearing in unregistered files; 2.5.0 registers `ta` for `src/tpm_anchor.cyr` |
-| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (819 → 831 assertions) |
+| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (848 → 860 assertions) |
 | No raw syscalls | 2.10.3 | any `syscall(` outside a comment in `src/`, `benches/`, `fuzz/`, `tests/` — call the stdlib wrapper (`sys_*`, `xlseek`, `random_bytes`, `eprint`, `clock_epoch_secs`) |
 | Dist freshness | 1.1.1 (sidecar 2.10.7) | `dist/libro.cyr` or its `dist/libro.deps` sidecar missing or stale vs `src/`; `cyrius distlib` must also exit 0 |
 | Uninitialized-patra repro | 2.10.8 | `tests/patra_uninit.cyr` — a process that never calls `patra_init()`; `patrastore_open` must return 0, not SIGSEGV (the suite's own `main` runs `patra_init` first, so it cannot cover this) |

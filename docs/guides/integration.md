@@ -171,9 +171,10 @@ predicate for it:
 ```cyrius
 var entries = filestore_load_and_verify(fs);
 if (libro_is_error(entries) == 1) {
-    # An integrity violation OR an unreadable log. Before 2.8.11 both of
-    # these were indistinguishable from success — a DELETED audit log
-    # verified clean, because load_all returned an empty vec.
+    # An integrity violation, an unreadable log, or a record that does not
+    # parse (LIBRO_ERR_JSON, 2.11.3; error_index names the record). Before
+    # 2.8.11 the first two were indistinguishable from success — a DELETED
+    # audit log verified clean, because load_all returned an empty vec.
     println(error_msg(entries));
 } else {
     # entries is the vec

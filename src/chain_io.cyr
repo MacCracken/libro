@@ -57,7 +57,8 @@ fn chain_export(c, path) {
 }
 
 # Read a chain back from a file written by chain_export. Returns a new
-# AuditChain pointer, or 0 on failure (missing/invalid header).
+# AuditChain pointer, or 0 on failure (missing/invalid header, or an entry
+# record that does not parse).
 fn chain_import(path) {
     sakshi_info("chain_io: import", 16);
     var cpath = _entry_to_cstr(path);
@@ -102,12 +103,20 @@ fn chain_import(path) {
                 # EATEN, and the loose verify_chain — which only checks
                 # linkage for i > 0 — called the truncated result valid.
                 if (_chain_import_apply_meta(c, line_str) != 0) {
-                    sakshi_error("chain_io: import missing or invalid header", 41);
+                    sakshi_error("chain_io: import missing or invalid header", 42);
                     return 0;
                 }
             } else {
+                # 2.11.3 — a record that does not parse fails the import, as a
+                # bad header does. It was skipped, so a snapshot whose LAST
+                # record had been broken imported one entry short and the
+                # chain_verify that follows an import called it valid.
                 var e = _filestore_parse_entry(line_str);
-                if (e != 0) { vec_push(chain_entries(c), e); }
+                if (e == 0) {
+                    sakshi_error("chain_io: import record does not parse", 38);
+                    return 0;
+                }
+                vec_push(chain_entries(c), e);
             }
             line_idx += 1;
         }

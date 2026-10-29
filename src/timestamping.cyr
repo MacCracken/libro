@@ -437,7 +437,7 @@ fn ts_attestation_new(hash, subject, algorithm, response) {
     }
     var tok = ts_response_token(response);
     if (tok == 0 || str_len(tok) == 0) {
-        sakshi_error("timestamping: granted response carries no token", 46);
+        sakshi_error("timestamping: granted response carries no token", 47);
         return 0;
     }
     var a = fl_alloc(48);

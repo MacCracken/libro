@@ -19,7 +19,7 @@ Zero third-party crates. No transitive graph to audit.
 **Two structural changes since the 2.7.x line (2.7.5 and 2.8.0):**
 
 1. **`agnosys` is gone.** libro's only agnosys surface was the TPM primitives used by `src/tpm_anchor.cyr`. The agnosys → agnodrm decomposition (2026-06-19) moved the trust stack into sigil, which promoted TPM to first-class at 3.9.0 — so 2.7.5 removed the separate `[deps.agnosys]` entry and TPM now resolves from the sigil pin. `src/tpm_anchor.cyr` is unchanged: same symbol names, different source.
-2. **The sigil surface is thin, and that is load-bearing.** `cyrius build` auto-includes every *active* `[deps.*]` module, so a fat dep dist lands in every binary whether or not `src/*.cyr` includes it. The monolithic `dist/sigil.cyr` inlines an x509/RSA/authenticode fold carrying ~13 MB of static `.bss` libro never calls — it put `build/libro` at ~14 MB. `[deps.sigil]` therefore pulls only `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`, and TPM sits behind the optional `tpm` feature so default builds never link it. The default binary is **988,864 B** at 2.11.2 (1,007,848 B with `tpm`); most of its growth since 2.11.0 is bayan's Unicode tables, not sigil (see below). Do not "simplify" this back to the monolith. See CLAUDE.md quirk #9 — including the trap that any isolation test must be built **outside** the project dir, or the manifest auto-include silently pulls the full surface into your control build too.
+2. **The sigil surface is thin, and that is load-bearing.** `cyrius build` auto-includes every *active* `[deps.*]` module, so a fat dep dist lands in every binary whether or not `src/*.cyr` includes it. The monolithic `dist/sigil.cyr` inlines an x509/RSA/authenticode fold carrying ~13 MB of static `.bss` libro never calls — it put `build/libro` at ~14 MB. `[deps.sigil]` therefore pulls only `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`, and TPM sits behind the optional `tpm` feature so default builds never link it. The default binary is **994,328 B** at 2.11.3 (1,013,312 B with `tpm`); most of its growth since 2.11.0 is bayan's Unicode tables, not sigil (see below). Do not "simplify" this back to the monolith. See CLAUDE.md quirk #9 — including the trap that any isolation test must be built **outside** the project dir, or the manifest auto-include silently pulls the full surface into your control build too.
 
 ## Upstream items libro is waiting on
 
@@ -122,8 +122,8 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   the canonical installer (`scripts/install.sh` via curl, or
   `cyriusly install <ver>` which calls it) is enough to change the
   toolchain.
-- Every toolchain bump needs a full test + fuzz + bench pass (819
-  default / 831 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
+- Every toolchain bump needs a full test + fuzz + bench pass (848
+  default / 860 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
   across three binaries) because codegen changes can surface subtle
   behavioral deltas. 2.1.0 jumped 5.4.7 → 5.10.34 in one step —
   pulled `secret var`, `getrandom`, `lib/ct.cyr`, `lib/keccak.cyr`,
@@ -145,7 +145,7 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
 - **Check capacity headroom, don't assume it.** `CYRIUS_STATS=1
   CYRIUS_DCE=1 cyrius build src/main.cyr <out>` reports `fn_table`,
   `identifiers`, `var_table` and `code_size` against their ceilings. At
-  2.11.2 libro is at `fn_table 3498 / 131072`, `identifiers 94961 /
+  2.11.3 libro is at `fn_table 3508 / 131072`, `identifiers 95296 /
   8388608` and `var_table 1503 / 1048576`. This
   matters because 6.4.75 fixed a P0 where `fn_table` growth past 8192
   silently corrupted six fn-indexed side tables and the DCE `live[]`

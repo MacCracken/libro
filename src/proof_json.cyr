@@ -50,7 +50,7 @@ fn _sb_proof_entry(sb, e) {
     if (det != 0 && canonical_json_is_valid(det) == 1) {
         str_builder_add(sb, det);
     } else {
-        sakshi_error("proof_json: entry details is not well-formed JSON, emitted as null", 65);
+        sakshi_error("proof_json: entry details is not well-formed JSON, emitted as null", 66);
         str_builder_add_cstr(sb, "null");
     }
     str_builder_add_cstr(sb, ",\"agent_id\":");

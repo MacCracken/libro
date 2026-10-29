@@ -71,7 +71,7 @@ cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests (819 assertions default / 831 with -D LIBRO_TPM, 0 failures expected)
+# Run tests (848 assertions default / 860 with -D LIBRO_TPM, 0 failures expected)
 ./build/libro
 
 # Run benchmarks
@@ -145,7 +145,7 @@ assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 ## Project structure
 
 ```
-src/main.cyr             Entry point + 819/831 inline tests (default / LIBRO_TPM)
+src/main.cyr             Entry point + 848/860 inline tests (default / LIBRO_TPM)
 src/*.cyr                21 library modules + src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM)
 benches/libro_core.bcyr  18 core benchmarks (sha256/chain/merkle/sign/PQ/hybrid)
 benches/libro_io.bcyr    12 i/o benchmarks (export/review/anchor/stream/filestore/patra perf)

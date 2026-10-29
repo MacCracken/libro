@@ -5,6 +5,114 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.3] - 2026-10-28
+
+**A JSONL record that does not parse is now an error for libro's verifiers and for
+`chain_import`.** Through 2.11.2 every JSONL reader skipped such a record. Mid-log that was
+caught anyway, because the next entry's `prev_hash` no longer links. A malformed *last* record
+was not: the log read as one entry shorter and verified clean, so breaking the newest record's
+JSON hid any edit to it (found in 2.11.2's doc pass, recorded as threat model T1). No preimage,
+proof or signature format changes. A log with no unparseable record verifies exactly as it did.
+
+### Changed — what the readers return
+
+| Reader | A record that does not parse, 2.11.2 | 2.11.3 |
+|---|---|---|
+| `filestore_verify_streamed` | skipped; the count came back one short | `LIBRO_ERR_JSON` error object |
+| `filestore_load_and_verify` | skipped; the vec verified one short | `LIBRO_ERR_JSON` error object |
+| `chain_import` | skipped; the chain imported one short | `0`, its documented failure value, as for a bad header |
+| `filestore_load_all`, `filestore_load_all_or_err`, `filestore_query` | skipped | still skipped, now with a `sakshi_warn` per line |
+
+- **The error names the record.** `error_index` is its 0-based position in the log; blank
+  lines are not records and are still skipped by every reader. The streamed index is right
+  across chunk boundaries.
+- **The plain loaders keep reading a damaged log.** That is a choice, so it is pinned by a
+  test. A consumer that loads with them and then runs `verify_chain` itself keeps the 2.11.2
+  exposure, so `filestore_load_all_or_err`'s comment now says to verify with
+  `filestore_load_and_verify` or `filestore_verify_streamed`.
+- ⚠ **A final record torn by a crash mid-append now fails verification**, with `error_index`
+  pointing at it. Through 2.11.2 it was ignored. libro does not guess whether a broken last
+  record is a crash or an edit.
+- No first-party consumer calls these readers directly (checked across the sibling
+  checkouts; thoth carries a vendored copy of libro).
+
+### Fixed
+
+- **Eleven `sakshi_*` log calls passed the wrong length for their literal.** Nine truncated
+  the message by one or two bytes: an em dash is three bytes, and most of the others had
+  been miscounted by one. Two TPM-test messages in `src/main.cyr` passed 2 bytes more than
+  the literal and read past it. Found while adding this release's messages. The sweep checked
+  all 72 `sakshi_*` literals and 24 other literal-and-length calls across `src/`, `benches/`,
+  `fuzz/` and `tests/`; those eleven were the only mismatches. Log output only.
+
+### Tests
+
+**819 → 848 default and 831 → 860 with `-D LIBRO_TPM` (+29).** Five new test functions:
+- `test_jsonl_broken_record_does_not_parse` shows the corrupted record really is unparseable,
+  so the others cannot pass by testing nothing;
+- `..._verify_streamed_rejects_malformed_record` covers the last record, the last record at
+  chunk size 1, a middle record and a blank line;
+- `..._load_and_verify_rejects_malformed_record` covers the last record and a blank line;
+- `..._load_all_skips_malformed_record` pins the lenient loaders;
+- `test_chain_import_rejects_malformed_record` covers an intact snapshot, the last record and
+  a blank line.
+
+`test_filestore_verify_streamed_unterminated_tail` asserted the count 0 for a junk-only file.
+It now asserts an error naming record 0, and it still guards the 2.0.3 hang.
+
+**Mutation-checked.** Each mutation, applied alone, fails the suite:
+
+| Mutation | Fails |
+|---|---|
+| `filestore_verify_streamed` skips again | 9 |
+| `filestore_load_and_verify` loads leniently | 3 |
+| `chain_import` skips again | 2 |
+| `filestore_load_all_or_err` refuses | 3 |
+| the streamed blank-line guard removed | 1 |
+| the streamed index loses its chunk offset | 1 |
+| the load record counter frozen | 1 |
+
+The first mutation used to segfault the whole suite: `error_code` dereferenced the count it
+got back. The new tests read the code and index through `_t_err_code` / `_t_err_index`, which
+return -1 for a non-error, so a regression fails its assertion instead.
+
+### Binary
+
+994,328 B default (+5,464, nearly all of it the tests) and 1,013,312 B with `tpm`. Capacity:
+`fn_table 3508`, `identifiers 95296`, `var_table 1503`.
+
+### Performance
+
+No change outside noise. The `libro_io` A/B against 2.11.2, five alternating runs, landed
+within −2.4 to +3.1% on every bench. `filestore_load_10`, the path this release touches,
+read +1.2%, and +0.9% with overlapping ranges over ten more rounds.
+
+### Docs
+
+- Threat model T1's residual records the fix and what is left: the lenient loaders, and
+  truncation proper. T5's "malformed entries are skipped" line is corrected.
+- SECURITY.md's FileStore row covers the refusal.
+- The quickstart's `filestore_verify_streamed` comment and the `filestore_load_and_verify`
+  example in integration.md name the new error.
+- Counts move to 848 / 860 in README, CONTRIBUTING, CLAUDE.md, `testing`, `tpm-anchors` and
+  `dependency-watch`.
+- The roadmap's 2.11.x *JSONL readers* item is done and removed. `doc-health` rows are
+  updated.
+
+### Verification
+
+- **Tests:** default 848/0 and `-D LIBRO_TPM` 860/0 (only the documented
+  `_sigil_random_fill` duplicate).
+- **Other harnesses:** fuzz is clean, including the `chain_import` and
+  `filestore_verify_streamed` targets that now take the error path, and
+  `tests/patra_uninit.cyr` exits 0.
+- **Gates:** `ci.yml`'s step scripts, replayed locally, all pass: manifest completeness, the
+  three raw-offset gates, raw syscalls, format, lint, build, ELF, tests, uninit repro, fuzz,
+  benchmarks, the dangerous-pattern scan and the required-docs check.
+- **dist:** `dist/libro.cyr` regenerated (7,763 lines), and a second `cyrius distlib`
+  reproduces it and `dist/libro.deps` (`hashmap`) byte for byte.
+- **Lock:** reset to the clean default (117 deps, 2 commit-pinned) after the TPM run.
+
 ## [2.11.2] - 2026-10-28
 
 **Documentation and housekeeping. No library behaviour change.** `src/` changes are

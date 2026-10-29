@@ -26,7 +26,7 @@ cd libro
 # Build (CYRIUS_DCE=1 matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "819 passed, 0 failed"
+# Run tests — expect "848 passed, 0 failed"
 ./build/libro
 ```
 
@@ -265,7 +265,8 @@ Libro ships three `AuditStore` implementations. Pick by persistence needs:
 var fs = filestore_open(str_from("audit.jsonl"));
 filestore_append(fs, entry);
 # Bounded-memory verification. Returns the COUNT verified, or a libro error
-# object on I/O failure / an over-64KB record. 0 is a legitimate success for an
+# object on I/O failure, an over-64KB record, or a record that does not parse
+# (LIBRO_ERR_JSON; error_index names it). 0 is a legitimate success for an
 # empty log, so test with libro_is_error, not `!= 0`.
 var verified = filestore_verify_streamed(fs, 8);
 if (libro_is_error(verified) == 1) { println(error_msg(verified)); }
