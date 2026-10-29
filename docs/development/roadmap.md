@@ -4,11 +4,12 @@ Forward work only. Release detail lives in
 [CHANGELOG.md](../../CHANGELOG.md); doc currency lives in
 [`doc-health.md`](../doc-health.md).
 
-**Current release: 2.11.1** (cyrius 6.7.18, sigil 3.13.15, patra 1.16.6).
+**Current release: 2.11.2** (cyrius 6.7.18, sigil 3.13.15, patra 1.16.6).
 
 Every open item has a target version:
 
-- **2.11.x patches**: documentation, test hygiene and dependency tracking. No API change.
+- **2.11.x patches**: documentation, test hygiene, dependency tracking and the JSONL readers'
+  malformed-record gap. No API change.
 - **2.12.0 – 2.17.0**: one theme per minor.
 - **2.x.x**: items blocked upstream. Each names its unblocker.
 
@@ -18,78 +19,26 @@ since 2.8.0, the guides and `dependency-watch.md`, and each was re-checked again
 
 ---
 
-## 2.11.2 — Documentation and housekeeping
+## 2.11.x — JSONL readers
 
-No behaviour change.
+- [ ] **A malformed record must not read as a missing one.** All three JSONL readers drop a
+  line that `_filestore_parse_entry` rejects and carry on with the rest:
+  - `filestore_load_all` / `filestore_load_all_or_err` (`src/file_store.cyr` :133);
+  - `filestore_verify_streamed` (`src/file_store.cyr` :274);
+  - `chain_import` (`src/chain_io.cyr` :109).
 
-- [ ] **Doc currency pass.** Several docs trail the code by many releases:
-  - `doc-health.md` was last refreshed at 2.8.3.
-  - `threat-model.md` was last updated 2026-05-10 (post-2.6.0). It still names agnosys
-    as the TPM backend (:64-68) and pins cyrius 6.6.6 / sigil 3.12.9 / patra 1.13.8
-    (:380-394), and T10 still says patra "1.1.1" (:281). It lists "RFC 3161 token" as an
-    asset (:86), although the token is not verified (see 2.12.0). None of the 2.8.11 /
-    2.8.12 defect classes appear.
-  - `compliance/standards-mapping.md` still shows:
-    - the TPM via agnosys (:69);
-    - "scalars emit verbatim" (:57), false since 2.8.12;
-    - stdlib `json`/`bigint` instead of `bayan` (:230-234);
-    - a Timestamp Integrity section (:74-95) without the unverified-token limit.
-  - `dependency-watch.md` says libro "inherits" sigil's parallel `sv_verify_batch`
-    speedup (:180-184). It does not: that API verifies file artifacts against sigil's
-    trust store, and libro never calls it (`integration.md` :270-273 has this right).
-    Its test counts (:103-104) and capacity numbers (:125-126) are stale.
-  - `guides/integration.md` :285-289 still puts hybrid signing "on the 2.3.x roadmap";
-    it shipped in 2.3.0.
-  - `guides/tpm-anchors.md` keeps its own "Roadmap" section. Those items now live under
-    2.16.0 below.
-- [ ] **Quickstart's in-repo include list.** `guides/quickstart.md` :56 includes the
-  monolithic `lib/sigil.cyr`, the ~13 MB x509/RSA fold (CLAUDE.md quirk #9), and has no
-  `lib/thread_local.cyr` before it, which SIGILLs at runtime (quirk #5). It should mirror
-  `src/main.cyr`'s thin surface.
-- [ ] **ADR status.** 0001–0004 still read "Accepted", and 0003 "Accepted (interim)",
-  though the plans they recorded as blocked on sigil or patra have shipped (0002 :21,
-  0003 :20, 0004 :21). Each needs a superseded-or-current call.
-- [ ] **The bayan premise, corrected.** Measured at 2.11.0:
-  - libro's library modules call **no** bayan function. The canonical-JSON hasher has its
-    own decoder (`json_str_decode`, `src/entry.cyr`), and only `fuzz/fuzz_libro.fcyr`
-    calls `json_parse`.
-  - The monolith reaches the build through sigil-mldsa's `# Requires` block, which uses
-    bayan's `u256_*` helpers.
-  - DCE now removes dead code rather than NOP-filling it: 1,252,936 B with `CYRIUS_DCE=0`,
-    679,496 B with `=1`. The 2.8.11 audit's "~200 KB" for thinning predates both facts.
+  A malformed line mid-file is still caught, because the next entry's `prev_hash` no longer
+  links. A malformed *last* line is not. Measured at 2.11.2 with a probe: three entries
+  written, the last line's opening `{` rewritten as `{ZZZ`, and `filestore_verify_streamed`
+  returned 2, success with one entry fewer. Editing that line so it still parses returns an
+  integrity violation. So breaking a record's JSON hides tampering with the newest entry,
+  the same exposure as truncating it, which only a signed tree head or an anchor reveals
+  (threat model T1).
 
-  Measured at 2.11.1 (cyrius 6.7.18, bayan 1.11.1): what bayan contributes after DCE is
-  data, not code. Since bayan 1.9.0 the monolith's `# Requires` pulls all seven
-  `lib/unicode/` files for its markdown parser, and their tables are top-level string
-  `var`s that DCE keeps. `string_data` went 58,232 → 400,629 B and the binary
-  679,496 → 988,864 B, with code size flat; old pins under 6.7.18 measure the same. About
-  307 KB of it is `lib/unicode/`.
-
-  What is left:
-  - Correct `src/main.cyr`'s include comment, which still says libro's surface is
-    `json_parse`/`json_get`.
-  - Any thinning is upstream, not a libro manifest edit. sigil-mldsa calls bayan's legacy
-    `u256_*` compat names, which only the monolith defines, so moving it to `bayan-bigint`
-    means calling `bayan_u256_*`. The other route is DCE dropping global initializers that
-    no live code reads.
-
-  CLAUDE.md was corrected when this roadmap was reorganized.
-- [ ] **The cc3-era repros in `tests/`.** `fixup_limit_repro.cyr`, `patra.cyr`,
-  `patra_crash_repro.cyr` and `patra_standalone.cyr` document cc3 crashes resolved long
-  ago, and their headers still give `cc3` run instructions. `patra.cyr` says "full suite
-  pending codegen investigation", though PatraStore has run in the main suite since
-  1.1.0. All four still build and exit 0 on 6.7.18; only `patra_uninit.cyr` runs in CI.
-  Each needs a retire-or-relabel call.
-- [ ] **`cyrius lint` untracked deferrals.** Six notes:
-  - five are `XXX` false positives, on `\uXXXX` and on the junk-suffix test data in
-    `src/entry.cyr`, `src/file_store.cyr` and `src/main.cyr`;
-  - one is `not yet` in `src/timestamping.cyr` :421.
-
-  Cross-reference or `#skip-lint` them so a real deferral stands out.
-- [ ] **Re-measure the ML-DSA and hybrid sign benches on a quiet box.**
-  `mldsa65_sign_entry` and `hybrid_sign_entry` have been flagged as noise since 2.8.11.
-  In the 2.11.0 A/B their per-run ranges were still 3.35–5.90 ms and 4.47–9.68 ms, about
-  1.8× and 2.2×.
+  Reporting a malformed record as an error changes what these functions return, so each of
+  the three needs its own test (a fix applied to some instances of a class is the shape
+  2.8.11's round-2 audit kept finding). Blank lines are skipped before parsing and are not
+  part of this. Whether the loaders refuse the whole log, or only the verifiers do, is open.
 
 ## 2.11.x — Dependency tracking
 
@@ -181,8 +130,8 @@ All of these are from `guides/tpm-anchors.md` and the threat model. They need
 - [ ] **Sealed-anchor JSON serialization.** `tpm_anchor` carries opaque sigil handles,
   which do not serialize, so sealed anchors cannot ship across hosts that share a TPM.
 - [ ] **Key rotation and sealed-file cleanup.** There is no key-rotation API, and old
-  sealed files are not removed (`tpm-anchors.md` :190-195). Per-key TPM sealing is listed
-  in `threat-model.md` :211-216.
+  sealed files are not removed (`tpm-anchors.md` :194-207). Per-key TPM sealing is listed
+  in `threat-model.md` :261-267.
 - [ ] **A real-TPM CI runner.** CI covers the API contract under "no TPM device" only; a
   `LIBRO_TPM` build on a TPM-equipped runner would cover the seal/unseal round trip.
 
@@ -209,13 +158,22 @@ first. Through 2.8.12 every preimage change broke every existing chain at once (
 
 ## 2.x.x — Blocked upstream
 
+- [ ] **bayan's Unicode tables in every binary.** About 307 KB of the default binary's
+  988,864 B is `lib/unicode/` data that libro never reads (2.11.1 *Binary*). libro's
+  modules call no bayan function; the bayan monolith arrives through sigil-mldsa's
+  `# Requires`, and since bayan 1.9.0 its own `# Requires` pulls the seven `lib/unicode/`
+  files, whose tables are top-level string `var`s that DCE keeps. A libro manifest edit
+  cannot remove them. **Unblocker: sigil or cyrius.** sigil-mldsa calls bayan's legacy
+  `u256_*` compat names, which only the monolith defines, so requiring `bayan-bigint`
+  instead means calling `bayan_u256_*`. The other route is DCE dropping global
+  initializers that no live code reads.
 - [ ] **RFC 3161 TSA signature verification**: the CMS/PKCS#7 half of the 2.8.11 audit
   finding. **Unblocker: sigil.** sigil has the pieces but no public, general
   SignedData-verify API: `_ac_find_signer_cert` and `_ac_verify_sig` are private to
   Authenticode, and `x509_parse` / `x509_verify_chain` are public. The TSTInfo binding
   above (2.12.0) does not depend on it. The x509/RSA path is what made `build/libro`
   ~14 MB at 2.8.0 (quirk #9), so this belongs behind an opt-in feature, like `tpm`.
-- [ ] **FIPS 140-3.** sigil is not a validated module (standards-mapping :142-154,
+- [ ] **FIPS 140-3.** sigil is not a validated module (standards-mapping :164-176,
   POA&M). **Unblocker: sigil.**
 - [ ] **JSON streaming for very large proofs.** `proof_to_json` builds in memory. The 6.7.9
   stdlib has no incremental JSON emitter: bayan's `json_stream_*` is a SAX-style
@@ -240,6 +198,3 @@ first. Through 2.8.12 every preimage change broke every existing chain at once (
 ## Tracked in other repos
 
 - **MCP tools (`libro_query`, `libro_verify`, `libro_export`)** live in bote.
-- **patra issues filed from libro 2.10.8**, to be repaired there:
-  `2026-10-14-patra-open-faults-without-patra-init.md` and
-  `2026-10-14-create-table-full-masks-exists.md`. libro's side is under 2.11.x.

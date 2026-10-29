@@ -81,16 +81,22 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm
 
-# Restore the thin, tpm-free default resolution afterwards.
-cyrius deps
+# Restore the thin, tpm-free default resolution afterwards. A bare
+# `cyrius deps` is not enough: it leaves lib/sigil_tpm_sigil-tpm.cyr
+# in place (cyrius 6.7.18 names it as outside the declared footprint).
+rm -rf lib && cyrius lib sync --full && cyrius deps
 ```
+
+Expect `831 passed, 0 failed` from `./build/libro_tpm` (819 from the
+default build).
 
 Runtime requirements for the TPM-opt-in build to actually *seal*:
 
 - `/dev/tpmrm0` or `/dev/tpm0` exists and is accessible to the libro
   process (`tss` group on most distros).
-- `tpm2-tools` package installed (`tpm2_create`, `tpm2_load`,
-  `tpm2_unseal` on `$PATH`).
+- `tpm2-tools` package installed at `/usr/bin/` (`tpm2_create`,
+  `tpm2_load`, `tpm2_unseal`). sigil runs them by absolute path, not
+  through `$PATH`.
 - A directory the libro process can write to, for sigil's
   `tpm_seal` to drop `sealed.ctx` / `sealed.pub` / `sealed.priv`.
 
@@ -158,7 +164,9 @@ detect attacks libro cares about, loose enough that ordinary system
 maintenance doesn't invalidate seals.
 
 Consumers with different threat models can pass their own
-`pcr_indices` vec to `tpm_anchor_new`. Common alternatives:
+`pcr_indices` vec to `tpm_anchor_new`. It must hold 1 to 24 indices,
+each 0–23; anything else makes `tpm_anchor_new` return 0. Common
+alternatives:
 
 - **PCR 0, 2, 7** — add firmware boot extras.
 - **PCR 0, 4, 7** — also bind to the bootloader (PCR 4). Seals are
@@ -190,16 +198,20 @@ consumer is responsible for:
 3. Cleaning up on chain rotation (the next `tpm_anchor_new` produces
    a fresh seal, but the old files don't auto-delete).
 
-There is no key-rotation API in 2.5.0. Re-sealing under a different
-PCR policy is achieved by calling `tpm_anchor_new` again with the
-new policy and discarding the old sealed files.
+The three file names are fixed, so a second `tpm_anchor_new` into the
+same `output_dir` writes the same three paths. Give each anchor that
+must stay verifiable its own directory.
+
+There is no key-rotation or re-seal API. Re-sealing under a different
+PCR policy is done by calling `tpm_anchor_new` again with the new
+policy and discarding the old sealed files.
 
 ## CI / build matrix
 
 libro's CI runs both builds:
 
-- **Default build**: 817 assertions pass, no TPM surface resolved or linked.
-- **`-D LIBRO_TPM` build**: 829 assertions pass, exercises the API
+- **Default build**: 819 assertions pass, no TPM surface resolved or linked.
+- **`-D LIBRO_TPM` build**: 831 assertions pass, exercises the API
   surface on hosts without tpm2-tools. The hardware-roundtrip test
   is best-effort: it logs a skip if the host can't actually seal,
   otherwise it pins the full success path.
@@ -208,17 +220,19 @@ Adding a `LIBRO_TPM=1` build to CI for a real TPM-equipped runner
 gives full functional coverage of the seal/unseal roundtrip. The
 shipped CI workflow only covers the API-correctness contract.
 
-## Roadmap
+## Open work
 
-- **Re-seal API** (deferred — not in 2.5.0) — explicit
-  `tpm_anchor_reseal(ta, new_pcrs)` for the firmware-update flow.
-  Currently consumers handle this by `tpm_anchor_new` against the
-  same inner anchor.
-- **PCR baseline integration** — pair the seal with sigil's
-  `pcr_measurement_new` baselines so a verifier can distinguish
-  "PCR changed legitimately" from "PCR changed unexpectedly".
-  Tracked as a 2.x.x candidate once a consumer asks.
-- **Sealed-anchor JSON serialization** — currently `tpm_anchor`
-  carries opaque sigil handles, which don't serialize. A
-  consumer that wants to ship sealed anchors across hosts within
-  the same TPM would need a serialization layer.
+Open work on TPM anchors (a re-seal API, PCR baseline integration,
+sealed-anchor JSON serialization, key rotation and sealed-file
+cleanup, a real-TPM CI runner) is tracked in the
+[roadmap](../development/roadmap.md) under **2.16.0 — TPM anchors**.
+Two present limitations not covered above:
+
+- **A `tpm_anchor` does not serialize.** `sealed_ctx` is an opaque
+  pointer to sigil's in-memory `tpm_sealed` handle, and libro has no
+  API to write a `tpm_anchor` out or rebuild one from its sealed
+  files, so sealed anchors cannot ship across hosts that share a TPM.
+- **No PCR baseline.** libro does not pair the seal with sigil's
+  `pcr_measurement_new` baselines, so on `TPM_ANCHOR_UNSEAL_FAILED`
+  telling a legitimate firmware or Secure Boot update from an
+  unexpected PCR change is the consumer's job.

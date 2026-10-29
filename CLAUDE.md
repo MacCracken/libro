@@ -12,7 +12,7 @@
 
 - **Type**: Cyrius library (single-file compilation via `include`)
 - **License**: GPL-3.0-only
-- **Version**: 2.11.1 (2026-10-28)
+- **Version**: 2.11.2 (2026-10-28)
 - **Language**: [Cyrius](https://github.com/MacCracken/cyrius) 6.7.18 (pin in `cyrius.cyml` `cyrius = "..."` field)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -21,15 +21,15 @@
 
 ## Consumers
 
-Ten repos pin `[deps.libro]` directly (verified 2026-08-18): daimon (audit), aegis (security events), stiva (container lifecycle), bote (storage), argonaut (audit), phylax, nein, t-ron, kybernet, cyrius-yeomans-descent. **sigil and ark do NOT consume libro** — an earlier list claimed they did.
+Ten repos pin `[deps.libro]` directly (verified 2026-10-28 against the sibling checkouts' `cyrius.cyml`): agnostic, argonaut (audit), bote (storage), cyrius-yeomans-descent, daimon (audit), kybernet, nein, phylax, stiva (container lifecycle), t-ron. **aegis no longer pins libro** — it reaches it through nein. **sigil and ark do NOT consume libro** — an earlier list claimed they did.
 
 ## Current State
 
 - **Source**: 21 library modules in `[lib] modules` + 1 opt-in module (`src/tpm_anchor.cyr` behind `-D LIBRO_TPM`); `cyrius deps` resolves stdlib + sigil + patra (agnosys dropped at the agnosys → agnodrm decomposition — TPM now sourced from sigil ≥ 3.9.0)
-- **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split because cc5 5.4.2's 16384 fixup-table cap; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
+- **Benchmarks**: 33 across three binaries (`libro_core.bcyr` 18 + `libro_io.bcyr` 12 + `libro_proof.bcyr` 3 — split under cc5 5.4.2's then-16384 fixup-table cap, which cyrius 6.2.0 made growable; `libro_proof` gained `proof_to_json_25` in 2.7.2 once cyrius 6.1.23 cleared the long-standing bench-context hijack)
 - **Fuzz**: 1 harness (`fuzz/fuzz_libro.fcyr`, 12 targets)
 - **Tests**: 819 default / 831 with `-D LIBRO_TPM` (all pass)
-- **Binary**: 988,864 B default (2.11.1, measured; 1,007,848 B with `tpm`). Capacity headroom: `fn_table 3498 / 131072`, `identifiers 94961 / 8388608`, `var_table 1503 / 1048576` (`CYRIUS_STATS=1`). **libro's library modules call no bayan function** (measured at 2.11.0: the canonical-JSON hasher has its own decoder, `json_str_decode` in `src/entry.cyr`); only `fuzz/fuzz_libro.fcyr` calls `json_parse`. The bayan monolith reaches every build anyway through sigil-mldsa's `# Requires` block (it calls bayan's legacy `u256_*` compat names, which only the monolith defines), and DCE removes what nothing calls: 1,791,680 B with `CYRIUS_DCE=0`, 988,864 B with `=1`. **What DCE cannot remove is ~340 KB of `.rodata`** (`string_data` 400,629 vs 58,232 at 6.7.9): since bayan 1.9.0 (folded at cyrius 6.7.13) the monolith's `# Requires` pulls all seven `lib/unicode/` files for its markdown parser, and their tables are top-level string `var`s (~307 KB), which are kept whether or not anything reads them. Code size did not move (558,568 B). The fix is upstream, not a libro manifest edit: sigil-mldsa requiring `bayan-bigint` (it would need the `bayan_u256_*` names), or DCE dropping unreferenced global initializers. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
+- **Binary**: 988,864 B default (2.11.2, measured; 1,007,848 B with `tpm`). Capacity headroom: `fn_table 3498 / 131072`, `identifiers 94961 / 8388608`, `var_table 1503 / 1048576` (`CYRIUS_STATS=1`). **libro's library modules call no bayan function** (measured at 2.11.0: the canonical-JSON hasher has its own decoder, `json_str_decode` in `src/entry.cyr`); only `fuzz/fuzz_libro.fcyr` calls `json_parse`. The bayan monolith reaches every build anyway through sigil-mldsa's `# Requires` block (it calls bayan's legacy `u256_*` compat names, which only the monolith defines), and DCE removes what nothing calls: 1,791,680 B with `CYRIUS_DCE=0`, 988,864 B with `=1`. **What DCE cannot remove is ~340 KB of `.rodata`** (`string_data` 400,629 vs 58,232 at 6.7.9): since bayan 1.9.0 (folded at cyrius 6.7.13) the monolith's `# Requires` pulls all seven `lib/unicode/` files for its markdown parser, and their tables are top-level string `var`s (~307 KB), which are kept whether or not anything reads them. Code size did not move (558,568 B). The fix is upstream, not a libro manifest edit: sigil-mldsa requiring `bayan-bigint` (it would need the `bayan_u256_*` names), or DCE dropping unreferenced global initializers. See quirk #9 for the auto-include mechanism (always isolate binary-size probes OUTSIDE the project dir).
 - **Distribution artifact**: committed `dist/libro.cyr` + `dist/libro.deps` sidecar — produced by `cyrius distlib`, ~7.7k lines. Since cyrius 6.6.18 the bundle opens with a compile-verified `# Requires` block and the sidecar lists only the stdlib leaves the bundle needs beyond what sigil's and patra's own `# Requires` blocks bring (`hashmap` alone since 2.10.7). CI diffs both files. See `DEPS-PATTERN.md` for the contract.
 
 ## Dependencies
@@ -133,17 +133,19 @@ from findings → post-review benchmarks → docs audit → repeat if heavy.
 ## Project Structure
 
 ```
-src/main.cyr            Entry point — 263 inline tests + 20 module includes
-src/*.cyr               Library modules (20 files: error, hasher, entry, verify,
+src/main.cyr            Entry point — 226 test functions (819 / 831 assertions) +
+                        21 module includes (+ tpm_anchor behind -D LIBRO_TPM)
+src/*.cyr               Library modules (21 files: error, hasher, entry, verify,
                         query, retention, chain, store, export, review, merkle,
                         signing, anchoring, timestamping, proof, kernel_audit,
-                        file_store, patra_store, streaming, proof_json)
+                        file_store, chain_io, patra_store, streaming, proof_json)
+                        + src/tpm_anchor.cyr (opt-in)
 benches/libro_core.bcyr 18 core benchmarks (crypto/chain/merkle/sign/batch)
 benches/libro_io.bcyr   12 i/o benchmarks (export/review/anchor/stream/filestore)
 benches/libro_proof.bcyr 3 proof-path benchmarks (build unsigned/signed + to_json)
 dist/libro.cyr          Consumer distribution artifact (cyrius distlib)
 fuzz/fuzz_libro.fcyr    Fuzz harnesses (no-crash assertions)
-tests/                  Standalone repros (patra_standalone.cyr, etc.); patra_uninit.cyr runs in CI
+tests/                  patra_uninit.cyr — standalone PatraStore-before-patra_init repro, run in CI
 lib/                    Vendored Cyrius stdlib + patra v1.16.6 bundle
 build/                  Compiled binaries (gitignored)
 scripts/version-bump.sh Syncs VERSION + cyrius.cyml
@@ -192,7 +194,7 @@ docs/ (when earned):
 - Do not hardcode Cyrius version in CI YAML — read the `cyrius = "..."` field from `cyrius.cyml`
 - **Do not write history into `cyrius.cyml`.** It is a manifest, not a ledger or a changelog. Comments there state present rules only (why an order matters, why a dep is thin or optional); version narratives, incident write-ups, dated measurements and cross-references belong in CHANGELOG, this file or `docs/audit/`. Cleaned 234 → 139 lines at 2.10.2.
 
-## Known Cyrius Compiler Quirks (6.6.6)
+## Known Cyrius Compiler Quirks (6.7.18)
 
 > ## ⚠️ BIG NOTE — sigil needs `lib/thread_local.cyr` before it (or SIGILL)
 >
@@ -219,9 +221,8 @@ docs/ (when earned):
 >
 > **This applies to EVERY harness that includes `lib/sigil.cyr`, not
 > just `src/main.cyr`.** The three benches (`benches/libro_*.bcyr`),
-> the fuzz harness (`fuzz/fuzz_libro.fcyr`), and the sigil-using
-> standalone repros (`tests/patra.cyr`, `tests/patra_standalone.cyr`,
-> `tests/fixup_limit_repro.cyr`) each need their own
+> the fuzz harness (`fuzz/fuzz_libro.fcyr`), and the standalone repro
+> `tests/patra_uninit.cyr` each need their own
 > `include "lib/thread_local.cyr"` before `lib/sigil.cyr` — they don't
 > inherit main.cyr's. They went un-updated from 2.7.1 until **2.7.4**,
 > when sigil 3.7.14 first exercised the TLS `crypto_scratch` path those
@@ -313,7 +314,7 @@ Quirks still worth knowing:
 
 1. **Local variable clobbering** — still possible across deeply nested call chains. Not a guaranteed bug, but if a local's value looks wrong after a function call, try promoting it to a global as a workaround. Several `_ps_*` globals in `src/patra_store.cyr` exist for this reason.
 2. **Freelist vs bump allocator discipline** — `fl_alloc` + `fl_free` for individually-freed structs; `alloc()` for long-lived collections. Mixing them is correct but easy to reason about wrong.
-3. **Single-pass compiler** — forward references across function boundaries work via fixups (cap 16384 in 5.4.2, up from 8192), but include order still matters for type/struct visibility.
+3. **Single-pass compiler** — forward references across function boundaries work via fixups (a table that grows on demand since 6.2.0; 16384 in 5.4.2), but include order still matters for type/struct visibility.
 4. **Per-file `#derive` struct cap — now 512 (was 64; raised in 6.0.53).** A single compilation unit (main.cyr + all its `include`s, flattened) may carry at most **512** `#derive(...)` structs. libro is nowhere near that. *History:* through 6.0.51 the cap was **64**, and libro's `-D LIBRO_TPM` build (agnosys's 39 `#derive` + libro's 27 + a derived `tpm_anchor`) tripped it, so 2.6.5 hand-wrote `tpm_anchor`'s accessors. 6.0.53 raised the cap to 512 (verified: 512 builds, 513 fails `error: too many #derive structs in one file (max 512)`), and 2.7.1 restored `#derive(accessors)` on `tpm_anchor` and dropped the workaround. *Footnote:* 2.6.5 originally mis-attributed the 64-cap failure to the separate 256-entry type/struct *table* cap (6.0.51 raised that one to 1024); the `#derive` cap was always the real blocker. Upstream record: cyrius `docs/development/issues/2026-06-03-derive-struct-cap-64-is-real-tpm-blocker.md` (resolved by the 64 → 512 raise); original mis-attribution archived at `archived/2026-05-28-type-table-256-cap-silent-fail.md`.
 5. **TLS-backed stdlib modules must precede their consumers.** `lib/thread_local.cyr` (cyrius ≥ 6.0.52) installs per-thread storage via the CPU thread-pointer register; modules that bank state over it (sigil 3.6.0's `crypto_scratch`) must be `include`d *after* it. Wrong order links cleanly but SIGILLs at first use. See the BIG NOTE above.
 6. **A missing `include` is now a HARD ERROR (cyrius ≥ 6.1.35).** Earlier toolchains soft-skipped an `include` whose file was absent; 6.1.35 aborts the build with `error: cannot open include file: <path>`. This surfaced in the 2.7.3 bump. sigil's `dist/sigil.cyr` *inlines* the sha_ni / aes_ni modules but **intentionally** retains an opt-in `include "src/sha_ni.cyr"` / `include "src/aes_ni.cyr"` — libs are opt-in: a source-tree consumer that includes only `src/sha256.cyr` relies on that line to pull in the hardware-dispatch infra. In sigil 3.7.8 those opt-in includes were **unguarded**, so inside the bundle (where the file is absent from the fold) they soft-skipped on 6.1.23 but hard-error on 6.1.35. **Fix is the sigil 3.7.10 bump** — it `#ifndef`-guards them (`_SIGIL_SHA_NI_INCLUDED` / aes_ni marker) and `#define`s the marker where the bundle inlines the module, so the redundant include self-skips. This is the correct fix for the dual consumption model, not a workaround — there is no distlib bug. If a future dep bump reintroduces `cannot open include file: src/*.cyr`, the dep shipped an *unguarded* opt-in include — bump the dep to a guarded release, don't vendor the missing file.
@@ -328,7 +329,7 @@ Quirks still worth knowing:
 - Compound assignment `+=`, `-=`, `*=`, etc. — **work** since 3.10.3.
 - Undefined functions — now a **compile-time error**, not a silent NULL stub (was Bug #26 source).
 - 256-initialized-global cap — **removed**.
-- Fixup table cap — **raised to 16384** (was 8192).
+- Fixup table cap — **raised to 16384** (was 8192), and **growable since 6.2.0**.
 - 256-entry type/struct table cap — **raised to 1024** in 6.0.51 (was 256). Distinct from the per-file `#derive` cap in quirk 4; was never the TPM-build blocker.
 - Per-file `#derive` cap — **raised to 512** in 6.0.53 (was 64). This *was* the real `-D LIBRO_TPM` blocker; the 2.6.5 `tpm_anchor` hand-written-accessor workaround was removed in 2.7.1. See quirk 4.
 - **Constant-fold arithmetic (`_cfo` rewind class) — fixed across 6.4.74 / 6.4.80 / 6.4.81.** Through 6.4.79 a constant expression in the PEXPR tier (`+ - & | ^`) **silently discarded its left operand** whenever a literal subtraction produced a *negative* intermediate: `1 - 2 + 3` evaluated to `5`, `1 - 2 | 3` to `3`. Non-negative intermediates were always right, so it hid — 40 of 400 systematic 3-term expressions were wrong at 6.4.79, with every upstream gate green. 6.4.74 fixed the same mechanism one tier down (`PARSE_TERM`, 17 sites), 6.4.80 the PEXPR tier (16 sites), 6.4.81 a fourth occurrence under struct operator overloading. **libro was never affected** — a comment/string-stripped scan of `src/`, `benches/` and `fuzz/` at the 2.8.3 bump found zero expressions of the failing shape, and the suite reported an identical 502/514 either side. Worth remembering as a *method* note: the bug was found by running the compiler, not reading it, and a passing suite was not evidence — if you ever suspect miscompiled arithmetic, grep for the expression **shape**, don't trust the tests.

@@ -3,7 +3,7 @@
 ## Running the Full Suite
 
 ```bash
-# Build and run all tests (817 assertions expected, 0 failures)
+# Build and run all tests (819 assertions expected, 0 failures)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro && ./build/libro
 
 # Fuzz harness (12 targets, no-crash asserts, ~10 s)
@@ -17,7 +17,7 @@ CYRIUS_DCE=1 cyrius build fuzz/fuzz_libro.fcyr build/fuzz_libro && \
 # A benign `duplicate fn '_sigil_random_fill'` warning is expected here.
 cyrius deps --features tpm
 CYRIUS_DCE=1 cyrius build --features tpm -D LIBRO_TPM src/main.cyr build/libro_tpm && \
-    ./build/libro_tpm   # 829 assertions: 817 default + 12 TPM-gated
+    ./build/libro_tpm   # 831 assertions: 819 default + 12 TPM-gated
 
 # Restore the thin, tpm-free default afterwards — a bare `cyrius deps` does
 # NOT undo the above (it leaves one extra lock entry: 113 vs the honest 112).
@@ -84,7 +84,7 @@ The group list, in declaration order:
 - Gap coverage (retention / query / CSV / compliance presets / merkle
   16-leaf / stream recv-drain / filestore multi-append)
 
-**Total: 817 assertions default / 829 with `-D LIBRO_TPM`** across
+**Total: 819 assertions default / 831 with `-D LIBRO_TPM`** across
 these groups. Count moves with every sprint; the source of truth is
 the output of `./build/libro`, not this document.
 
@@ -93,7 +93,8 @@ the output of `./build/libro`, not this document.
 Three bench binaries ship 33 benchmarks total. The original core/io
 split landed in 1.2.0 because cc5 5.4.2's 16384 fixup-table cap
 couldn't hold a single combined binary after the 2.0 canonical-JSON
-walker landed. A third binary (`libro_proof.bcyr`) was added for
+walker landed. cyrius 6.2.0 made that table grow on demand; the split
+stays. A third binary (`libro_proof.bcyr`) was added for
 proof-path benches. The 2.2 / 2.3 / 2.4 cycle added rows for PQ /
 hybrid signing + PatraStore perf knobs; 2.7.2 added `proof_to_json_25`
 once cyrius 6.1.23 cleared the long-standing bench-context hijack.
@@ -113,13 +114,25 @@ once cyrius 6.1.23 cleared the long-standing bench-context hijack.
 | `merkle_consistency` | 100 | RFC 9162 consistency proof |
 | `sign_entry` | 1000 | Ed25519 sign |
 | `verify_sig` | 1000 | Ed25519 verify |
-| `mldsa65_sign_entry` | 100 | ML-DSA-65 sign (FIPS 204, sigil 3.0) |
+| `mldsa65_sign_entry` | 100 | ML-DSA-65 sign (FIPS 204) over a pinned key and entry hash — see below |
 | `mldsa65_verify_sig` | 100 | ML-DSA-65 verify (~2.2 ms — faster than Ed25519 verify; ML-DSA shipped via sigil 3.0) |
-| `hybrid_sign_entry` | 100 | Ed25519 + ML-DSA-65 sign (sum-of-two) |
+| `hybrid_sign_entry` | 100 | Ed25519 + ML-DSA-65 sign (sum-of-two), same pinned ML-DSA input |
 | `hybrid_verify_sig` | 100 | Ed25519 + ML-DSA-65 verify AND-mode |
 | `query_filter_100` | 1000 | `chain_query` over 100 entries |
 | `proof_unsigned_100` | 10 | unsigned integrity-proof build |
 | `hex_encode_32b` | 10000 | 32-byte hex encode |
+
+**The ML-DSA and hybrid rows sign one fixed (key, message) pair (2.11.2).**
+sigil's ML-DSA-65 signs deterministically, and its rejection loop runs a
+number of attempts set by the key and message together. Over 200 random
+pairs that was 1 to 25 attempts, about 0.7 ms each. The bench used to
+generate a fresh key and sign a freshly timestamped entry on every run, so
+its average moved 2.6–25.5 ms between runs with no code change. It now
+rebuilds the key's ML-DSA material from a fixed seed and signs a fixed
+64-hex entry hash, a pair that takes 5 attempts (FIPS 204 expects 5.1 for
+ML-DSA-65). Run to run it stays within about 7%, so an A/B on these rows
+measures the implementation. It does not measure the spread a real signer
+sees across keys and entries.
 
 ### libro_proof (3 benchmarks)
 
@@ -284,7 +297,7 @@ They exist to prevent regression of classes already caught in audits:
 | Manifest completeness | 2.0.1 (refined 2.5.0) | `[lib] modules` drifting from `src/main.cyr` includes; 2.5.0 skip `#ifdef`-gated includes for opt-in modules |
 | Specific-struct raw-offset guard | 2.0.1 + 2.0.2 | `load64(c+N)`, `load64(ip+N)`, etc. outside defining file |
 | Per-file allowlist | 2.0.4 (extended 2.5.0) | new raw-offset param names appearing in unregistered files; 2.5.0 registers `ta` for `src/tpm_anchor.cyr` |
-| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (817 → 829 assertions) |
+| TPM-opt-in build check | 2.5.0 | `-D LIBRO_TPM` build + tests pass (819 → 831 assertions) |
 | No raw syscalls | 2.10.3 | any `syscall(` outside a comment in `src/`, `benches/`, `fuzz/`, `tests/` — call the stdlib wrapper (`sys_*`, `xlseek`, `random_bytes`, `eprint`, `clock_epoch_secs`) |
 | Dist freshness | 1.1.1 (sidecar 2.10.7) | `dist/libro.cyr` or its `dist/libro.deps` sidecar missing or stale vs `src/`; `cyrius distlib` must also exit 0 |
 | Uninitialized-patra repro | 2.10.8 | `tests/patra_uninit.cyr` — a process that never calls `patra_init()`; `patrastore_open` must return 0, not SIGSEGV (the suite's own `main` runs `patra_init` first, so it cannot cover this) |

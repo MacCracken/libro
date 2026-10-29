@@ -630,7 +630,7 @@ fn _cjv_string(data, pos, slen) {
             if (pos + 1 >= slen) { return 0 - 1; }
             var e = load8(data + pos + 1) & 0xFF;
             if (e == 117) {
-                # \uXXXX — four hex digits required.
+                # \uXXXX — four hex digits required.  #skip-lint
                 if (pos + 5 >= slen) { return 0 - 1; }
                 var k = 0;
                 while (k < 4) {
@@ -830,7 +830,7 @@ fn canonical_json_is_valid(json_str) {
 # produced the SAME digest 015abd7f5cc57a2d…:
 #
 #     {"a":1}        {ZZZZ"a":1}      {"a":1 JUNK}
-#     {"a" 1}        {"a":1}XXXXXXX
+#     {"a" 1}        {"a":1}XXXXXXX  #skip-lint
 #
 # Those collisions are a forgery primitive, not a cosmetic defect: the
 # injected bytes sit INSIDE a stored `details`, so a record could be rewritten
@@ -1275,7 +1275,8 @@ fn _cjh_emit_array(data, start, slen, hasher) {
     return pos;
 }
 
-# Convert Str to null-terminated C string (for json_get lookup)
+# Convert Str to a null-terminated C string, for the paths and patra calls
+# that take one
 fn _entry_to_cstr(s) {
     if (s == 0) { return ""; }
     var len = str_len(s);

@@ -66,6 +66,7 @@ var _b_sig_pq = 0;
 var _b_sk_hy = 0;
 var _b_vk_hy = 0;
 var _b_sig_hy = 0;
+var _b_pq_entry = 0;
 
 fn bench_chain_append(ignored) {
     var c = chain_new();
@@ -132,33 +133,50 @@ fn bench_verify_sig(ignored) {
     return 0;
 }
 
-# ML-DSA-65 signing path. ~50–100× slower than Ed25519 by sigil's
-# published numbers; bench iteration counts dropped to keep the
-# total run time under the libro_core bench-binary budget.
+# ML-DSA-65 signing path. Bench iteration counts are dropped to keep
+# the total run time under the libro_core bench-binary budget.
+#
+# The ML-DSA and hybrid benches sign one fixed (key, message) pair,
+# `_b_pq_entry` under keys rebuilt from a fixed seed in main(). sigil
+# signs deterministically (FIPS 204, rnd = 0^32), and the rejection loop
+# runs a number of attempts set by that pair alone. Over 200 random pairs
+# it was 1 to 25 attempts, about 0.7 ms each, so a fresh random key and
+# entry per run moved the average 2x between runs with no code change.
+# The pinned pair takes 5 attempts; FIPS 204 expects 5.1 for ML-DSA-65.
 fn bench_mldsa_sign_entry(ignored) {
-    var e = vec_get(_b_entries, 0);
-    sign_entry(_b_sk_pq, e);
+    sign_entry(_b_sk_pq, _b_pq_entry);
     return 0;
 }
 
 fn bench_mldsa_verify_sig(ignored) {
-    var e = vec_get(_b_entries, 0);
-    verify_entry_signature(_b_vk_pq, e, _b_sig_pq);
+    verify_entry_signature(_b_vk_pq, _b_pq_entry, _b_sig_pq);
     return 0;
 }
 
 # Hybrid signing path. Cost is roughly Ed25519 + ML-DSA-65 added
 # (both primitives run, AND-mode); slightly higher than the sum
-# because of the extra hex_encode + struct allocation overhead.
+# because of the extra hex_encode + struct allocation overhead. Its
+# ML-DSA slot shares the seed above, so it runs the same 5 attempts.
 fn bench_hybrid_sign_entry(ignored) {
-    var e = vec_get(_b_entries, 0);
-    sign_entry(_b_sk_hy, e);
+    sign_entry(_b_sk_hy, _b_pq_entry);
     return 0;
 }
 
 fn bench_hybrid_verify_sig(ignored) {
-    var e = vec_get(_b_entries, 0);
-    verify_entry_signature(_b_vk_hy, e, _b_sig_hy);
+    verify_entry_signature(_b_vk_hy, _b_pq_entry, _b_sig_hy);
+    return 0;
+}
+
+# Rebuild the ML-DSA-65 key material in `sk`'s slot (2 for hybrid) from
+# `seed`, writing into the buffers the generator already sized.
+fn _b_pin_mldsa(sk, seed, slot) {
+    if (slot == 2) {
+        mldsa65_keypair_from_seed(seed, signing_key_pub_bytes_2(sk), signing_key_bytes_2(sk));
+        memcpy(signing_key_seed_2(sk), seed, 32);
+        return 0;
+    }
+    mldsa65_keypair_from_seed(seed, signing_key_pub_bytes(sk), signing_key_bytes(sk));
+    memcpy(signing_key_seed(sk), seed, 32);
     return 0;
 }
 
@@ -208,12 +226,27 @@ fn main() {
     _b_sk = signing_key_generate();
     _b_vk = verifying_key_from_signing(_b_sk);
     _b_sig = sign_entry(_b_sk, vec_get(_b_entries, 0));
+    # Fixed (key, message) for the ML-DSA and hybrid benches — see
+    # bench_mldsa_sign_entry.
+    var pq_seed = alloc(32);
+    memset(pq_seed, 7, 32);
+    _b_pq_entry = entry_new(SEV_INFO, str_from("bench-src"), str_from("bench-act"), _b_det,
+        entry_hash(vec_get(_b_entries, 0)));
+    entry_set_hash(_b_pq_entry,
+        str_from("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
     _b_sk_pq = signing_key_generate_mldsa();
+    _b_pin_mldsa(_b_sk_pq, pq_seed, 1);
     _b_vk_pq = verifying_key_from_signing(_b_sk_pq);
-    _b_sig_pq = sign_entry(_b_sk_pq, vec_get(_b_entries, 0));
+    _b_sig_pq = sign_entry(_b_sk_pq, _b_pq_entry);
     _b_sk_hy = signing_key_generate_hybrid();
+    _b_pin_mldsa(_b_sk_hy, pq_seed, 2);
     _b_vk_hy = verifying_key_from_signing(_b_sk_hy);
-    _b_sig_hy = sign_entry(_b_sk_hy, vec_get(_b_entries, 0));
+    _b_sig_hy = sign_entry(_b_sk_hy, _b_pq_entry);
+    if (verify_entry_signature(_b_vk_pq, _b_pq_entry, _b_sig_pq) != 1
+        || verify_entry_signature(_b_vk_hy, _b_pq_entry, _b_sig_hy) != 1) {
+        println("bench setup: pinned ML-DSA key does not verify");
+        return 1;
+    }
 
     _b_batch_sev = vec_new();
     _b_batch_src = vec_new();
@@ -275,9 +308,8 @@ fn main() {
     vec_push(benches, b10);
 
     # ML-DSA-65 (NIST FIPS 204) — iter counts kept low because per-op
-    # cost is O(ms): sigil's published numbers are ~5 ms sign / ~2 ms
-    # verify on x86_64. 100 iters × 5ms = ~0.5s per bench run, which
-    # keeps the bench binary under a couple of seconds total.
+    # cost is O(ms): about 6 ms sign (the pinned 5-attempt pair) and
+    # 2 ms verify here. 100 iters keeps each bench under a second.
     var b10p = bench_new("mldsa65_sign_entry");
     bench_run(b10p, &bench_mldsa_sign_entry, 100);
     vec_push(benches, b10p);

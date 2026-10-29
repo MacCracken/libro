@@ -2,7 +2,7 @@
 #
 # Opt-in: this module is `include`d from `src/main.cyr` only when
 # the `LIBRO_TPM` define is set. Default builds (no `-D LIBRO_TPM=1`)
-# don't pull this in, don't link agnosys's tpm_* surface, and don't
+# don't pull this in, don't link sigil-tpm's tpm_* surface, and don't
 # pay any binary-size cost. Consumers wanting hardware-backed anchor
 # attestation flip the build define on.
 #
@@ -48,7 +48,7 @@ enum TpmAnchorVerify {
 # idiom in anchoring.cyr; `ta` stays the allowlisted raw-offset param.
 #
 # History: 2.6.5 hand-wrote load64/store64 accessors because the
-# `-D LIBRO_TPM` build (agnosys's 39 `#derive` structs + libro's 27 +
+# `-D LIBRO_TPM` build (then-agnosys's 39 `#derive` structs + libro's 27 +
 # tpm_anchor's would-be derive) tripped cyrius's per-file `#derive` cap
 # of 64. 6.0.53 raised that cap to 512 (verified: 512 builds, 513 fails
 # `max 512`), so the derive is back and the hand-written accessors are
@@ -61,7 +61,7 @@ enum TpmAnchorVerify {
 #                    `anchor` type defined in anchoring.cyr).
 #                    Verification of the underlying claim uses this.
 #   sealed_ctx     — opaque sealed-handle pointer returned by
-#                    agnosys's tpm_seal(). Points at a tpm_sealed
+#                    sigil-tpm's tpm_seal(). Points at a tpm_sealed
 #                    struct that owns the sealed.ctx file path and
 #                    PCR selection string.
 #   pcr_indices    — vec of i64 PCR indices used at seal time.

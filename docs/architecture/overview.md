@@ -6,7 +6,7 @@
 libro (Cyrius library, single-file compilation)
 ├── error          — Structured error types (field / index / expected-vs-actual)
 ├── hasher         — SHA-256 wrapper, hex encode/decode, length-prefixed hashing
-│                    (delegates to sigil for SHA-256 + hex + ct_eq)
+│                    (sigil for SHA-256 + hex; stdlib lib/ct.cyr for ct_eq*)
 ├── entry          — AuditEntry, UUID v4, RFC 3339 timestamps, canonical JSON
 ├── verify         — Standalone verify_chain(entries, base_index) for loose entries
 ├── query          — QueryFilter: composable multi-field filtering (ANDed)
@@ -16,10 +16,10 @@ libro (Cyrius library, single-file compilation)
 ├── store          — MemoryStore: in-memory backend with streaming verification
 ├── export         — JSON Lines and CSV export with field escaping
 ├── review         — ChainReview: structured summary with integrity status
-├── merkle         — MerkleTree: inclusion proofs, RFC 9162 consistency proofs,
-│                    canonical roots
+├── merkle         — MerkleTree: RFC 9162 leaf/node domain separation,
+│                    inclusion and consistency proofs, canonical roots
 ├── signing        — Polymorphic signing dispatch: Ed25519 / ML-DSA-65 / hybrid
-│                    via sigil 3.0; getrandom + secret-var entropy gathering
+│                    via sigil; getrandom + secret-var entropy gathering
 ├── anchoring      — WitnessAnchor: self-hashing snapshots, anchor meta-chain
 ├── timestamping   — RFC 3161 DER encoding/decoding, timestamp attestations
 ├── proof          — IntegrityProof: signed tree heads, inclusion/consistency bundles
@@ -39,7 +39,7 @@ libro (Cyrius library, single-file compilation)
 list in `cyrius.cyml` `[lib] modules`; CI enforces it matches the
 non-#ifdef-gated include list in `src/main.cyr`. `tpm_anchor.cyr`
 is deliberately excluded from `[lib].modules` so the default
-`dist/libro.cyr` bundle doesn't link agnosys's tpm_* surface;
+`dist/libro.cyr` bundle doesn't link sigil-tpm's tpm_* surface;
 consumers wanting TPM build from source with `-D LIBRO_TPM` or
 vendor the module directly.
 
@@ -48,12 +48,13 @@ vendor the module directly.
 - **Append-only** — entries cannot be modified or deleted after creation
 - **Integrity by construction** — `entry_new` computes the hash at
   construction time; it cannot be skipped
-- **Own the stack** — Cyrius stdlib + sigil (crypto) + patra (SQL) +
-  agnosys (kernel/TPM); no third-party crates
+- **Own the stack** — Cyrius stdlib + sigil (crypto; TPM behind the
+  optional `tpm` feature) + patra (SQL); no third-party crates
 - **Deterministic hashing** — nested scalar-aware canonical JSON
   (ADR 0007) + length-prefixed variable fields
-- **Constant-time security-critical compares** — via sigil's branchless
-  `ct_eq`, routed through `constant_time_eq_str`
+- **Constant-time security-critical compares** — via stdlib
+  `lib/ct.cyr`'s branchless `ct_eq_bytes_lens`, routed through
+  `constant_time_eq_str`
 - **Declarative struct layout** — every `struct` uses
   `#derive(accessors)` (ADR 0005); cross-module raw offsets are
   CI-forbidden
@@ -88,7 +89,7 @@ Event → entry_new() → hash computed → chain_append() / chain_append_batch(
                                                │
                                                ▼
                                    proof_build_unsigned /
-                                   proof_build_signed (Ed25519)
+                                   proof_build_signed (any sig alg)
                                                │
                                                ▼
                                         IntegrityProof
@@ -148,19 +149,26 @@ entry_hash = SHA-256(
     || canonical_json(details)                       ← recursive byte-walker
     || LE_u64(len(agent_id))          || agent_id
     || LE_u64(len(prev_hash))         || prev_hash
+    || LE_u64(len(hash_algorithm))    || hash_algorithm   ← 2.8.11
 )
 ```
 
 **Length prefixes** (LE u64 before each variable field) prevent
 second-preimage via field-boundary shifting.
 
-**Canonical JSON** for `details`, added in 2.0 (ADR 0007), is a
-depth-unlimited recursive byte-walker:
-- Objects sort keys lexicographically, emit `"key":<value>` separated
-  by `,`
-- Arrays preserve source order
-- Scalars emit verbatim with native JSON type (number / bool / null /
-  string) — no type-coercion to string
+**Canonical JSON** for `details`, added in 2.0 (ADR 0007, with its
+2.8.11 and 2.8.12 amendments), is a recursive byte-walker:
+- Malformed `details` is rejected, not skipped (2.8.11): junk before a
+  key, after a value, a missing colon or trailing bytes no longer hash
+  like the well-formed object
+- Objects sort keys by their decoded form and emit `"key":<value>`
+  separated by `,`; arrays preserve source order
+- Strings are decoded and re-escaped minimally, so `"\u0041"` and `"A"`
+  hash alike; surrogate pairs decode to real UTF-8 (2.8.12)
+- Numbers normalize to an exact plain decimal, so `1`, `1.0`, `1e0` and
+  `10e-1` hash alike (2.8.12); bools and `null` keep their JSON type,
+  with no coercion to string, and an empty `details` no longer collides
+  with the literal `null`
 - The 1.x string-quoting canonicalizer is superseded; it had a latent
   second-preimage primitive via value-type coercion (`{"n": 42}` and
   `{"n": "42"}` hashed identically). Flat all-string objects hash the
@@ -246,13 +254,11 @@ trust model + when it does and doesn't apply.
 
 ## Consumers
 
-| Project | Audit Domain |
-|---------|-------------|
-| daimon  | Agent lifecycle (register, sandbox, deregister) |
-| aegis   | Security events (policy violations, intrusions) |
-| stiva   | Container lifecycle (create, start, stop, kill) |
-| sigil   | Trust decisions (signatures, key rotation) |
-| ark     | Package events (install, update, remove) |
+Ten repos pin `[deps.libro]` (checked 2026-10-28): agnostic, argonaut
+(audit), bote (storage, and the `libro_*` MCP tools),
+cyrius-yeomans-descent, daimon (agent lifecycle audit), kybernet, nein,
+phylax, stiva (container lifecycle) and t-ron. aegis (security events)
+reaches libro through nein. sigil and ark do not consume libro.
 
 Downstream consumers pull libro via `[deps.libro]` in their own
 `cyrius.cyml`; `cyrius deps` fetches `dist/libro.cyr` at the pinned

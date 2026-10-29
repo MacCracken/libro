@@ -71,7 +71,7 @@ cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([
 # Build (DCE matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests (817 assertions default / 829 with -D LIBRO_TPM, 0 failures expected)
+# Run tests (819 assertions default / 831 with -D LIBRO_TPM, 0 failures expected)
 ./build/libro
 
 # Run benchmarks
@@ -145,7 +145,7 @@ assert(chain_verify(restored) == 0, "round-trip preserves integrity");
 ## Project structure
 
 ```
-src/main.cyr             Entry point + 817/829 inline tests (default / LIBRO_TPM)
+src/main.cyr             Entry point + 819/831 inline tests (default / LIBRO_TPM)
 src/*.cyr                21 library modules + src/tpm_anchor.cyr (opt-in via -D LIBRO_TPM)
 benches/libro_core.bcyr  18 core benchmarks (sha256/chain/merkle/sign/PQ/hybrid)
 benches/libro_io.bcyr    12 i/o benchmarks (export/review/anchor/stream/filestore/patra perf)
@@ -176,7 +176,7 @@ docs/                   Architecture, guides, threat model, compliance, ADRs, au
 - [ADR 0001 — Cyrius port from Rust](docs/adr/0001-cyrius-port.md)
 - [ADR 0002 — SHA-256 only (BLAKE3 dropped)](docs/adr/0002-sha256-only.md)
 - [ADR 0003 — HMAC signing (superseded by 1.0.2 Ed25519 via sigil)](docs/adr/0003-hmac-signing.md)
-- [ADR 0004 — MemoryStore as primary backend](docs/adr/0004-memorystore-primary.md)
+- [ADR 0004 — MemoryStore as primary backend (superseded by 1.0.1 FileStore and 1.0.2 PatraStore)](docs/adr/0004-memorystore-primary.md)
 - [ADR 0005 — `#derive(accessors)` adoption (2.0)](docs/adr/0005-derive-accessors.md)
 - [ADR 0006 — dist artifact contract (2.0)](docs/adr/0006-dist-artifact-contract.md)
 - [ADR 0007 — Nested scalar-aware canonical-JSON hashing (2.0)](docs/adr/0007-canonical-json-hashing.md)

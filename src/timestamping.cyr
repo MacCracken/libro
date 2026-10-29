@@ -418,8 +418,9 @@ struct ts_attestation { hash; subject; algorithm; token; tsa_url; created_at; }
 # ⚠ SCOPE OF VERIFICATION — read this before relying on the result.
 # libro checks that the response is well-formed DER, that its PKIStatus is
 # granted, and that a token is present. It does NOT verify the TSA's CMS
-# signature over the token, and it does NOT yet parse TSTInfo to confirm the
-# token's messageImprint matches `hash` or that the nonce echoes the request.
+# signature over the token, and it does NOT yet parse TSTInfo (roadmap 2.12.0)
+# to confirm the token's messageImprint matches `hash` or that the nonce echoes
+# the request.
 # So an attestation proves "a syntactically valid granted response was
 # obtained", not "a trusted TSA attested to THIS hash at THAT time" — and a
 # genuine response for one hash can still be presented alongside another.

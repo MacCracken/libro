@@ -11,7 +11,7 @@ cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([
 ```
 
 As of this release the pin is **6.7.18**. If you've just cloned libro fresh,
-you may also need `cyrius deps` once to populate the `lib/` symlinks. Libro
+run `cyrius deps` once to populate `lib/` (gitignored). Libro
 resolves a **thin** sigil surface (`lib/sigil-mldsa.cyr` plus
 `lib/sigil_{sha_ni,sha256,hex}.cyr`) rather than the monolithic
 `lib/sigil.cyr` — pulling the full bundle re-inlines an x509/RSA fold libro
@@ -26,7 +26,7 @@ cd libro
 # Build (CYRIUS_DCE=1 matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "817 passed, 0 failed"
+# Run tests — expect "819 passed, 0 failed"
 ./build/libro
 ```
 
@@ -37,24 +37,36 @@ either include them individually (useful inside the libro repo) or pull the
 committed `dist/libro.cyr` bundle via `cyrius deps` (what downstream projects
 actually do — see [DEPS-PATTERN.md](../../DEPS-PATTERN.md)).
 
-For in-repo exploration, include the stdlib, sigil, patra, then the libro
-modules in the order `src/main.cyr` uses:
+For in-repo exploration, include the stdlib and patra, then the libro modules,
+in the order `src/main.cyr` uses. There is no sigil include: inside the repo,
+`cyrius build` auto-includes the thin `[deps.sigil]` surface from `cyrius.cyml`
+(`sigil-mldsa` plus `sigil_{sha_ni,sha256,hex}`). Do not include
+`lib/sigil.cyr`: the monolith adds ~13 MB of static `.bss` that libro never uses.
 
 ```cyrius
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
-include "lib/vec.cyr"
+include "lib/freelist.cyr"
 include "lib/str.cyr"
-include "lib/fmt.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
-include "lib/freelist.cyr"
-include "lib/hashmap.cyr"
-include "lib/bayan.cyr"       # json + bigint (cyrius 6.1.25 carve)
+include "lib/fs.cyr"
+include "lib/fmt.cyr"
+include "lib/bayan.cyr"         # for sigil-mldsa's u256_* helpers; libro calls none of it
 include "lib/sakshi.cyr"
 include "lib/chrono.cyr"
-include "lib/sigil.cyr"       # SHA-256 + Ed25519 + ct_eq
-include "lib/patra.cyr"       # SQL storage (only if you need PatraStore)
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+include "lib/ct.cyr"            # constant-time compare (ct_eq*)
+include "lib/keccak.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"  # must precede sigil, or the binary SIGILLs at runtime
+include "lib/slice.cyr"
+include "lib/random.cyr"
+include "lib/patra.cyr"         # SQL storage (PatraStore)
 
 # Libro modules — order matches src/main.cyr's include list.
 include "src/error.cyr"

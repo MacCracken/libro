@@ -16,10 +16,10 @@ and what to watch when upgrading.
 
 Zero third-party crates. No transitive graph to audit.
 
-**Two structural changes since the 2.7.x line, both landed in 2.8.0:**
+**Two structural changes since the 2.7.x line (2.7.5 and 2.8.0):**
 
-1. **`agnosys` is gone.** libro's only agnosys surface was the TPM primitives used by `src/tpm_anchor.cyr`. The agnosys → agnodrm decomposition (2026-06-19) moved the trust stack into sigil, which promoted TPM to first-class at 3.9.0 — so TPM now resolves from the sigil pin and the separate `[deps.agnosys]` entry was removed. `src/tpm_anchor.cyr` is unchanged: same symbol names, different source.
-2. **The sigil surface is thin, and that is load-bearing.** `cyrius build` auto-includes every *active* `[deps.*]` module, so a fat dep dist lands in every binary whether or not `src/*.cyr` includes it. The monolithic `dist/sigil.cyr` inlines an x509/RSA/authenticode fold carrying ~13 MB of static `.bss` libro never calls — it put `build/libro` at ~14 MB. `[deps.sigil]` therefore pulls only `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`, and TPM sits behind the optional `tpm` feature so default builds never link it. `.bss` is **80,152 B** at 2.8.3. Do not "simplify" this back to the monolith. See CLAUDE.md quirk #9 — including the trap that any isolation test must be built **outside** the project dir, or the manifest auto-include silently pulls the full surface into your control build too.
+1. **`agnosys` is gone.** libro's only agnosys surface was the TPM primitives used by `src/tpm_anchor.cyr`. The agnosys → agnodrm decomposition (2026-06-19) moved the trust stack into sigil, which promoted TPM to first-class at 3.9.0 — so 2.7.5 removed the separate `[deps.agnosys]` entry and TPM now resolves from the sigil pin. `src/tpm_anchor.cyr` is unchanged: same symbol names, different source.
+2. **The sigil surface is thin, and that is load-bearing.** `cyrius build` auto-includes every *active* `[deps.*]` module, so a fat dep dist lands in every binary whether or not `src/*.cyr` includes it. The monolithic `dist/sigil.cyr` inlines an x509/RSA/authenticode fold carrying ~13 MB of static `.bss` libro never calls — it put `build/libro` at ~14 MB. `[deps.sigil]` therefore pulls only `dist/sigil-mldsa.cyr` + `src/{sha_ni,sha256,hex}.cyr`, and TPM sits behind the optional `tpm` feature so default builds never link it. The default binary is **988,864 B** at 2.11.2 (1,007,848 B with `tpm`); most of its growth since 2.11.0 is bayan's Unicode tables, not sigil (see below). Do not "simplify" this back to the monolith. See CLAUDE.md quirk #9 — including the trap that any isolation test must be built **outside** the project dir, or the manifest auto-include silently pulls the full surface into your control build too.
 
 ## Upstream items libro is waiting on
 
@@ -55,18 +55,40 @@ sites should revert to `str_from("")`.
 / `alg` parameters as `: Str` would have caught Finding 9 at the call site. The
 argument-passing direction of this check does not exist today.
 
+### bayan's Unicode tables ride into every build
+
+libro's library modules call no bayan function: the canonical-JSON hasher has
+its own decoder (`json_str_decode`, `src/entry.cyr`), and only
+`fuzz/fuzz_libro.fcyr` calls `json_parse`. bayan reaches every build anyway,
+through sigil-mldsa's `# Requires` block, which uses bayan's legacy `u256_*`
+compat names that only the full bayan bundle (`lib/bayan.cyr`) defines.
+
+Since cyrius 6.7.13 (bayan 1.9.0) the full bayan bundle's own `# Requires`
+pulls all seven `lib/unicode/` files for its markdown parser. Their tables
+(about 307 KB) are top-level string `var`s, and DCE removes unreachable
+functions, not global initializers, so they stay whether or not anything reads
+them. They are most of why the default binary went 679,496 B (2.11.0) →
+988,864 B (2.11.1): +283,624 B came from the 6.7.18 stdlib as data, not code,
+and +25,048 B from patra 1.16.1–1.16.6's code. The per-pin split is in the
+2.11.1 CHANGELOG entry.
+
+**What would fix it upstream:** sigil-mldsa requiring `bayan-bigint` (it would
+then call the `bayan_u256_*` names), or DCE dropping global initializers that
+no live code reads. A libro manifest edit cannot.
+
 ## Cyrius stdlib modules used
 
 These ship with the Cyrius toolchain and land in `~/.cyrius/versions/<ver>/lib/`.
 `cyrius.cyml` `[deps] stdlib = […]` mirrors what `src/main.cyr`
-includes so the manifest stays load-bearing.
+includes, plus what the benches, fuzz and `tests/` harnesses include, so
+the manifest stays load-bearing.
 
 | Module        | Purpose |
 |---------------|---------|
 | `alloc`       | Bump allocator for long-lived buffers |
 | `assert`      | Test assertions |
 | `atomic`      | Atomic primitives — sigil / patra dep |
-| `bayan`       | Bundled data-format dist (cyrius 6.1.25 carve) — supplies `json` parse/build (canonical-JSON hashing) and `bigint` (timestamping DER); also bundles base64/csv/toml/cyml/u128. Back-compat shim forwards legacy `json_*`/`bigint_*` names. |
+| `bayan`       | Bundled data-format dist (cyrius 6.1.25 carve: json / bigint / base64 / csv / toml / cyml / u128); back-compat shim forwards legacy `json_*`/`bigint_*` names. libro's library modules call none of it (timestamping DER is hand-rolled, canonical JSON has its own decoder); only the fuzz harness calls `json_parse`. Required by sigil-mldsa for the `u256_*` helpers — see "bayan's Unicode tables" above. |
 | `bench`       | Nanosecond benchmarking harness |
 | `chrono`      | Civil date arithmetic, epoch-to-RFC-3339 conversion |
 | `ct`          | Constant-time helpers (`ct_eq_bytes`, `ct_select`) — sigil dep |
@@ -86,8 +108,8 @@ includes so the manifest stays load-bearing.
 | `sync`        | Synchronisation primitives — sigil / patra dep |
 | `syscalls`    | Linux syscall wrappers (per-arch dispatched) |
 | `tagged`      | Tagged unions (Result, Option) — sigil dep |
-| `test`        | `test_each` table-driven harness (held in deps but not yet exercised) |
-| `thread`      | Mutex / spawn primitives — sigil parallel-batch-verify dep |
+| `test`        | `test_each` table-driven harness (listed in deps; no harness includes it) |
+| `thread`      | Thread spawn (`thread_create`) — the suite's cross-thread tests (Merkle tag buffer, concurrent hashing, PatraStore read from a worker) |
 | `thread_local`| Per-thread storage (cyrius ≥ 6.0.52). **Must precede the sigil folds** — sigil's `crypto_scratch` banks over it, and wrong order links clean but SIGILLs at first crypto use (exit 132, no output). Also supplies `thread_local_alloc`, which sigil ≥ 3.12.1 and patra ≥ 1.12.12 both call — hence the **cyrius ≥ 6.4.65 floor** those deps impose |
 | `vec`         | Dynamic vector |
 
@@ -100,8 +122,8 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   the canonical installer (`scripts/install.sh` via curl, or
   `cyriusly install <ver>` which calls it) is enough to change the
   toolchain.
-- Every toolchain bump needs a full test + fuzz + bench pass (518
-  default / 530 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
+- Every toolchain bump needs a full test + fuzz + bench pass (819
+  default / 831 with `-D LIBRO_TPM`, 12 fuzz targets, 33 benches
   across three binaries) because codegen changes can surface subtle
   behavioral deltas. 2.1.0 jumped 5.4.7 → 5.10.34 in one step —
   pulled `secret var`, `getrandom`, `lib/ct.cyr`, `lib/keccak.cyr`,
@@ -122,17 +144,19 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   same for any future bump that names a silent-wrong-value fix.
 - **Check capacity headroom, don't assume it.** `CYRIUS_STATS=1
   CYRIUS_DCE=1 cyrius build src/main.cyr <out>` reports `fn_table`,
-  `identifiers` and `code_size` against their ceilings. At 2.8.3 libro
-  is at `fn_table 2167 / 32768` and `identifiers 58749 / 524288`. This
+  `identifiers`, `var_table` and `code_size` against their ceilings. At
+  2.11.2 libro is at `fn_table 3498 / 131072`, `identifiers 94961 /
+  8388608` and `var_table 1503 / 1048576`. This
   matters because 6.4.75 fixed a P0 where `fn_table` growth past 8192
   silently corrupted six fn-indexed side tables and the DCE `live[]`
   bitmap cleared only 1/4 its size — libro was never in range, but a
   harness that grows past 8192 fns on an older toolchain would be.
-- Watch the **fixup-table cap** — cc5 5.4.2 raised it to 16384 (from
-  8192 in cc3); 5.10.x preserved it. All three bench binaries sit
-  comfortably under the cap (the 2.0.5 split into core/io/proof gave
-  enough headroom for the 2.2/2.3 PQ + hybrid additions). The bench
-  binaries are deliberately split (ADR 0006 notes the constraint).
+- The **fixup-table cap** that split the benches is gone. cc5 5.4.2's
+  16384-entry cap forced the 1.2.0 core/io split and the 2.0.5
+  `libro_proof` binary; since cyrius 6.2.0 the table is growable
+  (initial 1,048,576 entries, doubling up to a 64M-entry ceiling —
+  cyrius `src/backend/common/runtime.cyr`, `RECFIX`). The benches stay
+  in three binaries; `docs/guides/testing.md` records why they split.
 
 ### sigil
 - Provides all cryptographic primitives libro uses. A sigil CVE
@@ -145,14 +169,18 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   stdlib` list grew in 2.1.0.
 - Upgrade path: bump the tag in **both** `[deps.sigil]` and
   `[deps.sigil_tpm]` (they must stay in lockstep — same repo, same
-  tag), run `cyrius deps` to resync the thin folds, rebuild + retest +
-  rerun fuzz. The `fuzz_sig_verify` and `fuzz_sha256` targets exercise
-  the Ed25519 + SHA-256 surface; ML-DSA / hybrid coverage lives in
+  tag — and equal the sigil version the pinned cyrius folds: 6.7.18
+  folds 3.13.15), run `cyrius deps` to resync the thin folds, rebuild +
+  retest + rerun fuzz. The `fuzz_sig_verify` and `fuzz_sha256` targets
+  exercise the Ed25519 + SHA-256 surface; ML-DSA / hybrid coverage lives in
   `src/main.cyr` test groups "Signing (ML-DSA-65)" and
   "Signing (Hybrid Ed25519+ML-DSA-65)". Verify the TPM path separately
   with `cyrius deps --features tpm` + `cyrius build --features tpm -D
-  LIBRO_TPM`, then restore the default resolution with a bare
-  `cyrius deps`.
+  LIBRO_TPM`, then restore the default resolution with
+  `rm -rf lib && cyrius lib sync --full && cyrius deps`. A bare
+  `cyrius deps` does not undo the tpm resolve: it leaves
+  `lib/sigil_tpm_sigil-tpm.cyr` in place (6.7.18 names it as outside
+  the declared footprint).
 - **Watch the module list, not just the tag.** The pin names specific
   files (`dist/sigil-mldsa.cyr`, `src/{sha_ni,sha256,hex}.cyr`,
   `dist/sigil-tpm.cyr`). A sigil release that renames or re-folds any
@@ -168,20 +196,21 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   (and sigil `sys_uname` from `lib/sys.cyr`) that first ship in **cyrius
   6.6.4**. On 6.6.2 the build fails with `undefined variable 'O_NOFOLLOW'`
   in `lib/patra.cyr`. Measured with the `path = "../patra"` sibling at
-  1.14.3 under the 6.6.2 pin — the sibling beats the tag locally, so a
-  dep checkout that is newer than the pin breaks the build without any
-  manifest edit.
+  1.14.3 under the 6.6.2 pin, when a `path` line beat the tag locally.
+  Since cyrius 6.7.6 a default resolve ignores a `path` line and builds
+  the tag; `CYRIUS_LOCAL=<dep>` builds the sibling into
+  `build/local-deps/lib/` instead, leaving `lib/` and the lock alone.
 - sigil's SHA-256, Ed25519, and ML-DSA-65 are pure-Cyrius
   implementations; none is FIPS 140-3 validated (see
   `docs/compliance/standards-mapping.md` §FIPS 140-3).
-- Sigil 3.0.0 shipped parallel-batch-verify infrastructure
-  (`sv_verify_batch`) but the workers serialized on a full-call mutex
-  through the 3.0–3.5 line (correctness-only, ~1× serial throughput).
-  **sigil 3.6.0 (libro 2.7.1) made it truly parallel** — dropped the
-  per-call mutex over cyrius 6.0.52 thread-local storage (~3.42× at
-  64 artifacts / 4 workers). Libro inherits the speedup on its
-  batch-verify path with no API change; the former roadmap
-  ecosystem-blocked item is retired.
+- sigil's parallel `sv_verify_batch` (truly parallel since sigil 3.6.0,
+  ~3.42× at 64 artifacts / 4 workers) **does not apply to libro.** It
+  verifies file artifacts (`{path, type}` records) against sigil's
+  trust store, not entry signatures; it lives in the monolithic
+  `dist/sigil.cyr`, outside libro's thin surface, and nothing in
+  `src/` calls it. libro verifies entry signatures one at a time
+  (`verify_entry_signature`); a consumer verifying a large chain can
+  parallelize across entries itself.
 
 ### patra
 - Provides SQL storage for `PatraStore` (`src/patra_store.cyr`).
@@ -189,10 +218,18 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
   STR-keyed btree indexes (1.7.0), group-commit sync modes (1.8.0),
   prepared statements (1.8.2), aarch64-portable syscall wrappers
   (1.9.1–1.9.3). PatraStore's `patrastore_append_batch`,
-  `patrastore_set_sync_mode`, `patrastore_create_source_index`, and
-  the transparent prepared-SELECT/COUNT wiring all depend on these.
-- Upgrade path: bump `[deps.patra] tag`, `cyrius deps`, rebuild +
-  retest. PatraStore has two test groups in `src/main.cyr` ("PatraStore"
+  `patrastore_set_sync_mode` and `patrastore_create_source_index`
+  depend on these; `patrastore_append` and `patrastore_by_source` bind
+  their values through patra prepared statements (2.8.1 / 2.8.11). The
+  SELECT / COUNT statements prepared once at open were dropped in
+  2.8.9, because patra's parse scratch is per-thread.
+- `patrastore_open` refuses before `patra_init()` has run by asking
+  patra's public `patra_initialized()` (libro ≥ 2.11.1), which first
+  ships in **patra 1.16.1** — an older patra tag does not build.
+- Upgrade path: bump `[deps.patra] tag` (it equals the patra version
+  the pinned cyrius folds — 6.7.18 folds 1.16.6 — so `lib/patra.cyr`
+  is the fold byte for byte), `cyrius deps`, rebuild + retest.
+  PatraStore has two test groups in `src/main.cyr` ("PatraStore"
   + "PatraStore (perf tier — 2.4.0)") covering append / load /
   verify / query / transaction / persistence / sync-mode /
   batch-correctness / prepared statements / indexed by_source —
@@ -200,14 +237,14 @@ The dep list grew significantly in 2.1.0 to satisfy sigil 3.0.1's bundle require
 - patra's own fuzz harness + test suite run in the patra repo at the
   `patra-core` level; libro's pin gives you a known-stable baseline.
 
-### agnosys — RETIRED (2.8.0)
+### agnosys — RETIRED (2.7.5)
 
 No longer a libro dependency. Libro's only agnosys surface was the TPM
 2.0 primitives (`tpm_detect`, `tpm_seal`, `tpm_unseal`) used by the
 opt-in `src/tpm_anchor.cyr`. The agnosys → agnodrm decomposition
 (2026-06-19) moved the trust stack into sigil, which promoted TPM to
-first-class at 3.9.0 — so `[deps.agnosys]` was removed and TPM now
-resolves from `[deps.sigil_tpm]`. `src/tpm_anchor.cyr` needed no
+first-class at 3.9.0 — so 2.7.5 removed `[deps.agnosys]`, and 2.8.0
+moved TPM behind the optional `[deps.sigil_tpm]`. `src/tpm_anchor.cyr` needed no
 change: the symbol names are identical, only the source moved.
 
 Two consequences worth keeping straight:
@@ -276,9 +313,10 @@ Two consequences worth keeping straight:
   migrated the stdlib `json`/`bigint`
   includes to the bundled **`bayan`** dist (6.1.25 carve); the
   back-compat shim keeps `json_*`/`bigint_*` call sites unchanged.
-- **v2.8.0**: no new primitives — a **dependency-shape** change. TPM
-  re-sourced from agnosys to sigil (3.9.0 promoted it to first-class)
-  and `[deps.agnosys]` dropped; the sigil surface thinned from the
+- **v2.7.5**: TPM re-sourced from agnosys to sigil (3.9.0 promoted it
+  to first-class) and `[deps.agnosys]` dropped.
+- **v2.8.0**: no new primitives — a **dependency-shape** change. The
+  sigil surface thinned from the
   monolithic `dist/sigil.cyr` to `dist/sigil-mldsa.cyr` +
   `src/{sha_ni,sha256,hex}.cyr`, with TPM moved behind an optional
   `tpm` feature. Cut `build/libro` ~14 MB → ~724 KB by dropping the
@@ -298,8 +336,11 @@ Two consequences worth keeping straight:
 
 ## Watch list (ecosystem)
 
-Items the roadmap tracks as blocked on upstream capability (from
-`docs/development/roadmap.md`):
+Items that were blocked on upstream capability, and how each resolved.
+The current list, each item with its unblocker, is the roadmap's
+**2.x.x — Blocked upstream** section (`docs/development/roadmap.md`);
+the two blocked on sigil are RFC 3161 TSA signature verification and
+FIPS 140-3.
 
 - **Post-quantum signatures (ML-DSA-65, FIPS 204)** — ✅ **shipped
   in libro 2.2.0** via sigil 3.0.0. Unblocker chain was Cyrius
@@ -309,14 +350,14 @@ Items the roadmap tracks as blocked on upstream capability (from
   2.3.0** via sigil 3.0.0's `sigil_verify_hybrid`. AND-mode
   verification gates both primitives.
 - **TPM-backed chain sealing** — ✅ **shipped in libro 2.5.0** via
-  agnosys 1.0.4's `tpm_seal`/`tpm_unseal`. Opt-in
-  `src/tpm_anchor.cyr` behind `-D LIBRO_TPM`; default builds keep
-  no agnosys-TPM surface linked.
-- **Parallel batch verify** — ✅ **shipped via sigil 3.6.0 (libro
-  2.7.1)**. The 3.0 `sv_verify_batch` infrastructure serialized on a
-  full-call mutex; 3.6.0 dropped it over cyrius 6.0.52 thread-local
-  storage for true parallelism (~3.42× at 64 artifacts / 4 workers).
-  Libro inherits the speedup with no API change.
+  agnosys 1.0.4's `tpm_seal`/`tpm_unseal`, re-sourced to sigil in
+  2.7.5 and behind the optional `[deps.sigil_tpm]` since 2.8.0. Opt-in `src/tpm_anchor.cyr` behind
+  `-D LIBRO_TPM` and the `tpm` feature; default builds resolve and
+  link no TPM surface.
+- **Parallel batch verify** — not a libro item. sigil 3.6.0 made
+  `sv_verify_batch` truly parallel, but that API verifies file
+  artifacts against sigil's trust store, not entry signatures, and
+  libro does not call it (see the sigil notes above).
 - **Multi-node chain sync** — blocked on an AGNOS-level federation
   protocol; libro would gain a second meta-chain layer over the
   existing WitnessAnchor primitive.

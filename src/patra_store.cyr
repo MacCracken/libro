@@ -211,13 +211,12 @@ fn patrastore_flush(s) {
 }
 
 # ================================================================
-# Append — build INSERT SQL and execute
+# Append — prepared INSERT with bound values
 # ================================================================
-# patra_exec re-tokenizes + re-parses on every call; we can't share a
-# prepared statement across appends because each entry's INSERT carries
-# a different value tuple in the SQL string itself (patra has no bind
-# parameters as of 1.9.3). The big perf knob for append-heavy workloads
-# is patrastore_append_batch + SYNC_BATCH below.
+# Each append prepares the INSERT, binds the ten values with
+# patra_bind_text and finalizes it, so no entry field is ever spliced into
+# SQL text. The big perf knob for append-heavy workloads is
+# patrastore_append_batch + SYNC_BATCH below.
 
 # ── Field bounds (2.8.7) ──
 #

@@ -85,3 +85,14 @@ formalized the contract per `DEPS-PATTERN.md`.
 - `.github/workflows/ci.yml` — manifest-completeness gate and
   dist-freshness gate.
 - `.github/workflows/release.yml` — version-parity gate.
+
+## Correction (2.11.2)
+
+The consumer list in the Context section is wrong: sigil and ark do not consume
+libro, and aegis reaches it through nein rather than pinning it. Ten repos pin
+`[deps.libro]` (checked 2026-10-28): agnostic, argonaut, bote,
+cyrius-yeomans-descent, daimon, kybernet, nein, phylax, stiva and t-ron. The
+contract itself is unchanged; since cyrius 6.6.18 the bundle also opens with a
+compile-verified `# Requires` block, and `dist/libro.deps` lists the stdlib
+leaves it needs beyond sigil's and patra's own (`hashmap`).
+

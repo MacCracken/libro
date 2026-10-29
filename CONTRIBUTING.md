@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - [Cyrius](https://github.com/MacCracken/cyrius) compiler — version is
-  pinned in `cyrius.cyml` (`cyrius = "…"` field; currently **6.6.6**).
+  pinned in `cyrius.cyml` (`cyrius = "…"` field; currently **6.7.18**).
   Install with:
   ```bash
   cyriusup install "$(grep -E '^cyrius[[:space:]]*=' cyrius.cyml | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -11,8 +11,8 @@
 - Linux x86_64 (Cyrius compiles to static ELF; libro is ELF-only).
 - Git.
 
-Run `cyrius deps` once after cloning if the `lib/` symlinks don't resolve —
-those pull from `[deps.sigil]` / `[deps.patra]` in `cyrius.cyml`. Note that
+Run `cyrius deps` once after cloning to populate `lib/` (gitignored) —
+it pulls from `[deps.sigil]` / `[deps.patra]` in `cyrius.cyml`. Note that
 libro resolves a **thin** sigil surface (`lib/sigil-mldsa.cyr` plus
 `lib/sigil_{sha_ni,sha256,hex}.cyr`), not a single `lib/sigil.cyr`; the TPM
 fold is optional and only appears under `cyrius deps --features tpm`.
@@ -23,7 +23,7 @@ fold is optional and only appears under `cyrius deps --features tpm`.
 # Build (CYRIUS_DCE=1 matches CI/release)
 CYRIUS_DCE=1 cyrius build src/main.cyr build/libro
 
-# Run tests — expect "817 passed, 0 failed"
+# Run tests — expect "819 passed, 0 failed"
 ./build/libro
 
 # Fuzz (12 targets, no-crash asserts)

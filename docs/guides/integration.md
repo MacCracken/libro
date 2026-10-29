@@ -2,6 +2,11 @@
 
 How AGNOS ecosystem consumers use libro for audit logging.
 
+Daimon and stiva pin `[deps.libro]`; aegis reaches libro through nein
+rather than pinning it (checked 2026-10-28). sigil and ark do not consume
+libro; their sections below show the same patterns with those names as
+event sources.
+
 ## Daimon — Agent Lifecycle
 
 ```cyrius
@@ -249,28 +254,36 @@ The `signing_key` and `verifying_key` struct *layouts* don't
 change — those fields are pointers, and the buffers behind them
 just allocate to the right size for the chosen algorithm.
 
-### Performance (sigil 3.12.1 / cyrius 6.4.83, x86_64 dev host)
+### Performance (sigil 3.13.15 / cyrius 6.7.18, AMD Ryzen 7 5800H)
 
 | Op | Ed25519 | ML-DSA-65 | Notes |
 |----|--------:|----------:|-------|
-| `sign_entry`         | 1.1 ms | 3.4 ms | ~3× Ed25519 sign — down from ~14 ms at sigil 3.7.10, the rejection-loop cost having largely gone in the 3.8–3.12 line |
-| `verify_entry_signature` | 6.6 ms | 2.1 ms | ML-DSA verify is ~3× faster than Ed25519 verify in this build |
+| `sign_entry`         | 1.8 ms | 5.7 ms | ~3× Ed25519 sign for the bench's (key, message) pair; ML-DSA cost varies per pair (below) |
+| `verify_entry_signature` | 5.5 ms | 2.2 ms | ML-DSA verify is ~2.5× faster than Ed25519 verify in this build |
 
 (For reference, hybrid Ed25519+ML-DSA-65 on the same host: `sign_entry`
-3.9 ms, `verify_entry_signature` 8.9 ms — both keys exercised.)
+7.5 ms, `verify_entry_signature` 7.5 ms — both keys exercised.)
 
-Figures are the `libro_core` bench means at 2.8.3; re-measure with
-`CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core`
-rather than trusting them across a dep bump — the ML-DSA sign figure
-moved 4× between sigil pins.
+**ML-DSA-65 sign cost depends on the (key, message) pair.** sigil signs
+deterministically (FIPS 204), and the rejection loop runs a number of
+attempts set by the pair alone: over 200 random pairs it took 1 to 25
+attempts (mean 4.83), about 0.7 ms each. The `mldsa65_sign_entry` and
+`hybrid_sign_entry` benches sign one pinned pair that takes 5 attempts,
+so a given entry can sign well under or well over the 5.7 ms shown.
+
+Figures are `libro_core` bench averages measured 2026-10-28 at 2.11.2
+on an AMD Ryzen 7 5800H (powersave governor), one run each; re-measure
+with `CYRIUS_DCE=1 cyrius build benches/libro_core.bcyr build/libro_bench_core`
+rather than trusting them across a dep bump.
 
 Per-entry signing in the millisecond range is fine for audit
 workloads (one entry per kernel-audit / aegis-event / stiva-state-
 change). For batch signing of many entries the cost is linear.
-Libro's own verify path is one entry at a time; sigil ships a
-parallel `sv_verify_batch` (truly parallel since 3.6.0), but libro
-does not currently wire it up — a consumer verifying large chains
-can parallelize across entries itself.
+Libro's own verify path is one entry at a time. sigil's parallel
+`sv_verify_batch` verifies file artifacts against sigil's trust
+store, not entry signatures, and is not part of libro's thin sigil
+surface — a consumer verifying large chains can parallelize across
+entries itself.
 
 ### When to use which
 
@@ -282,12 +295,10 @@ can parallelize across entries itself.
   quantum computers — i.e. PCI / SOX / HIPAA workloads with
   multi-year retention, or compliance regimes that explicitly
   flag PQ readiness (NIST CNSA 2.0, federal post-quantum mandates).
-- **Hybrid (Ed25519 + ML-DSA-65)** is on the 2.3.x roadmap — it
-  produces both signatures per entry, lets verifiers accept the
+- **Hybrid (Ed25519 + ML-DSA-65)** shipped in 2.3.0 (next section).
+  It produces both signatures per entry, lets verifiers accept the
   policy-required subset, and is the migration path for chains
-  that need to outlive a single algorithm's threat horizon. Until
-  it lands, opt new chains directly into ML-DSA-65 if PQ is the
-  goal.
+  that need to outlive a single algorithm's threat horizon.
 
 ### Algorithm dispatch
 
@@ -342,13 +353,16 @@ multi-year retention windows, hybrid is the conservative choice
 during the transition era.
 
 The cost is roughly additive — both primitives run on every sign
-and every verify. Sigil's published numbers + libro's measured
-2.3.0 baseline:
+and every verify. libro's `libro_core` bench averages, measured
+2026-10-28 at 2.11.2 on an AMD Ryzen 7 5800H (powersave governor),
+one run each; the ML-DSA-65 and hybrid sign rows sign the same
+pinned 5-attempt pair, so they vary per (key, message) as described
+under "Performance" above:
 
-| Op | Ed25519 | ML-DSA-65 | Hybrid (sum) |
-|----|--------:|----------:|-------------:|
-| `sign_entry`             | 1.1 ms | 3.5 ms | 4.6 ms |
-| `verify_entry_signature` | 6.6 ms | 2.1 ms | 8.7 ms |
+| Op | Ed25519 | ML-DSA-65 | Hybrid |
+|----|--------:|----------:|-------:|
+| `sign_entry`             | 1.8 ms | 5.7 ms | 7.5 ms |
+| `verify_entry_signature` | 5.5 ms | 2.2 ms | 7.5 ms |
 
 Per-entry sign + verify in the millisecond range stays well
 within the per-event budget for kernel-audit / aegis / stiva
@@ -443,9 +457,11 @@ flush, up to 63 entries could be lost (the auto-flush window).
 **Tmpfs caveat**: on `/tmp` (tmpfs) fdatasync is a no-op and the
 SYNC_FULL vs SYNC_BATCH delta vanishes. libro's bench rows
 (`patra_append_50_full` / `patra_append_50_batch` in
-`libro_bench_io`) run on `/tmp` and show ~3% delta — that's
-bookkeeping overhead, not the real-disk win. To measure the real
-win, point a bench at a btrfs/nvme path.
+`libro_bench_io`) run on `/tmp` and show well under 1% delta
+(3.389 ms vs 3.375 ms per 50 appends, measured 2026-10-28 at 2.11.2
+on an AMD Ryzen 7 5800H, one run) — that's bookkeeping overhead,
+not the real-disk win. To measure the real win, point a bench at a
+btrfs/nvme path.
 
 ### Consumer-driven sync-mode control
 
@@ -473,6 +489,8 @@ filter by source frequently and have many entries, opt in to a
 STR-keyed btree index:
 
 ```cyrius
+# patra_init() must already have run; until it has,
+# patrastore_open refuses and returns 0.
 var ps = patrastore_open(path);
 patrastore_create_source_index(ps);  # one-time setup; idempotent
 # Subsequent by_source calls take the O(log N) btree path.
@@ -492,16 +510,21 @@ Heuristic for whether to opt in:
   write hot path without payoff.
 - Mixed: bench both with your actual workload shape before deciding.
 
-### Prepared SELECT and COUNT statements (transparent)
+### Statements and threads (transparent)
 
-`patrastore_load_all` and `patrastore_len` use patra prepared
-statements internally — parsed once at `patrastore_open`, finalized
-at `patrastore_close`. This skips the ~8 µs tokenize+parse step per
-call. No API change; the gain is automatic for existing consumers.
+`patrastore_append` and `patrastore_by_source` prepare, bind and
+finalize a patra statement on every call. Each value passes as a
+pointer and length and is never reparsed as SQL, so a `'` or any
+other metacharacter in a field round-trips verbatim with no escaping
+(the append path since 2.8.1, `by_source` since 2.8.11).
 
-`patrastore_append` and `patrastore_by_source` stay un-prepared
-because their SQL is value-templated per call (patra has no bind-
-parameter API as of 1.9.3).
+`patrastore_load_all` and `patrastore_len` parse their constant SQL
+on the calling thread on every call; the store caches no statement.
+patra's SQL parse scratch is per-thread, so a statement prepared on
+one thread and run on another crashes the process — which is what
+the cached SELECT / COUNT of 2.4.0–2.8.8 did when a consumer read the
+store from a worker thread (fixed in 2.8.9). The parse cost is small
+next to the full-table read behind both. No API change either way.
 
 ## Hardening — Landlock sandbox for PatraStore
 
@@ -560,8 +583,9 @@ Notes:
   apply it before forking off helper processes that need broader
   access.
 - The ruleset is monotonic — once applied, it cannot be widened.
-  Apply it once at process start, after libro's `patra_init()` has
-  done any setup that needs unsandboxed fs access.
+  Apply it once at process start, after `patra_init()` (patra's, run
+  by the caller before the first `patrastore_open`) has done any
+  setup that needs unsandboxed fs access.
 - Kernel 5.13+ required (`sys_landlock_create_ruleset` returns
   `-ENOSYS` on older kernels). Detect at runtime and degrade to
   unsandboxed operation if the consumer's deployment matrix

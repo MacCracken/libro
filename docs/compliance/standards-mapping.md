@@ -38,7 +38,7 @@ crate).
 | **GDPR** Art 30 | Records of processing | Structured entries: source, action, agent, timestamp, details | Covered |
 | **SOX** Section 802 | Record retention | `retention_sox()` — 7 years | Covered |
 | **eIDAS** Art 34 | Qualified timestamps | See [Timestamp Integrity](#timestamp-integrity) | Not covered |
-| **RFC 9162** | Verifiable logs (CT-style) | Merkle tree with O(log N) inclusion + RFC 9162 consistency proofs | Covered |
+| **RFC 9162** | Verifiable logs (CT-style) | Merkle tree with `0x00`/`0x01` leaf/internal domain separation and odd-node promotion (2.8.11); O(log N) inclusion + RFC 9162 consistency proofs | Covered |
 
 ## Cryptographic Guarantees
 
@@ -53,8 +53,9 @@ crate).
 | **Efficient inclusion verification** | Merkle inclusion proofs | O(log N) proof that an entry exists in the chain |
 | **Lossless proof round-trip** | `proof_to_json` / `proof_from_json` with side-bit-preserving inclusion paths (2.6.0) | Saved proofs re-hydrate to verify identically |
 | **Append-only consistency** | RFC 9162 consistency proofs | Proves one tree state is a prefix of a later state |
-| **Second-preimage resistance** | Length-prefixed field hashing + nested scalar-aware canonical JSON (2.0) | Prevents field boundary shifting AND value-type coercion attacks |
-| **Deterministic hashing** | Canonical JSON: sorted keys, depth-unlimited, scalars emit verbatim | Same logical content always produces the same hash |
+| **Second-preimage resistance** | Length-prefixed field hashing + nested scalar-aware canonical JSON (2.0); malformed `details` routed to a `0x00`-tagged raw hash (2.8.11); RFC 9162 Merkle domain separation (2.8.11) | Prevents field boundary shifting, value-type coercion, junk-byte collisions in `details`, and leaf/internal node confusion |
+| **Deterministic hashing** | Canonical JSON (ADR 0007, 2.8.12 amendment): keys sorted by decoded form, depth capped at 128, strings decoded and minimally re-escaped, numbers as an exact plain decimal, surrogate pairs as UTF-8 | Same logical content always produces the same hash (`1` == `1.0` == `1e0`). Numbers are exact, not RFC 8785's shortest form; the two agree on short values |
+| **Tree-head authenticity** | Signature over `tree_head_digest(root, tree_size, timestamp, algorithm)` (2.8.12); inclusion, consistency and anchor checks bound to the signed head | A valid proof cannot restate when, or at what size, the log was attested |
 | **Key rotation readiness** | `key_id` on `EntrySignature` | Identifies which key signed each entry |
 | **Hardware-rooted anchor attestation** | TPM 2.0 sealed `WitnessAnchor` under PCR policy (2.5.0, opt-in) | Proves anchor was created on this TPM at this PCR state |
 
@@ -62,14 +63,14 @@ crate).
 
 | Purpose | Algorithm | Standard | Source | PQ-resistant? |
 |---------|-----------|----------|--------|---------------|
-| Entry hashing | SHA-256 | FIPS 180-4 | sigil (`lib/sigil.cyr`) | Yes |
-| Entry signing (default) | Ed25519 | RFC 8032 | sigil 3.0 | No |
-| Entry signing (PQ) | ML-DSA-65 | NIST FIPS 204 | sigil 3.0 (`src/mldsa*.cyr`) | Yes |
-| Entry signing (hybrid) | Ed25519 + ML-DSA-65 (AND-mode) | RFC 8032 + FIPS 204 | sigil 3.0 (`sigil_verify_hybrid`) | Yes (one of the two binds the entry even if Ed25519 breaks) |
-| TPM seal hash bank | SHA-256 | FIPS 180-4 | agnosys + tpm2-tools | N/A |
+| Entry hashing | SHA-256 | FIPS 180-4 | sigil `src/sha256.cyr` (+ `src/sha_ni.cyr` hardware dispatch) | Yes |
+| Entry signing (default) | Ed25519 | RFC 8032 | sigil `dist/sigil-mldsa.cyr` | No |
+| Entry signing (PQ) | ML-DSA-65 | NIST FIPS 204 | sigil `dist/sigil-mldsa.cyr` | Yes |
+| Entry signing (hybrid) | Ed25519 + ML-DSA-65 (AND-mode) | RFC 8032 + FIPS 204 | sigil `dist/sigil-mldsa.cyr` (`sigil_verify_hybrid`) | Yes (one of the two binds the entry even if Ed25519 breaks) |
+| TPM seal hash bank | SHA-256 | FIPS 180-4 | sigil `dist/sigil-tpm.cyr` (optional `[deps.sigil_tpm]`, `tpm` feature) + tpm2-tools | N/A |
 | Entropy source | `getrandom(2)` | Linux ABI | `lib/random.cyr` (2.1.1) | N/A |
-| Key encoding | Hex (lowercase) | — | sigil `hex_encode_str` | N/A |
-| Constant-time compare | Branchless `ct_eq` / `ct_eq_bytes` | — | sigil + Cyrius `lib/ct.cyr` | N/A |
+| Key encoding | Hex (lowercase) | — | sigil `hex_encode` (`src/hex.cyr`), wrapped by libro's `hex_encode_str` | N/A |
+| Constant-time compare | Branchless `ct_eq_bytes_lens` (via libro's `constant_time_eq_str`) | — | Cyrius stdlib `lib/ct.cyr` | N/A |
 
 ## Timestamp Integrity
 
@@ -84,7 +85,8 @@ sense.
   (`src/timestamping.cyr` — `ts_request_*`, `ts_response_*`,
   `ts_attestation_*` with hand-rolled DER encode/decode).
 - For eIDAS qualified timestamps, pair a qualified TSA with
-  `ts_attestation` storage.
+  `ts_attestation` storage, and verify the stored token outside
+  libro (see below).
 
 **What libro provides:**
 - Monotonic entry ordering within a single chain (enforced by hash
@@ -92,7 +94,27 @@ sense.
 - `RetentionPolicy::KeepAfter` and `QueryFilter` time-range filters
   for time-based operations.
 - RFC 3339 timestamps in serialized entries.
-- RFC 3161 request/response DER encoding via `src/timestamping.cyr`.
+- RFC 3161 request DER encoding and response parsing via
+  `src/timestamping.cyr`: DER tags checked, PKIStatus must be
+  granted, a token must be present (2.8.11).
+
+**What libro does not verify:**
+- `ts_attestation_new` checks that the TSA response is well-formed
+  DER, that its PKIStatus is granted, and that a token is present. It
+  does **not** verify the TSA's CMS signature over the token, and it
+  does not parse TSTInfo, so it does not confirm that the token's
+  `messageImprint` matches the attested hash or that the nonce echoes
+  the request.
+- An attestation therefore proves "a syntactically valid granted
+  response was obtained", not "a trusted TSA attested to THIS hash at
+  THAT time". A genuine response for one hash can be presented
+  alongside another. `ts_attestation_verify_hash` compares the hash
+  recorded in the attestation, not the token's contents, and the
+  attestation's `created_at` is the local clock.
+- A consumer relying on RFC 3161 evidence verifies the stored token
+  itself against the TSA's certificate chain. TSTInfo binding
+  (`messageImprint` and nonce) is tracked as roadmap 2.12.0; CMS
+  signature verification is under roadmap 2.x.x, blocked on sigil.
 
 ## Consumer Responsibilities
 
@@ -141,10 +163,10 @@ MUST implement:
 
 ## FIPS 140-3 Considerations
 
-Libro delegates all cryptographic primitives to sigil, which is a
-pure-Cyrius implementation of SHA-256 (FIPS 180-4) and Ed25519
-(RFC 8032). Sigil is **not** a FIPS 140-3 validated cryptographic
-module.
+Libro delegates its hash and signature primitives to sigil, which is a
+pure-Cyrius implementation of SHA-256 (FIPS 180-4), Ed25519
+(RFC 8032) and ML-DSA-65 (FIPS 204). Sigil is **not** a FIPS 140-3
+validated cryptographic module.
 
 For FedRAMP or federal information systems:
 - Replace sigil with a FIPS-validated cryptographic module (e.g., a
@@ -227,12 +249,19 @@ Libro's supply chain is short and auditable:
 - **patra**: pinned in `cyrius.cyml` `[deps.patra] tag = "1.16.6"`
   (`lib/patra.cyr`). Carries the prepared-statement / group-commit
   / STR-btree features libro 2.4+ uses.
-- **stdlib modules** (~22 modules including the 2.1.0 sigil-bundle
-  expansion: `assert`, `alloc`, `freelist`, `str`, `string`, `vec`,
-  `hashmap`, `syscalls`, `io`, `fs`, `fmt`, `json`, `tagged`,
-  `process`, `sakshi`, `bigint`, `chrono`, `ct`, `keccak`, `thread`,
-  `random`, `bench`, `fnptr`, `test`) — bundled with the Cyrius
-  toolchain release.
+- **stdlib modules** (the 27 in `cyrius.cyml` `[deps] stdlib`:
+  `assert`, `alloc`, `vec`, `str`, `string`, `fmt`, `syscalls`, `io`,
+  `fs`, `freelist`, `hashmap`, `bayan`, `slice`, `tagged`, `process`,
+  `sakshi`, `chrono`, `ct`, `keccak`, `thread`, `thread_local`,
+  `atomic`, `sync`, `bench`, `fnptr`, `random`, `test`) — bundled
+  with the Cyrius toolchain release. Since cyrius 6.1.25 the former
+  `json` / `bigint` / `base64` / `csv` / `toml` / `cyml` / `u128`
+  modules live in the `bayan` bundle. libro's library modules call
+  no bayan function: the canonical-JSON hasher has its own decoder
+  (`json_str_decode`, `src/entry.cyr`), and only the fuzz harness
+  calls `json_parse`. bayan reaches every build through the
+  `# Requires` block of sigil's `dist/sigil-mldsa.cyr`, which uses
+  bayan's `u256_*` helpers.
 
 No third-party dependencies beyond the Cyrius toolchain. There is
 no transitive graph to audit.
@@ -246,7 +275,7 @@ no transitive graph to audit.
 | Lossless proof JSON RT | Yes (2.6.0) | Limited | Limited | No |
 | Digital signatures | Ed25519 / ML-DSA-65 / hybrid (sigil 3.0) | Various | Various | AWS KMS |
 | Post-quantum signing | **Yes** (FIPS 204 ML-DSA-65 + hybrid) | No (planned) | No (planned) | No |
-| Trusted timestamps | RFC 3161 client (consumer pairs TSA) | Consumer | Built-in | AWS |
+| Trusted timestamps | RFC 3161 client; token not verified (consumer pairs TSA and verifies the token) | Consumer | Built-in | AWS |
 | Hardware-rooted attestation | **Yes** (TPM-sealed anchors, opt-in) | No | No | AWS Nitro |
 | Key rotation | `key_id` on every entry | Built-in | Built-in | KMS |
 | Append-only store | MemoryStore / FileStore / PatraStore | Cloud Spanner | Redis + Cloud | S3 |

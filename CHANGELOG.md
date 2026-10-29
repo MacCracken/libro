@@ -5,6 +5,142 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.2] - 2026-10-28
+
+**Documentation and housekeeping. No library behaviour change.** `src/` changes are
+comments only, and `build/libro` is byte-identical to 2.11.1's (988,864 B), so everything
+2.11.1 wrote verifies unchanged. ⚠ **The ML-DSA and hybrid sign benches now sign a pinned
+input.** Their numbers through 2.11.1 sampled a random rejection-loop count, so they are not
+comparable with the new ones. See *Benchmarks*.
+
+### Benchmarks — the ML-DSA "noise" was the input, not the box
+
+`mldsa65_sign_entry` and `hybrid_sign_entry` had been flagged as noise since 2.8.11, and the
+roadmap asked for a re-measure on a quiet box. A quiet box does not help:
+- **The cause:** sigil signs ML-DSA-65 deterministically (FIPS 204, `rnd = 0^32`), and the
+  rejection loop runs a number of attempts set by the (key, message) pair alone. The bench
+  generated a fresh random key, and signed a freshly timestamped entry, on every run. Within
+  a run every iteration repeated the same attempt count, so min/max stayed tight while the
+  average moved between runs.
+- **Measured with a scratch probe** that counts loop attempts over 200 random pairs: 1 to 25
+  attempts, mean 4.83 (FIPS 204 expects 5.1). Sign time is linear in them, about 2.7 ms at
+  one attempt plus about 0.7 ms per extra one, up to 19.8 ms at 25.
+- **The fix:** both benches now sign one fixed pair, `_b_pq_entry` with a fixed 64-hex hash,
+  under keys whose ML-DSA material `_b_pin_mldsa` rebuilds from a fixed seed (32 bytes of
+  `0x07`). The pair takes 5 attempts. The key's buffers are rewritten through the derived
+  accessors, so the bench adds no library API and no raw offset, and setup refuses to run if
+  the pinned signatures do not verify. The verify benches use the same pair.
+- **Ten alternating runs on the same box**, old bench against new:
+
+  | Bench | Old range | Old spread | New range | New spread |
+  |---|---|---|---|---|
+  | `mldsa65_sign_entry` | 2.629–25.492 ms | 9.7× | 5.507–5.879 ms | 1.07× |
+  | `hybrid_sign_entry` | 4.593–15.800 ms | 3.4× | 7.291–7.794 ms | 1.07× |
+
+  Hybrid minus ML-DSA is now about 1.8 ms, which is `sign_entry`'s Ed25519 cost (1.7–1.8 ms),
+  as it should be. The pinned numbers measure the implementation, not the spread a real signer sees across
+  keys and entries. `docs/guides/testing.md` says so next to the bench table.
+
+### Changed
+
+- **Six `cyrius lint` deferral notes cleared.** Five were `XXX` false positives, on `\uXXXX`
+  and on junk-suffix test data in `src/entry.cyr`, `src/file_store.cyr` and `src/main.cyr`;
+  each line now carries `#skip-lint`. The sixth, "does NOT yet parse TSTInfo" in
+  `src/timestamping.cyr`, is a real deferral and now cites roadmap 2.12.0 on that line. Every
+  `src/*.cyr` file lints to 0 warnings and 0 untracked deferrals.
+- **`src/main.cyr`'s bayan include comment** said libro's surface was `json_parse` /
+  `json_get`. libro's modules call no bayan function; the hasher decodes with its own
+  `json_str_decode`, and bayan is there for sigil-mldsa's `u256_*` helpers.
+- `dist/libro.cyr` regenerated (version line and the comments above). `dist/libro.deps` is
+  unchanged (`hashmap`).
+
+### Removed
+
+- **The four cc3-era repros in `tests/`:** `fixup_limit_repro.cyr`, `patra.cyr`,
+  `patra_crash_repro.cyr` and `patra_standalone.cyr`. They documented cc3 crashes resolved
+  long ago, gave `cc3` run instructions, and `patra.cyr` still said "full suite pending
+  codegen investigation" though PatraStore has run in the main suite since 1.1.0. None ran in
+  CI. `tests/patra_uninit.cyr`, which CI runs, stays. git history keeps the four.
+
+- **Stale source comments corrected** (comment-only): `src/tpm_anchor.cyr` named agnosys
+  as the TPM source; `src/file_store.cyr` said an over-64KB line "asserts" (it returns a
+  `LIBRO_ERR_IO` error object since 2.8.11); `src/patra_store.cyr` said patra "has no bind
+  parameters as of 1.9.3" above the function that binds all ten; `src/entry.cyr` gave
+  `_entry_to_cstr` a `json_get` purpose nothing has.
+
+### Docs
+
+The roadmap's doc-currency pass. Every doc with version-tied claims was re-checked against
+the tree, and each claim below against the source, the CHANGELOG or the sibling checkouts.
+
+- **ADR status calls:** 0003 (HMAC signing) is *Superseded* by Ed25519 through sigil in
+  1.0.2, and 0004 (MemoryStore primary) by FileStore (1.0.1) and PatraStore (1.0.2). 0001
+  and 0002 stay *Accepted*, each with a dated note on what has since shipped. 0006 gains a
+  correction: its consumer list named sigil and ark.
+- **Consumers, re-checked 2026-10-28** against each sibling's `cyrius.cyml`: ten repos pin
+  `[deps.libro]` — agnostic, argonaut, bote, cyrius-yeomans-descent, daimon, kybernet,
+  nein, phylax, stiva, t-ron. agnostic is new to the list; aegis no longer pins libro and
+  reaches it through nein. CLAUDE.md, `overview`, ADR 0006, `doc-health` and
+  `integration` carry the corrected list.
+- **`threat-model`** (last updated 2026-05-10): TPM boundary is sigil-tpm, not agnosys;
+  `ct_eq*` from stdlib `lib/ct.cyr`; supply chain at 6.7.18 / 3.13.15 / 1.16.6; T10 names the
+  bound parameters patra actually takes; new **T15** (canonical-form collisions), **T16**
+  (Merkle second-preimage and proof binding) and **T17** (the unverified RFC 3161 token),
+  each citing its audit findings; "RFC 3161 token" is no longer listed as a trusted asset.
+- **`standards-mapping`:** TPM via sigil-tpm; "scalars emit verbatim" (false since 2.8.12)
+  replaced by the 2.8.12 rules; the stdlib list read from `cyrius.cyml`, with the bayan
+  carve; *Timestamp Integrity* states what libro does not verify.
+- **`dependency-watch`:** test counts and capacity at 2.11.2; a bayan Unicode-table section;
+  `sv_verify_batch` does not apply to libro (it verifies file artifacts, and it lives only
+  in the monolith); the fixup table has grown on demand since cyrius 6.2.0; agnosys retired
+  in 2.7.5, not 2.8.0; the TPM restore is a full re-sync, not a bare `cyrius deps`.
+- **`integration`:** perf tables re-measured; the ML-DSA per-(key, message) cost; hybrid
+  shipped in 2.3.0; the "prepared SELECT and COUNT" section described what 2.8.9 removed
+  and is rewritten to what `patra_store.cyr` does.
+- **`tpm-anchors`:** full re-sync to restore the default lib; tpm2-tools run by absolute
+  path; PCR index bounds; fixed sealed-file names; its *Roadmap* section points at roadmap
+  2.16.0.
+- **`quickstart`:** the in-repo include list put the monolithic `lib/sigil.cyr` (~13 MB of
+  `.bss`) in with no `lib/thread_local.cyr` before it, which SIGILLs. It now mirrors
+  `src/main.cyr`, and every snippet on the page was compiled and run at 2.11.2.
+- **`overview`:** the preimage diagram gains `hash_algorithm`; canonical-JSON rules at
+  2.8.12; RFC 9162 domain separation; agnosys removed.
+- **`SECURITY.md`:** the attack-surface table covers ML-DSA-65 / hybrid, the 2.8.11 / 2.8.12
+  classes, `lib/ct.cyr`, `getrandom` UUIDs (it said `/dev/urandom`) and the unverified RFC
+  3161 token; fuzz 12 targets (it said 11); both 2026-08-22 audits listed.
+- **Counts:** README, CONTRIBUTING, `testing` and `tpm-anchors` still said 817 / 829 and
+  CONTRIBUTING pinned 6.6.6; all read 819 / 831 and 6.7.18.
+- **`doc-health`** is rewritten in place to present state, as its own header asks. The
+  per-release pass logs (2.6.0–2.7.2) and the 5,300-character refresh header duplicated the
+  CHANGELOG and are gone; the tier tables are current; a *Known gaps* section lists four
+  items left alone and why.
+- **Roadmap:** the 2.11.2 section is done and removed. The bayan Unicode-table item moves to
+  *2.x.x — Blocked upstream* (unblocker: sigil or cyrius). The patra-issues line is dropped,
+  since patra 1.16.1 fixed both. Line references are re-pointed after this pass.
+- **A gap found in this pass, recorded, not fixed:** the three JSONL readers skip a line
+  they cannot parse. A malformed *last* record therefore reads as a log one entry shorter:
+  a probe that rewrote the last line's `{` as `{ZZZ` got `filestore_verify_streamed` → 2,
+  success, where an edit that still parses is an integrity violation. Fixing it changes
+  what verify and load return, which is not this release's scope. It is a new roadmap
+  2.11.x item and part of threat model T1's residual.
+
+### Verification
+
+- **Tests:** default 819/0 and `-D LIBRO_TPM` 831/0 (1,007,848 B; only the documented
+  `_sigil_random_fill` duplicate). `build/libro` is byte-identical to 2.11.1's, built from
+  `git archive` of the 2.11.1 tree against the same `lib/`.
+- **Other harnesses:** fuzz is clean, `tests/patra_uninit.cyr` exits 0, and all 33 benches
+  run.
+- **Gates:** `ci.yml`'s step scripts replayed locally: manifest completeness, the three
+  raw-offset gates, raw syscalls, format, lint, build, ELF, tests, the uninit repro, fuzz,
+  benchmarks, the dangerous-pattern scan, the required-docs check and version consistency
+  all pass.
+- **dist:** a second `cyrius distlib` reproduces `dist/libro.cyr` and `dist/libro.deps` byte
+  for byte.
+- **Docs:** every quickstart snippet compiled and run; every symbol the new threat-model
+  sections cite exists in `src/`.
+- **Lock:** reset to the clean default (117 deps, 2 commit-pinned) after the TPM run.
+
 ## [2.11.1] - 2026-10-28
 
 **cyrius 6.7.18, sigil 3.13.15 and patra 1.16.6: the latest published tags, and each one

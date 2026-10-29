@@ -19,8 +19,9 @@ include "lib/fs.cyr"
 include "lib/fmt.cyr"
 # bayan (cyrius 6.1.25 carve) bundles the former json/bigint/base64/csv/
 # toml/cyml/u128 stdlib modules into one dist with a back-compat shim that
-# forwards the legacy json_*/bigint_* names. libro's only surface here is
-# json_parse/json_get (canonical-JSON hashing) — covered by the shim.
+# forwards the legacy json_*/bigint_* names. libro's modules call none of it:
+# the canonical-JSON hasher decodes with its own json_str_decode (entry.cyr).
+# sigil-mldsa needs it, for the u256_* helpers its `# Requires` block names.
 include "lib/bayan.cyr"
 include "lib/sakshi.cyr"
 include "lib/chrono.cyr"
@@ -1098,13 +1099,13 @@ fn test_canonical_json_no_junk_collision() {
       "junk after value no longer collides");
     assert(str_eq(_t_cjh("{\"a\" 1}"), base) == 0,
       "missing colon no longer collides");
-    assert(str_eq(_t_cjh("{\"a\":1}XXXXXXX"), base) == 0,
+    assert(str_eq(_t_cjh("{\"a\":1}XXXXXXX"), base) == 0,  #skip-lint
       "trailing content no longer collides");
     # And the malformed forms must not collide with EACH OTHER either —
     # the raw fallback is length-prefixed, so it is injective.
     assert(str_eq(_t_cjh("{ZZZZ\"a\":1}"), _t_cjh("{\"a\":1 JUNK}")) == 0,
       "distinct malformed inputs stay distinct");
-    assert(str_eq(_t_cjh("{\"a\" 1}"), _t_cjh("{\"a\":1}XXXXXXX")) == 0,
+    assert(str_eq(_t_cjh("{\"a\" 1}"), _t_cjh("{\"a\":1}XXXXXXX")) == 0,  #skip-lint
       "distinct malformed inputs stay distinct (2)");
 }
 

@@ -221,8 +221,9 @@ fn filestore_load_and_verify(s) {
 # over the full file. Returns total verified count on success, or an
 # error pointer on failure.
 #
-# Lines longer than 64KB are not supported (asserts via `assert` on
-# buffer-full without newline). Current entry JSON is well under this.
+# Lines longer than 64KB are not supported: a full buffer with no newline
+# aborts the scan with a LIBRO_ERR_IO error object (2.8.11). Current entry
+# JSON is well under this.
 
 var _fsvs_buf_size = 65536;
 var _fsvs_buf = 0;
@@ -420,7 +421,7 @@ fn _filestore_entry_json(sb, e) {
 # bayan's flat-pair API captures string values VERBATIM — escapes undecoded,
 # by design (its own comment says so; the tagged-tree parser is the decoding
 # one). libro therefore had to run a second pass, _filestore_unescape, and
-# that pass handled only \" \\ and \n. A \t, \r, \b, \f or \uXXXX in any
+# that pass handled only \" \\ and \n. A \t, \r, \b, \f or \uXXXX in any  #skip-lint
 # field came back still escaped, so the reloaded entry differed from the one
 # written and failed verification.
 #
